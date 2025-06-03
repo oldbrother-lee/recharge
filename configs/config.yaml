@@ -1,0 +1,44 @@
+server:
+  port: 8080
+  mode: debug
+
+database:
+  host: localhost
+  port: 3306
+  user: root
+  password: ''
+  dbname: recharge-new
+
+jwt:
+  secret: recharge-new
+  expire: 24 # hours
+  refresh_secret: recharge-new-refresh
+  refresh_expire: 168 # hours (7 days)
+
+log:
+  level: debug
+  filename: logs/app.log
+  max_size: 100
+  max_backups: 10
+  max_age: 30
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+
+notification:
+  max_retries: 3
+  batch_size: 10
+
+task:
+  interval: 5 # 任务执行间隔（秒）
+  max_retries: 3 # 最大重试次数
+  retry_delay: 1 # 重试延迟（秒）
+  max_concurrent: 10 # 最大并发数
+
+api:
+  key: "" # API密钥
+  user_id: "" # 用户ID
+  base_url: "" # API基础URL 

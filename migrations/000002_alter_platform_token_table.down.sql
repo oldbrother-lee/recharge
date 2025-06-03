@@ -1,0 +1,8 @@
+-- 回滚到旧表结构
+DROP TABLE IF EXISTS platform_token;
+ 
+CREATE TABLE platform_token (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    token VARCHAR(255) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci; 

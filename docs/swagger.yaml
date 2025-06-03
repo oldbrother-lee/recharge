@@ -1,0 +1,330 @@
+basePath: /api/v1
+definitions:
+  model.Permission:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/model.Permission'
+        type: array
+      code:
+        type: string
+      component:
+        type: string
+      description:
+        type: string
+      enable:
+        type: boolean
+      icon:
+        type: string
+      id:
+        type: integer
+      keepAlive:
+        type: boolean
+      layout:
+        type: string
+      method:
+        type: string
+      name:
+        type: string
+      order:
+        type: integer
+      parentId:
+        type: integer
+      path:
+        type: string
+      redirect:
+        type: string
+      show:
+        type: boolean
+      type:
+        description: MENU or BUTTON
+        type: string
+    type: object
+  model.PermissionRequest:
+    properties:
+      code:
+        type: string
+      component:
+        type: string
+      description:
+        type: string
+      enable:
+        type: boolean
+      icon:
+        type: string
+      keepAlive:
+        type: boolean
+      layout:
+        type: string
+      method:
+        type: string
+      name:
+        type: string
+      order:
+        type: integer
+      parentId:
+        type: integer
+      path:
+        type: string
+      redirect:
+        type: string
+      show:
+        type: boolean
+      type:
+        enum:
+        - MENU
+        - BUTTON
+        type: string
+    required:
+    - code
+    - name
+    - type
+    type: object
+  model.PermissionTree:
+    properties:
+      children:
+        items:
+          $ref: '#/definitions/model.PermissionTree'
+        type: array
+      code:
+        type: string
+      component:
+        type: string
+      description: {}
+      enable:
+        type: boolean
+      icon:
+        type: string
+      id:
+        type: integer
+      keepAlive: {}
+      layout:
+        type: string
+      method: {}
+      name:
+        type: string
+      order:
+        type: integer
+      parentId: {}
+      path:
+        type: string
+      redirect: {}
+      show:
+        type: boolean
+      type:
+        type: string
+    type: object
+  model.Response:
+    properties:
+      code:
+        type: integer
+      data: {}
+      message:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: This is a recharge system API server.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: Recharge Go API
+  version: "1.0"
+paths:
+  /api/v1/permissions:
+    get:
+      description: 获取所有权限（包括菜单和按钮）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/model.Permission'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 获取所有权限
+      tags:
+      - 权限管理
+    post:
+      consumes:
+      - application/json
+      description: 创建新的权限
+      parameters:
+      - description: 权限信息
+        in: body
+        name: permission
+        required: true
+        schema:
+          $ref: '#/definitions/model.PermissionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 创建权限
+      tags:
+      - 权限管理
+  /api/v1/permissions/{id}:
+    delete:
+      description: 删除指定ID的权限
+      parameters:
+      - description: 权限ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 删除权限
+      tags:
+      - 权限管理
+    put:
+      consumes:
+      - application/json
+      description: 更新指定ID的权限信息
+      parameters:
+      - description: 权限ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 权限信息
+        in: body
+        name: permission
+        required: true
+        schema:
+          $ref: '#/definitions/model.Permission'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/model.Response'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 更新权限
+      tags:
+      - 权限管理
+  /api/v1/permissions/buttons:
+    get:
+      description: 获取所有按钮权限
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/model.Permission'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 获取按钮权限
+      tags:
+      - 权限管理
+  /api/v1/permissions/menus:
+    get:
+      description: 获取所有菜单权限
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/model.Permission'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 获取菜单权限
+      tags:
+      - 权限管理
+  /api/v1/permissions/tree:
+    get:
+      description: 获取完整的权限树结构
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/model.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/model.PermissionTree'
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/model.Response'
+      summary: 获取权限树
+      tags:
+      - 权限管理
+securityDefinitions:
+  ApiKeyAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

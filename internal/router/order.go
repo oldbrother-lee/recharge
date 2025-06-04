@@ -91,4 +91,10 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		// 只允许管理员访问的订单清理接口
 		order.DELETE("/cleanup", middleware.CheckSuperAdmin(userService), orderController.CleanupOrders)
 	}
+
+	// 注册 /orders 路由组（用于统计等批量操作）
+	orders := r.Group("/orders")
+	{
+		orders.GET("/statistics", orderController.GetOrderStatistics) // 获取订单统计
+	}
 }

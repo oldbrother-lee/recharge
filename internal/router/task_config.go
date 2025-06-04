@@ -4,12 +4,14 @@ import (
 	"recharge-go/internal/controller"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
+	"recharge-go/pkg/database"
 
 	"github.com/gin-gonic/gin"
 )
 
 func RegisterTaskConfigRoutes(r *gin.RouterGroup) {
-	repo := repository.NewTaskConfigRepository()
+	db := database.DB
+	repo := repository.NewTaskConfigRepository(db)
 	svc := service.NewTaskConfigService(repo)
 	ctrl := controller.NewTaskConfigController(svc)
 

@@ -314,7 +314,7 @@ func (r *OrderRepositoryImpl) FindProductByPriceAndISPWithTolerance(price float6
 // UpdateStatusCAS 原子性地将订单状态从 oldStatus 更新为 newStatus，同时写入 api_id
 func (r *OrderRepositoryImpl) UpdateStatusCAS(ctx context.Context, id int64, oldStatus, newStatus model.OrderStatus, apiID int64) (bool, error) {
 	res := r.db.Model(&model.Order{}).
-		Where("id = ? AND status = ? AND (api_id = 0 OR api_id = ?)", id, oldStatus, apiID).
+		Where("id = ? AND status = ? AND (api_id = 0 OR api_id IS NULL OR api_id = ?)", id, oldStatus, apiID).
 		Updates(map[string]interface{}{
 			"status": newStatus,
 			"api_id": apiID,

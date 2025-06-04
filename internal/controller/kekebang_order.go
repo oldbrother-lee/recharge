@@ -145,6 +145,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 		Price:             product.Price,
 		ProductID:         productID, // 需要根据 OuterGoodsCode 查询对应的商品ID
 		Status:            model.OrderStatusPendingRecharge,
+		Client:            3,                                          // 标识为自动取单任务，保持待充值状态
 		OutTradeNum:       strconv.FormatInt(req.UserOrderID, 10),     // 外部交易号
 		ISP:               getISPFromOperatorID(req.Datas.OperatorID), // 根据运营商ID获取ISP
 		Param1:            req.Datas.ProvCode,                         // 省份代码

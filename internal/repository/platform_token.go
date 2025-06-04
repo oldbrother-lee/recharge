@@ -2,7 +2,6 @@ package repository
 
 import (
 	"recharge-go/internal/model"
-	"recharge-go/pkg/database"
 	"time"
 
 	"gorm.io/gorm"
@@ -12,8 +11,8 @@ type PlatformTokenRepository struct {
 	db *gorm.DB
 }
 
-func NewPlatformTokenRepository() *PlatformTokenRepository {
-	return &PlatformTokenRepository{db: database.DB}
+func NewPlatformTokenRepository(db *gorm.DB) *PlatformTokenRepository {
+	return &PlatformTokenRepository{db: db}
 }
 
 // Get 获取指定任务配置的token
@@ -38,6 +37,7 @@ func (r *PlatformTokenRepository) Save(taskConfigID int64, token string) error {
 		return tx.Create(&model.PlatformToken{
 			TaskConfigID: taskConfigID,
 			Token:        token,
+			CreatedAt:    now,
 			LastUsedAt:   now,
 		}).Error
 	})

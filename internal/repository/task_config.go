@@ -2,7 +2,6 @@ package repository
 
 import (
 	"recharge-go/internal/model"
-	"recharge-go/pkg/database"
 
 	"gorm.io/gorm"
 )
@@ -11,9 +10,9 @@ type TaskConfigRepository struct {
 	db *gorm.DB
 }
 
-func NewTaskConfigRepository() *TaskConfigRepository {
+func NewTaskConfigRepository(db *gorm.DB) *TaskConfigRepository {
 	return &TaskConfigRepository{
-		db: database.DB,
+		db: db,
 	}
 }
 

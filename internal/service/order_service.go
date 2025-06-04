@@ -152,10 +152,15 @@ func isSuperAdmin(ctx context.Context) bool {
 
 // UpdateOrderStatus 更新订单状态
 func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status model.OrderStatus) error {
-	userID := ctx.Value("user_id").(int64)
+	// 安全获取用户ID，如果不存在则使用0（系统操作）
+	var userID int64
+	if uid := ctx.Value("user_id"); uid != nil {
+		userID = uid.(int64)
+	}
 	logger.Info("开始更新订单状态",
 		"order_id", id,
 		"new_status", status,
+		"user_id", userID,
 	)
 
 	// 开启事务
@@ -177,8 +182,9 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		return fmt.Errorf("get order failed: %v", err)
 	}
 
-	// 权限校验：只有超级管理员才能操作
-	if !isSuperAdmin(ctx) && order.CustomerID != userID {
+	// 权限校验：超级管理员、系统操作（user_id为0且无roles）或订单所有者可以操作
+	isSystemOperation := userID == 0 && ctx.Value("roles") == nil
+	if !isSuperAdmin(ctx) && !isSystemOperation && order.CustomerID != userID {
 		tx.Rollback()
 		logger.Error("无权限操作该订单",
 			"order_id", id,
@@ -308,7 +314,7 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 	}
 
 	// 如果订单已经支付，需要退还余额
-	if order.Status == model.OrderStatusPendingRecharge || order.Status == model.OrderStatusRecharging {
+	if order.Status == model.OrderStatusPendingRecharge || order.Status == model.OrderStatusRecharging || order.Status == model.OrderStatusProcessing {
 		// 退还余额
 		if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, orderID, "订单失败退还余额"); err != nil {
 			logger.Error("退还余额失败",

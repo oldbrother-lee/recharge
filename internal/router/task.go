@@ -17,8 +17,8 @@ import (
 // RegisterTaskRoutes 依赖注入 platformSvc
 func RegisterTaskRoutes(r *gin.RouterGroup, platformSvc *platform.Service) {
 	db := database.DB
-	taskConfigRepo := repository.NewTaskConfigRepository()
-	taskOrderRepo := repository.NewTaskOrderRepository()
+	taskConfigRepo := repository.NewTaskConfigRepository(db)
+	taskOrderRepo := repository.NewTaskOrderRepository(db)
 	daichongOrderRepo := repository.NewDaichongOrderRepository(db)
 	orderRepo := repository.NewOrderRepository(db)
 	notificationRepo := notificationRepo.NewRepository(db)

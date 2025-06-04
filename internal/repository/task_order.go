@@ -2,7 +2,6 @@ package repository
 
 import (
 	"recharge-go/internal/model"
-	"recharge-go/pkg/database"
 
 	"gorm.io/gorm"
 )
@@ -11,9 +10,9 @@ type TaskOrderRepository struct {
 	db *gorm.DB
 }
 
-func NewTaskOrderRepository() *TaskOrderRepository {
+func NewTaskOrderRepository(db *gorm.DB) *TaskOrderRepository {
 	return &TaskOrderRepository{
-		db: database.DB,
+		db: db,
 	}
 }
 

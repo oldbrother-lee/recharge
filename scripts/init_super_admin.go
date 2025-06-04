@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
@@ -64,7 +65,7 @@ func main() {
 	}
 
 	// 查找 admin 用户
-	adminUser, err := userRepo.GetByUsername("admin")
+	adminUser, err := userRepo.GetByUsername(context.Background(), "admin")
 	if err != nil {
 		log.Fatalf("查找 admin 用户失败: %v", err)
 	}

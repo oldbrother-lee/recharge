@@ -20,18 +20,18 @@ type orderUpgradeService struct {
 	orderUpgradeRepo      repository.OrderUpgradeRepository
 	rebateRepo            repository.RebateRepository
 	rewardRepo            repository.RewardRepository
-	userRepo              repository.UserRepository
-	userGradeRepo         repository.UserGradeRepository
-	userGradeRelationRepo repository.UserGradeRelationRepository
+	userRepo              *repository.UserRepository
+	userGradeRepo         *repository.UserGradeRepository
+	userGradeRelationRepo *repository.UserGradeRelationRepository
 }
 
 func NewOrderUpgradeService(
 	orderUpgradeRepo repository.OrderUpgradeRepository,
 	rebateRepo repository.RebateRepository,
 	rewardRepo repository.RewardRepository,
-	userRepo repository.UserRepository,
-	userGradeRepo repository.UserGradeRepository,
-	userGradeRelationRepo repository.UserGradeRelationRepository,
+	userRepo *repository.UserRepository,
+	userGradeRepo *repository.UserGradeRepository,
+	userGradeRelationRepo *repository.UserGradeRelationRepository,
 ) OrderUpgradeService {
 	return &orderUpgradeService{
 		orderUpgradeRepo:      orderUpgradeRepo,

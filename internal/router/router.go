@@ -46,9 +46,9 @@ func SetupRouter(
 	// API routes
 	api := r.Group("/api/v1")
 	{
-		// Public routes
-		api.POST("/user/register", userController.Register)
-		api.POST("/user/login", userController.Login)
+		// Public user routes
+		RegisterUserRoutes(api, userController, userService, userLogController)
+
 		// 通知路由
 		notificationHandler.RegisterRoutes(api)
 
@@ -58,27 +58,26 @@ func SetupRouter(
 		// 可客帮订单接口 - 不需要认证
 		RegisterKekebangOrderRoutes(api)
 
+		// 代充订单接口 - 不需要认证
+		RegisterDaichongOrderRoutes(api)
+
 		// 外部订单接口 - 不需要认证
 		RegisterExternalOrderRoutes(api)
-		RegisterCallbackRoutes(api, callbackController)
-		// 回调路由 - 不需要认证
-		// callback := api.Group("/callback")
-		// {
-		// 	callback.POST("/kekebang/:userid", callbackController.HandleKekebangCallback)
-		// 	callback.POST("/mishi/:userid", callbackController.HandleMishiCallback)
-		// 	callback.POST("/dayuanren/:userid", callbackController.HandleDayuanrenCallback)
-		// }
 
-		// 重试路由 - 不需要认证
-		retryHandler := handler.NewRetryHandler(retryService)
-		retryHandler.RegisterRoutes(api)
+		// 回调接口 - 不需要认证
+		callback := api.Group("/callback")
+		{
+			callback.POST("/kekebang/:userid", callbackController.HandleKekebangCallback)
+			callback.POST("/mishi/:userid", callbackController.HandleMishiCallback)
+			callback.POST("/dayuanren/:userid", callbackController.HandleDayuanrenCallback)
+		}
 
 		// Protected routes
 		auth := api.Group("")
 		auth.Use(middleware.Auth())
 		{
-			// User routes
-			RegisterUserRoutes(auth, userController, userService, userLogController)
+			// Protected user routes
+			RegisterProtectedUserRoutes(auth, userController, userService, userLogController)
 
 			// Permission routes
 			RegisterPermissionRoutes(auth, permissionController)
@@ -150,7 +149,7 @@ func SetupRouter(
 			pushStatusController := controller.NewPlatformPushStatusController(pushStatusService)
 
 			// 注册路由
-			pushStatus := api.Group("/platform/push-status")
+			pushStatus := auth.Group("/platform/push-status")
 			{
 				pushStatus.GET("/:account_id", pushStatusController.GetPushStatus)
 				pushStatus.PUT("/:account_id", pushStatusController.UpdatePushStatus)

@@ -51,6 +51,8 @@ type RechargeService interface {
 	ProcessRetryTask(ctx context.Context, retryRecord *model.OrderRetryRecord) error
 	// GetBalanceService 获取余额服务
 	GetBalanceService() *PlatformAccountBalanceService
+	// SetOrderService 设置订单服务
+	SetOrderService(orderService OrderService)
 }
 
 // rechargeService 充值服务
@@ -71,6 +73,7 @@ type rechargeService struct {
 	processingOrdersMu     sync.Mutex
 	notificationRepo       notificationRepo.Repository
 	queue                  queue.Queue
+	orderService           OrderService
 }
 
 // NewRechargeService 创建充值服务实例
@@ -423,29 +426,86 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 
 // GetPendingTasks 获取待处理的充值任务
 func (s *rechargeService) GetPendingTasks(ctx context.Context, limit int) ([]*model.Order, error) {
-	// 获取状态为待充值的订单，并且最近5分钟内没有被处理过的
-	orders, err := s.orderRepo.GetByStatus(ctx, model.OrderStatusPendingRecharge)
-	if err != nil {
-		return nil, err
+	// 从Redis队列中获取待处理的订单ID
+	if s.redisClient == nil {
+		logger.Error("【Redis客户端为空】")
+		return nil, fmt.Errorf("redis client is nil")
 	}
 
-	// 过滤掉最近5分钟内处理过的订单
-	var filteredOrders []*model.Order
+	// 获取队列中的订单ID列表
+	orderIDs, err := s.redisClient.LRange(ctx, "recharge_queue", 0, int64(limit-1)).Result()
+	if err != nil {
+		logger.Error("【从Redis队列获取订单ID失败】", "error", err)
+		return nil, fmt.Errorf("get order IDs from queue failed: %v", err)
+	}
+
+	logger.Info("【调试：从Redis获取的订单ID列表】", "order_ids", orderIDs, "limit", limit)
+
+	if len(orderIDs) == 0 {
+		logger.Info("【Redis队列中没有待处理订单】")
+		return []*model.Order{}, nil
+	}
+
+	// 将字符串ID转换为int64并查询订单信息
+	var orders []*model.Order
 	now := time.Now()
-	for _, order := range orders {
-		// 如果订单的更新时间在5分钟内，跳过
-		if order.UpdatedAt.Add(5 * time.Minute).After(now) {
+	for _, orderIDStr := range orderIDs {
+		orderID, err := strconv.ParseInt(orderIDStr, 10, 64)
+		if err != nil {
+			logger.Error("【解析订单ID失败】", "order_id_str", orderIDStr, "error", err)
 			continue
 		}
-		filteredOrders = append(filteredOrders, order)
+
+		// 获取订单信息
+		order, err := s.orderRepo.GetByID(ctx, orderID)
+		if err != nil {
+			logger.Error("【获取订单信息失败】", "order_id", orderID, "error", err)
+			continue
+		}
+
+		logger.Info("【调试：检查订单】", "order_id", orderID, "status", order.Status, "created_at", order.CreatedAt, "updated_at", order.UpdatedAt)
+
+		// 检查订单状态和时间过滤条件
+		if order.Status != model.OrderStatusPendingRecharge {
+			logger.Info("【订单状态不是待充值，从队列中移除】", "order_id", orderID, "status", order.Status)
+			// 从Redis队列中移除该订单
+			if err := s.redisClient.LRem(ctx, "recharge_queue", 0, orderIDStr).Err(); err != nil {
+				logger.Error("【从队列移除订单失败】", "order_id", orderID, "error", err)
+			} else {
+				logger.Info("【成功从队列移除订单】", "order_id", orderID)
+			}
+			continue
+		}
+
+		// 只对非新订单应用1分钟冷却机制
+		// 新订单的创建时间和更新时间相差很小（通常在几毫秒内），不应该被冷却机制拦截
+		timeDiff := order.UpdatedAt.Sub(order.CreatedAt)
+		isNewOrder := timeDiff < 5*time.Second // 5秒内的时间差认为是新订单
+
+		logger.Info("【调试：时间检查】", "order_id", orderID, "time_diff", timeDiff, "is_new_order", isNewOrder)
+
+		if !isNewOrder && order.UpdatedAt.Add(1*time.Minute).After(now) {
+			logger.Info("【订单最近1分钟内被处理过，跳过】", "order_id", orderID)
+			continue
+		}
+
+		// 如果订单创建时间超过24小时，跳过
+		// 优先使用CreateTime字段，如果为空则使用CreatedAt字段
+		createTime := order.CreateTime
+		if createTime.IsZero() && !order.CreatedAt.IsZero() {
+			createTime = order.CreatedAt
+		}
+
+		if !createTime.IsZero() && createTime.Add(24*time.Hour).Before(now) {
+			logger.Info("【订单创建时间超过24小时，跳过】", "order_id", orderID, "create_time", createTime)
+			continue
+		}
+
+		orders = append(orders, order)
 	}
 
-	// 限制返回数量
-	if len(filteredOrders) > limit {
-		filteredOrders = filteredOrders[:limit]
-	}
-
-	return filteredOrders, nil
+	logger.Info("【获取到待处理订单】", "count", len(orders))
+	return orders, nil
 }
 
 // ProcessRechargeTask 处理充值任务
@@ -455,8 +515,8 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		"order_number", order.OrderNumber,
 		"mobile", order.Mobile)
 
-	// 获取平台API信息
-	api, apiParam, err := s.GetPlatformAPIByOrderID(ctx, order.OrderNumber)
+	// 获取平台API信息 - 直接使用传入的订单对象，避免通过order_number重新查询
+	api, apiParam, err := s.getPlatformAPIByOrder(ctx, order)
 	if err != nil {
 		logger.Error("【获取API信息失败】",
 			"error", err,
@@ -590,18 +650,10 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		if nextAPIID == 0 {
 			logger.Error("【没有可用的API】",
 				"order_id", order.ID)
-			_ = s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed)
-			_ = s.orderRepo.UpdateRemark(ctx, order.ID, "无可用API")
-			// 新增：推送订单失败通知
-			notification := &notificationModel.NotificationRecord{
-				OrderID:          order.ID,
-				PlatformCode:     order.PlatformCode,
-				NotificationType: "order_status_changed",
-				Content:          "订单失败：无可用API",
-				Status:           1, // 待处理
+			// 调用订单失败处理方法，会自动退还余额和创建通知
+			if err := s.orderService.ProcessOrderFail(ctx, order.ID, "无可用API"); err != nil {
+				logger.Error("处理订单失败时出错", "error", err, "order_id", order.ID)
 			}
-			_ = s.notificationRepo.Create(ctx, notification)
-			_ = s.queue.Push(ctx, "notification_queue", notification)
 			return fmt.Errorf("no available API")
 		}
 
@@ -733,16 +785,18 @@ func (s *rechargeService) CreateRechargeTask(ctx context.Context, orderID int64)
 		"order_number", order.OrderNumber,
 		"status", order.Status)
 
-	// 更新订单状态为待充值
-	if err := s.orderRepo.UpdateStatus(ctx, orderID, model.OrderStatusPendingRecharge); err != nil {
-		logger.Error("【更新订单状态失败】",
-			"error", err,
-			"order_id", orderID)
-		return fmt.Errorf("update order status failed: %v", err)
+	// 检查订单状态是否为待充值
+	if order.Status != model.OrderStatusPendingRecharge {
+		logger.Warn("【订单状态不是待充值，跳过创建充值任务】",
+			"order_id", orderID,
+			"current_status", order.Status,
+			"expected_status", model.OrderStatusPendingRecharge)
+		return fmt.Errorf("order status is not pending recharge, current status: %d", order.Status)
 	}
-	logger.Info("【更新订单状态成功】",
+
+	logger.Info("【订单状态验证通过，状态为待充值】",
 		"order_id", orderID,
-		"status", model.OrderStatusPendingRecharge)
+		"status", order.Status)
 
 	// 将订单推送到充值队列
 	if err := s.PushToRechargeQueue(ctx, orderID); err != nil {
@@ -761,12 +815,11 @@ func (s *rechargeService) CreateRechargeTask(ctx context.Context, orderID int64)
 }
 
 // GetPlatformAPIByOrderID 根据订单ID获取平台API信息
-func (s *rechargeService) GetPlatformAPIByOrderID(ctx context.Context, orderID string) (*model.PlatformAPI, *model.PlatformAPIParam, error) {
-	// 获取订单信息
-	order, err := s.orderRepo.GetByOrderID(ctx, orderID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("获取订单信息失败: %v", err)
-	}
+// getPlatformAPIByOrder 直接使用订单对象获取平台API信息
+func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *model.Order) (*model.PlatformAPI, *model.PlatformAPIParam, error) {
+	// 直接使用传入的订单对象，无需重新查询
+	logger.Info("【获取平台API信息】", "order_id", order.ID, "product_id", order.ProductID)
+
 	//product_api_relations
 	r, err := s.productAPIRelationRepo.GetByProductID(ctx, order.ProductID)
 	if err != nil {
@@ -830,6 +883,16 @@ func (s *rechargeService) GetPlatformAPIByOrderID(ctx context.Context, orderID s
 	return api, apiParam, nil
 }
 
+func (s *rechargeService) GetPlatformAPIByOrderID(ctx context.Context, orderID string) (*model.PlatformAPI, *model.PlatformAPIParam, error) {
+	// 获取订单信息
+	order, err := s.orderRepo.GetByOrderID(ctx, orderID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("获取订单信息失败: %v", err)
+	}
+	// 调用新的方法
+	return s.getPlatformAPIByOrder(ctx, order)
+}
+
 // PushToRechargeQueue 将订单推送到充值队列
 func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64) error {
 	logger.Info("【准备推送订单到充值队列】",
@@ -841,7 +904,24 @@ func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64
 		return fmt.Errorf("redis client is nil")
 	}
 
-	err := s.redisClient.LPush(ctx, "recharge_queue", orderID).Err()
+	// 检查订单是否已经在队列中，避免重复推送
+	orderIDStr := strconv.FormatInt(orderID, 10)
+	exists, err := s.redisClient.LPos(ctx, "recharge_queue", orderIDStr, redisV8.LPosArgs{}).Result()
+	if err == nil {
+		logger.Info("【订单已在充值队列中，跳过推送】",
+			"order_id", orderID,
+			"position", exists)
+		return nil
+	}
+	// 如果是redis.Nil错误，说明订单不在队列中，可以继续推送
+	if err != redisV8.Nil {
+		logger.Error("【检查订单是否在队列中失败】",
+			"error", err,
+			"order_id", orderID)
+		// 即使检查失败，也继续推送，避免丢失订单
+	}
+
+	err = s.redisClient.LPush(ctx, "recharge_queue", orderID).Err()
 	if err != nil {
 		logger.Error("【推送订单到充值队列失败】",
 			"error", err,
@@ -1135,6 +1215,11 @@ func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *mod
 	logger.Info("【重试任务处理完成】retry_id: %d, order_id: %d, order_number: %s",
 		retryRecord.ID, retryRecord.OrderID, order.OrderNumber)
 	return nil
+}
+
+// SetOrderService 设置订单服务
+func (s *rechargeService) SetOrderService(orderService OrderService) {
+	s.orderService = orderService
 }
 
 // GetBalanceService 获取余额服务

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"recharge-go/internal/utils"
 	"strconv"
@@ -17,6 +18,7 @@ func (c *OrderController) GetOrderStatistics(ctx *gin.Context) {
 		return
 	}
 	stats, err := c.orderService.GetOrderStatistics(ctx, customerID)
+	fmt.Printf("stats: %+v", stats)
 	if err != nil {
 		utils.Error(ctx, http.StatusInternalServerError, err.Error())
 		return

@@ -145,16 +145,21 @@ func (s *Service) SubmitTask(channelID int, productID string, provinces string, 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		logger.Error(fmt.Sprintf("申请做单请求发送失败: url=%s, error=%v", url, err))
 		return "", fmt.Errorf("发送请求失败: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		logger.Error(fmt.Sprintf("申请做单响应读取失败: url=%s, error=%v", url, err))
 		return "", fmt.Errorf("读取响应失败: %v", err)
 	}
 
+	logger.Info(fmt.Sprintf("申请做单响应: url=%s, status=%d, body=%s", url, resp.StatusCode, string(body)))
+
 	if resp.StatusCode != http.StatusOK {
+		logger.Error(fmt.Sprintf("申请做单HTTP状态码错误: url=%s, status=%d, body=%s", url, resp.StatusCode, string(body)))
 		return "", fmt.Errorf("请求失败: %s", string(body))
 	}
 
@@ -167,13 +172,16 @@ func (s *Service) SubmitTask(channelID int, productID string, provinces string, 
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		logger.Error(fmt.Sprintf("申请做单响应解析失败: url=%s, body=%s, error=%v", url, string(body), err))
 		return "", fmt.Errorf("解析响应失败: %v", err)
 	}
 
 	if result.Code != 0 {
+		logger.Error(fmt.Sprintf("申请做单业务错误: url=%s, code=%d, msg=%s", url, result.Code, result.Msg))
 		return "", fmt.Errorf("业务错误: %s", result.Msg)
 	}
 
+	logger.Info(fmt.Sprintf("申请做单成功: url=%s, token=%s", url, result.Result.Token))
 	return result.Result.Token, nil
 }
 
@@ -196,6 +204,7 @@ func (s *Service) QueryTask(token string, apiURL string, apiKey, userID string) 
 	// url := "http://ip.jikelab.com:5000/api/orders"
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
+		logger.Error("创建HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -313,6 +322,7 @@ func (s *Service) GetOrderDetail(orderNumber string) (*PlatformOrder, error) {
 	url := fmt.Sprintf("%s/api/task/recharge/orderDetail", s.baseURL)
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
+		logger.Error("创建HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 
@@ -434,6 +444,7 @@ func (s *Service) GetChannelList() ([]Channel, error) {
 	url := fmt.Sprintf("%s/api/task/recharge/taskChannelList", "https://cusapitest.xianzhuanxia.com")
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
+		logger.Error("创建HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 
@@ -495,6 +506,7 @@ func (s *Service) GetStockInfo(channelID, productID int, provinces string) ([]St
 	url := fmt.Sprintf("%s/api/task/recharge/stock", s.baseURL)
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
+		logger.Error("创建HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 

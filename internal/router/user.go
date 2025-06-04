@@ -10,21 +10,25 @@ import (
 
 // RegisterUserRoutes 注册用户相关路由
 func RegisterUserRoutes(r *gin.RouterGroup, userController *controller.UserController, userService *service.UserService, userLogController *controller.UserLogController) {
-	// Public routes
-	public := r.Group("/public")
-	{
-		public.POST("/login", userController.Login)
-		public.POST("/register", userController.Register)
-		public.POST("/refresh-token", userController.RefreshToken)
-	}
+	// Public routes - register directly to parent group
+	r.POST("/user/login", userController.Login)
+	r.POST("/user/register", userController.Register)
+	r.POST("/user/refresh-token", userController.RefreshToken)
+}
 
+// RegisterProtectedUserRoutes 注册需要认证的用户路由
+func RegisterProtectedUserRoutes(r *gin.RouterGroup, userController *controller.UserController, userService *service.UserService, userLogController *controller.UserLogController) {
 	// User profile routes
 	user := r.Group("/user")
-	user.Use(middleware.Auth())
 	{
 		user.GET("/profile", userController.GetProfile)
 		user.PUT("/profile", userController.UpdateProfile)
-		user.PUT("/password", userController.ChangePassword)
+		user.POST("/change-password", userController.ChangePassword)
+		user.GET("/info", userController.GetUserInfo)
+		user.GET("/list", userController.GetUserList)
+		user.PUT("/status", userController.UpdateUserStatus)
+		user.GET("/grade", userController.GetUserGrade)
+		user.GET("/tags", userController.GetUserTags)
 	}
 
 	// User management routes (admin only)
@@ -38,18 +42,18 @@ func RegisterUserRoutes(r *gin.RouterGroup, userController *controller.UserContr
 		users.DELETE("/:id", userController.DeleteUser)
 		users.PUT("/:id/status", userController.UpdateUserStatus)
 		users.POST("/:id/reset-password", userController.ResetPassword)
-		users.POST(":id/roles", userController.AssignRoles)
-		users.GET(":id/roles", userController.GetUserRoles)
-		users.DELETE(":id/roles/:role_id", userController.RemoveRole)
+		users.POST("/:id/roles", userController.AssignRoles)
+		users.GET("/:id/roles", userController.GetUserRoles)
+		users.DELETE("/:id/roles/:role_id", userController.RemoveRole)
 	}
 
 	// User log routes
-	logs := r.Group("/user-logs")
-	logs.Use(middleware.Auth(), middleware.CheckSuperAdmin(userService))
+	userLogs := r.Group("/user-logs")
+	userLogs.Use(middleware.Auth(), middleware.CheckSuperAdmin(userService))
 	{
-		logs.POST("", userLogController.CreateLog)
-		logs.GET("/:id", userLogController.GetLogByID)
-		logs.GET("", userLogController.ListLogs)
+		userLogs.POST("", userLogController.CreateLog)
+		userLogs.GET("/:id", userLogController.GetLogByID)
+		userLogs.GET("", userLogController.ListLogs)
 	}
 
 	// User tag routes

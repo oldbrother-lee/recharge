@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"recharge-go/internal/repository"
+	"recharge-go/pkg/logger"
 	"recharge-go/pkg/signature"
 
 	"github.com/gin-gonic/gin"
@@ -46,10 +47,10 @@ func MF178Auth() gin.HandlerFunc {
 		// 解析请求体
 		var req map[string]interface{}
 		if err := json.Unmarshal(body, &req); err != nil {
-			fmt.Printf("解析请求体失败: %v\n", err)
+			logger.Error("[MF178Auth] 解析请求体失败", "error", err, "body", string(body))
 			response := gin.H{
 				"code":    "FAIL",
-				"message": "解析请求体失败",
+				"message": "参数错误",
 				"data":    gin.H{},
 			}
 			c.JSON(http.StatusOK, response)

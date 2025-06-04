@@ -49,17 +49,17 @@ func (w *RechargeWorker) Start(ctx context.Context) {
 				continue
 			}
 
-			logger.Info("开始处理充值任务, 任务数量: %d", len(tasks))
+			logger.Info("开始处理充值任务", "任务数量", len(tasks))
 
 			// 处理每个任务
 			for _, task := range tasks {
 				if err := w.rechargeService.ProcessRechargeTask(ctx, task); err != nil {
-					logger.Error("处理充值任务失败, order_id: %d, error: %v", task.ID, err)
+					logger.Error("处理充值任务失败", "order_id", task.ID, "error", err)
 					continue
 				}
 			}
 
-			logger.Info("本轮充值任务处理完成, 处理数量: %d", len(tasks))
+			logger.Info("本轮充值任务处理完成", "处理数量", len(tasks))
 		}
 	}
 }

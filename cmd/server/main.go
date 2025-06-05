@@ -2,12 +2,19 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"recharge-go/internal/app"
+	"recharge-go/internal/utils"
 	"recharge-go/pkg/database"
 )
 
 func main() {
+	// 记录应用启动时间
+	uptimeManager := utils.GetUptimeManager()
+	uptimeManager.SetStartTime(time.Now())
+	log.Println("应用启动时间已记录")
+
 	// 初始化数据库
 	if err := database.InitDB(); err != nil {
 		log.Fatalf("初始化数据库失败: %v", err)

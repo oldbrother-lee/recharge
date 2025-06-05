@@ -35,6 +35,7 @@ func SetupRouter(
 	mf178OrderController *controller.MF178OrderController,
 	orderController *controller.OrderController,
 	notificationHandler *handler.NotificationHandler,
+	systemConfigController *controller.SystemConfigController,
 ) *gin.Engine {
 	r := gin.New()
 
@@ -161,6 +162,9 @@ func SetupRouter(
 				orderGroup.GET("/statistics", orderController.GetOrderStatistics)
 			}
 		}
+
+		// 注册系统配置路由
+		RegisterSystemConfigRoutes(api, systemConfigController)
 	}
 
 	return r

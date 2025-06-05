@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import type { Component } from 'vue';
 import { getPaletteColorByNumber, mixColor } from '@sa/color';
 import { loginModuleRecord } from '@/constants/app';
 import { useAppStore } from '@/store/modules/app';
 import { useThemeStore } from '@/store/modules/theme';
 import { $t } from '@/locales';
+import { publicSystemApi } from '@/api/system';
 import PwdLogin from './modules/pwd-login.vue';
 import CodeLogin from './modules/code-login.vue';
 import Register from './modules/register.vue';
@@ -48,6 +49,24 @@ const bgColor = computed(() => {
 
   return mixColor(COLOR_WHITE, themeStore.themeColor, ratio);
 });
+
+const systemName = ref($t('system.title')); // 默认值
+
+// 获取系统名称
+const getSystemName = async () => {
+  try {
+    const response = await publicSystemApi.getSystemBasicInfo();
+    if (response.data && response.data.configs && response.data.configs.system_name) {
+      systemName.value = response.data.configs.system_name;
+    }
+  } catch (error) {
+    console.warn('获取系统名称失败，使用默认值:', error);
+  }
+};
+
+onMounted(() => {
+  getSystemName();
+});
 </script>
 
 <template>
@@ -57,7 +76,7 @@ const bgColor = computed(() => {
       <div class="w-400px lt-sm:w-300px">
         <header class="flex-y-center justify-between">
           <SystemLogo class="text-64px text-primary lt-sm:text-48px" />
-          <h3 class="text-28px text-primary font-500 lt-sm:text-22px">{{ $t('system.title') }}</h3>
+          <h3 class="text-28px text-primary font-500 lt-sm:text-22px">{{ systemName }}</h3>
           <div class="i-flex-col">
             <ThemeSchemaSwitch
               :theme-schema="themeStore.themeScheme"

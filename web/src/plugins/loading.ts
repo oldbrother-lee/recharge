@@ -5,8 +5,21 @@ import { localStg } from '@/utils/storage';
 import { toggleHtmlClass } from '@/utils/common';
 import systemLogo from '@/assets/svg-icon/logo.svg?raw';
 import { $t } from '@/locales';
+import { publicSystemApi } from '@/api/system';
 
-export function setupLoading() {
+async function getSystemNameForLoading(): Promise<string> {
+  try {
+    const response = await publicSystemApi.getSystemName();
+    if (response.data && response.data.system_name) {
+      return response.data.system_name;
+    }
+  } catch (error) {
+    console.warn('获取系统名称失败，使用默认值:', error);
+  }
+  return $t('system.title');
+}
+
+export async function setupLoading() {
   const themeColor = localStg.get('themeColor') || '#646cff';
   const darkMode = localStg.get('darkMode') || false;
   const { r, g, b } = getRgb(themeColor);
@@ -32,6 +45,9 @@ export function setupLoading() {
     })
     .join('\n');
 
+  // 获取系统名称
+  const systemName = await getSystemNameForLoading();
+
   const loading = `
 <div class="fixed-center flex-col bg-layout" style="${primaryColor}">
   ${logoWithClass}
@@ -40,7 +56,7 @@ export function setupLoading() {
       ${dot}
     </div>
   </div>
-  <h2 class="text-28px font-500 text-primary">${$t('system.title')}</h2>
+  <h2 class="text-28px font-500 text-primary">${systemName}</h2>
 </div>`;
 
   const app = document.getElementById('app');

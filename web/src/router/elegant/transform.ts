@@ -182,6 +182,7 @@ const routeMap: RouteMap = {
   "product_set-menu": "/product/set-menu",
   "product_type": "/product/type",
   "system": "/system",
+  "system_settings": "/system/settings",
   "system_user": "/system/user",
   "system_user-grade": "/system/user-grade",
   "user": "/user"

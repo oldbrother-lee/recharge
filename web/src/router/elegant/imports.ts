@@ -30,6 +30,7 @@ export const views: Record<LastLevelRouteKey, RouteComponent | (() => Promise<Ro
   "product_phone-location": () => import("@/views/product/phone-location/index.vue"),
   "product_set-menu": () => import("@/views/product/set-menu/index.vue"),
   product_type: () => import("@/views/product/type/index.vue"),
+  system_settings: () => import("@/views/system/settings/index.vue"),
   "system_user-grade": () => import("@/views/system/user-grade/index.vue"),
   system_user: () => import("@/views/system/user/index.vue"),
   user: () => import("@/views/user/index.vue"),

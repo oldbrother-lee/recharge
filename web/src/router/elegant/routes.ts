@@ -225,6 +225,15 @@ export const generatedRoutes: GeneratedRoute[] = [
     },
     children: [
       {
+        name: 'system_settings',
+        path: '/system/settings',
+        component: 'view.system_settings',
+        meta: {
+          title: 'system_settings',
+          i18nKey: 'route.system_settings'
+        }
+      },
+      {
         name: 'system_user',
         path: '/system/user',
         component: 'view.system_user',

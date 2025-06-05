@@ -7,7 +7,7 @@ import { setupI18n } from './locales';
 import App from './App.vue';
 
 async function setupApp() {
-  setupLoading();
+  await setupLoading();
 
   setupNProgress();
 

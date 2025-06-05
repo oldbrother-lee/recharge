@@ -48,6 +48,7 @@ func SetupRouterV2(
 	callbackController := getControllerByName(controllersValue, "Callback")
 	creditController := getControllerByName(controllersValue, "Credit")
 	statisticsController := getControllerByName(controllersValue, "Statistics")
+	systemConfigController := getControllerByName(controllersValue, "SystemConfig")
 	// userLogController := getControllerByName(controllersValue, "UserLog") // 从参数获取
 
 	// 类型断言
@@ -106,6 +107,15 @@ func SetupRouterV2(
 
 		// 平台账号相关接口
 		RegisterPlatformAccountRoutes(v1)
+
+		// 公共系统配置接口 - 不需要认证
+		if scc := assertSystemConfigController(systemConfigController); scc != nil {
+			public := v1.Group("/public")
+			{
+				public.GET("/system/name", scc.GetSystemName)
+				public.GET("/system/basic-info", scc.GetSystemInfo)
+			}
+		}
 
 		// Protected routes
 		auth := v1.Group("")
@@ -204,6 +214,11 @@ func SetupRouterV2(
 
 			// Task config routes
 			RegisterTaskConfigRoutes(auth)
+
+			// System config routes
+			if scc := assertSystemConfigController(systemConfigController); scc != nil {
+				RegisterSystemConfigRoutes(auth, scc)
+			}
 
 			// TODO: 以下路由对应的控制器暂未初始化，需要对应的服务支持
 			// 只允许管理员访问
@@ -402,6 +417,16 @@ func assertUserLogController(ctrl interface{}) *controller.UserLogController {
 	}
 	if ulc, ok := ctrl.(*controller.UserLogController); ok {
 		return ulc
+	}
+	return nil
+}
+
+func assertSystemConfigController(ctrl interface{}) *controller.SystemConfigController {
+	if ctrl == nil {
+		return nil
+	}
+	if scc, ok := ctrl.(*controller.SystemConfigController); ok {
+		return scc
 	}
 	return nil
 }

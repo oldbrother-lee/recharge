@@ -228,6 +228,7 @@ const local: App.I18n.Schema = {
     plugin_tables: '表格',
     plugin_tables_vtable: 'VTable',
     system: '系统管理',
+    system_settings: '系统设置',
     system_user: '用户管理',
     product:"套餐管理",
     'product_set-menu':"套餐管理",

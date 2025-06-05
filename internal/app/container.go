@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"recharge-go/internal/config"
@@ -63,10 +64,11 @@ type Repositories struct {
 	TaskOrder           *repository.TaskOrderRepository
 	DaichongOrder       *repository.DaichongOrderRepository
 	PhoneLocation       *repository.PhoneLocationRepository
-	Permission          *repository.PermissionRepository // 添加Permission repository
-	Role                *repository.RoleRepository       // 添加Role repository
-	UserLog             *repository.UserLogRepository    // 添加UserLog repository
-	CreditLog           *repository.CreditLogRepository  // 添加CreditLog repository
+	Permission          *repository.PermissionRepository   // 添加Permission repository
+	Role                *repository.RoleRepository         // 添加Role repository
+	UserLog             *repository.UserLogRepository      // 添加UserLog repository
+	CreditLog           *repository.CreditLogRepository    // 添加CreditLog repository
+	SystemConfig        *repository.SystemConfigRepository // 添加SystemConfig repository
 }
 
 // Services 服务集合
@@ -97,6 +99,7 @@ type Services struct {
 	Credit                 *service.CreditService            // 添加Credit服务
 	PlatformPushStatus     *platform.PushStatusService       // 添加PlatformPushStatus服务
 	PlatformSvc            *platform.Service                 // 添加platform.Service
+	SystemConfig           *service.SystemConfigService      // 添加SystemConfig服务
 }
 
 // NewContainer 创建新的容器实例
@@ -222,6 +225,7 @@ func (c *Container) initRepositories() {
 		Role:                repository.NewRoleRepository(c.db),
 		UserLog:             repository.NewUserLogRepository(c.db),
 		CreditLog:           repository.NewCreditLogRepository(c.db),
+		SystemConfig:        repository.NewSystemConfigRepository(c.db),
 	}
 }
 
@@ -370,6 +374,15 @@ func (c *Container) initServices() error {
 
 	// 初始化PlatformPushStatus服务
 	c.services.PlatformPushStatus = platform.NewPushStatusService(c.repositories.PlatformAccount)
+
+	// 初始化SystemConfig服务
+	c.services.SystemConfig = service.NewSystemConfigService(c.repositories.SystemConfig)
+
+	// 初始化系统配置数据
+	if err := c.services.SystemConfig.InitSystemConfigs(context.Background()); err != nil {
+		c.logger.Error("初始化系统配置失败", zap.Error(err))
+		// 不返回错误，允许系统继续启动
+	}
 
 	return nil
 }

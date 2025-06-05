@@ -45,11 +45,24 @@ func (c *StatisticsController) GetOrderOverview(ctx *gin.Context) {
 // @Success 200 {array} model.OrderStatisticsOperator
 // @Router /api/v1/statistics/order/operator [get]
 func (c *StatisticsController) GetOperatorStatistics(ctx *gin.Context) {
+	roles, _ := ctx.Get("roles")
+	userId := ctx.GetInt64("user_id")
+
 	today := time.Now()
 	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
 	end := start.Add(24 * time.Hour).Add(-time.Nanosecond)
 
-	result, err := c.statisticsSvc.GetOperatorStatistics(ctx, start, end)
+	var result interface{}
+	var err error
+
+	if utils.HasRole(roles.([]string), "SUPER_ADMIN") {
+		// 管理员可以查看所有运营商统计
+		result, err = c.statisticsSvc.GetOperatorStatistics(ctx, start, end)
+	} else {
+		// 代理商只能查看自己用户的运营商统计
+		result, err = c.statisticsSvc.GetOperatorStatisticsByUser(ctx, start, end, userId)
+	}
+
 	if err != nil {
 		utils.Error(ctx, http.StatusInternalServerError, err.Error())
 		return

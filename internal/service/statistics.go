@@ -18,6 +18,7 @@ type OperatorOrderCount struct {
 type StatisticsService interface {
 	GetOrderOverview(ctx context.Context) (*model.OrderStatisticsOverview, error)
 	GetOperatorStatistics(ctx context.Context, startDate, endDate time.Time) ([]model.OrderStatisticsOperator, error)
+	GetOperatorStatisticsByUser(ctx context.Context, startDate, endDate time.Time, userId int64) ([]model.OrderStatisticsOperator, error)
 	GetDailyStatistics(ctx context.Context, startDate, endDate time.Time) ([]model.OrderStatisticsDaily, error)
 	GetTrendStatistics(ctx context.Context, startDate, endDate time.Time, operator string) ([]model.OrderStatisticsTrend, error)
 	UpdateStatistics(ctx context.Context) error
@@ -46,6 +47,10 @@ func (s *statisticsService) GetOrderOverview(ctx context.Context) (*model.OrderS
 
 func (s *statisticsService) GetOperatorStatistics(ctx context.Context, startDate, endDate time.Time) ([]model.OrderStatisticsOperator, error) {
 	return s.orderRepo.GetOperatorRealtimeStatistics(ctx, startDate, endDate)
+}
+
+func (s *statisticsService) GetOperatorStatisticsByUser(ctx context.Context, startDate, endDate time.Time, userId int64) ([]model.OrderStatisticsOperator, error) {
+	return s.orderRepo.GetOperatorRealtimeStatisticsByUser(ctx, startDate, endDate, userId)
 }
 
 func (s *statisticsService) GetDailyStatistics(ctx context.Context, startDate, endDate time.Time) ([]model.OrderStatisticsDaily, error) {

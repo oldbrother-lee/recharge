@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"net/http"
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
@@ -208,7 +209,32 @@ func (c *PlatformController) GetPlatformAccount(ctx *gin.Context) {
 // @Success 200 {object} response.Response{data=[]platform.Channel}
 // @Router /api/platform/channels [get]
 func (c *PlatformController) GetChannelList(ctx *gin.Context) {
-	channels, err := c.platformSvc.GetChannelList()
+	//从 url 获取参数 name
+	name := ctx.Query("name")
+
+	// 通过这个platform_accounts account_name自动匹配 name 表获取 appkey 和 appsecret
+	var appKey, apiURL string
+	if name != "" {
+		account, err := c.service.GetPlatformAccountByAccountName(name)
+		if err != nil {
+			utils.Error(ctx, http.StatusBadRequest, fmt.Sprintf("未找到账号名为 %s 的平台账号: %v", name, err))
+			return
+		}
+		// 获取 appkey 和 appsecret
+		appKey = account.AppKey
+		platformId := account.PlatformID
+		// 通过 platformId 从 platforms 表获取 apiurl
+		platform, err := c.service.GetPlatformByID(platformId)
+		if err != nil {
+			utils.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("获取平台信息失败: %v", err))
+			return
+		}
+		apiURL = platform.ApiURL
+		// 设置 API URL 到响应头
+
+	}
+
+	channels, err := c.platformSvc.GetChannelList(appKey, name, apiURL)
 	if err != nil {
 		utils.Error(ctx, http.StatusInternalServerError, err.Error())
 		return

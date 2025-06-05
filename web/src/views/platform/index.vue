@@ -179,7 +179,7 @@
         <template #header>
           <div style="display: flex; align-items: center; width: 100%; box-sizing: border-box;">
             <span style="flex: 1;">拉取订单配置 - {{ currentPlatformAccount?.account_name }}</span>
-            <NButton type="primary" @click="openChannelModal">增加配置</NButton>
+            <NButton type="primary" @click="openChannelModal(currentPlatformAccount.account_name)">增加配置</NButton>
             <NButton
               type="success"
               style="margin-left: 8px;"
@@ -1182,10 +1182,11 @@
   ];
   const provinces = ref<{ [channelId: number]: string[] }>({});
   
-  function openChannelModal() {
+  function openChannelModal(account: string) {
+    console.log('Opening channel modal for account:', account);
     showChannelModal.value = true;
     loadingChannels.value = true;
-    getChannelList().then(res => {
+    getChannelList(account).then(res => {
       const list = Array.isArray(res.data) ? res.data : [];
       channels.value = list;
       const selectedInit: { [channelId: number]: number[] } = {};

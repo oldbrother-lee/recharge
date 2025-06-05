@@ -423,7 +423,9 @@ func (s *Service) GetOrderList(orderNumber string, orderStatus, settlementStatus
 }
 
 // GetChannelList 查询所有渠道及对应运营商编码
-func (s *Service) GetChannelList() ([]Channel, error) {
+func (s *Service) GetChannelList(appkey string, userid string, apiUrl string) ([]Channel, error) {
+	//accoutname
+
 	cacheKey := "xzx:channel_list"
 	ctx := context.Background()
 	var cached []Channel
@@ -434,14 +436,14 @@ func (s *Service) GetChannelList() ([]Channel, error) {
 	}
 
 	params := map[string]string{}
-	apiKey := "c362d30409744d7584abcbd3b58124c2"
-	userID := "558203"
-	authToken, queryTime, err := signature.GenerateXianzhuanxiaSignature(params, apiKey, userID)
+	// apiKey := "c362d30409744d7584abcbd3b58124c2"
+	// userID := "558203"
+	authToken, queryTime, err := signature.GenerateXianzhuanxiaSignature(params, appkey, userid)
 	if err != nil {
 		return nil, fmt.Errorf("生成签名失败: %v", err)
 	}
 
-	url := fmt.Sprintf("%s/api/task/recharge/taskChannelList", "https://cusapitest.xianzhuanxia.com")
+	url := fmt.Sprintf("%s/api/task/recharge/taskChannelList", apiUrl)
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		logger.Error("创建HTTP请求失败", "url", url, "error", err)
@@ -460,6 +462,7 @@ func (s *Service) GetChannelList() ([]Channel, error) {
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
+	logger.Info("获取渠道列表", "url", url, "status", resp.StatusCode, "body", string(body))
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %v", err)
 	}

@@ -66,6 +66,8 @@ type OrderRepository interface {
 	GetOrderRealtimeStatistics(ctx context.Context, userId int64) (*model.OrderStatisticsOverview, error)
 	// GetOperatorRealtimeStatistics 获取运营商实时统计
 	GetOperatorRealtimeStatistics(ctx context.Context, start, end time.Time) ([]model.OrderStatisticsOperator, error)
+	// GetOperatorRealtimeStatisticsByUser 获取指定用户的运营商实时统计
+	GetOperatorRealtimeStatisticsByUser(ctx context.Context, start, end time.Time, userId int64) ([]model.OrderStatisticsOperator, error)
 	// GetOperatorOrderCount 按运营商分组统计订单总数
 	GetOperatorOrderCount(ctx context.Context, start, end time.Time) ([]model.OperatorOrderCount, error)
 	GetByUserID(ctx context.Context, userID int64, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error)
@@ -430,6 +432,22 @@ func (r *OrderRepositoryImpl) GetOperatorRealtimeStatistics(ctx context.Context,
 	err := r.db.Table("orders").
 		Select(sql).
 		Where("DATE(orders.create_time) = ? AND orders.isp IN (1,2,3)", start.Format("2006-01-02")).
+		Group("orders.isp").
+		Scan(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return stats, nil
+}
+
+// GetOperatorRealtimeStatisticsByUser 获取指定用户的运营商实时统计
+func (r *OrderRepositoryImpl) GetOperatorRealtimeStatisticsByUser(ctx context.Context, start, end time.Time, userId int64) ([]model.OrderStatisticsOperator, error) {
+	var stats []model.OrderStatisticsOperator
+	sql := `orders.isp, COUNT(*) as total_orders`
+	err := r.db.Table("orders").
+		Select(sql).
+		Where("DATE(orders.create_time) = ? AND orders.isp IN (1,2,3) AND orders.customer_id = ?", start.Format("2006-01-02"), userId).
 		Group("orders.isp").
 		Scan(&stats).Error
 	if err != nil {

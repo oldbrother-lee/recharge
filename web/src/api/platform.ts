@@ -26,7 +26,7 @@ export interface Product {
 }
 
 /** 获取渠道列表 */
-export function getChannelList() {
-  return request({ url: '/platform/xianzhuanxia/channels', method: 'get' });
+export function getChannelList(name: string) {
+  return request({ url: '/platform/xianzhuanxia/channels', method: 'get' ,params: {name}});
 } 
 

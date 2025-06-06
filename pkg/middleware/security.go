@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -63,15 +64,21 @@ type SecurityMiddleware struct {
 	config   *SecurityConfig
 	logger   *loggerV2.LoggerV2
 	limiters map[string]*rate.Limiter
+	mu       sync.RWMutex // 保护limiters map的并发访问
 }
 
 // NewSecurityMiddleware 创建安全中间件
 func NewSecurityMiddleware(config *SecurityConfig, logger *loggerV2.LoggerV2) *SecurityMiddleware {
-	return &SecurityMiddleware{
+	sm := &SecurityMiddleware{
 		config:   config,
 		logger:   logger,
 		limiters: make(map[string]*rate.Limiter),
 	}
+
+	// 启动后台清理goroutine
+	go sm.startCleanupRoutine()
+
+	return sm
 }
 
 // JWTAuth JWT认证中间件
@@ -294,6 +301,19 @@ func (sm *SecurityMiddleware) getClientID(c *gin.Context) string {
 
 // getLimiter 获取或创建限流器
 func (sm *SecurityMiddleware) getLimiter(clientID string) *rate.Limiter {
+	// 先尝试读锁获取已存在的限流器
+	sm.mu.RLock()
+	if limiter, exists := sm.limiters[clientID]; exists {
+		sm.mu.RUnlock()
+		return limiter
+	}
+	sm.mu.RUnlock()
+
+	// 使用写锁创建新的限流器
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// 双重检查，防止在获取写锁期间其他goroutine已经创建了限流器
 	if limiter, exists := sm.limiters[clientID]; exists {
 		return limiter
 	}
@@ -302,18 +322,39 @@ func (sm *SecurityMiddleware) getLimiter(clientID string) *rate.Limiter {
 	limiter := rate.NewLimiter(rate.Limit(sm.config.RateLimit.RPS), sm.config.RateLimit.Burst)
 	sm.limiters[clientID] = limiter
 
-	// 清理过期的限流器（简单实现）
-	go sm.cleanupLimiters()
-
 	return limiter
+}
+
+// startCleanupRoutine 启动清理例程
+func (sm *SecurityMiddleware) startCleanupRoutine() {
+	ticker := time.NewTicker(time.Hour) // 每小时清理一次
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-ticker.C:
+			sm.cleanupLimiters()
+		}
+	}
 }
 
 // cleanupLimiters 清理过期的限流器
 func (sm *SecurityMiddleware) cleanupLimiters() {
 	// 简单的清理策略：定期清理所有限流器
 	// 实际应用中可以使用更复杂的LRU或TTL策略
-	time.Sleep(time.Hour)
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	
+	// 记录清理前的限流器数量
+	oldCount := len(sm.limiters)
 	sm.limiters = make(map[string]*rate.Limiter)
+	
+	// 记录清理日志
+	if oldCount > 0 {
+		sm.logger.Info("Rate limiters cleaned up",
+			loggerV2.Int("cleaned_count", oldCount),
+		)
+	}
 }
 
 // isAllowedOrigin 检查是否允许的源

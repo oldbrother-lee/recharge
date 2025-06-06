@@ -104,17 +104,27 @@ type Services struct {
 
 // NewContainer 创建新的容器实例
 func NewContainer() (*Container, error) {
+	return NewContainerWithConfig("configs/config.yaml")
+}
+
+// NewContainerWithConfig 使用指定配置文件创建容器实例
+func NewContainerWithConfig(configPath string) (*Container, error) {
+	return NewContainerWithConfigAndService(configPath, "")
+}
+
+// NewContainerWithConfigAndService 使用指定配置文件和服务名创建容器实例
+func NewContainerWithConfigAndService(configPath, serviceName string) (*Container, error) {
 	c := &Container{}
 
-	// 加载配置
+	// 加载指定的配置文件
 	var err error
-	c.config, err = config.LoadConfig("configs/config.yaml")
+	c.config, err = config.LoadConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
 
 	// 初始化logger
-	if err := c.initLogger(); err != nil {
+	if err := c.initLogger(serviceName); err != nil {
 		return nil, err
 	}
 
@@ -388,10 +398,16 @@ func (c *Container) initServices() error {
 }
 
 // initLogger 初始化日志
-func (c *Container) initLogger() error {
+func (c *Container) initLogger(serviceName string) error {
+	// 使用pkg/logger包中的InitLogger函数初始化日志
+	if err := loggerV2.InitLogger(serviceName); err != nil {
+		return fmt.Errorf("初始化logger失败: %w", err)
+	}
+
+	// 同时保持原有的zap logger初始化
 	logger, err := zap.NewProduction()
 	if err != nil {
-		return fmt.Errorf("初始化logger失败: %w", err)
+		return fmt.Errorf("初始化zap logger失败: %w", err)
 	}
 	c.logger = logger
 	return nil

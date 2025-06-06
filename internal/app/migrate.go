@@ -19,7 +19,7 @@ type MigrateApp struct {
 
 // NewMigrateApp 创建迁移应用实例
 func NewMigrateApp() (Application, error) {
-	container, err := NewContainer()
+	container, err := NewContainerWithConfigAndService("configs/config.yaml", "migrate")
 	if err != nil {
 		return nil, err
 	}

@@ -246,7 +246,7 @@ func (s *TaskService) handleMatchedOrder(order *platform.PlatformOrder, cfg *mod
 	}
 
 	// 保存订单到 order 订单表
-	productIDInt, err := s.orderService.GetProductID(order.FaceValue, utils.ISPNameToCode(order.ProductName), 1)
+	productObject, err := s.orderService.GetProductID(order.FaceValue, utils.ISPNameToCode(order.ProductName), 1)
 	if err != nil {
 		logger.Error(fmt.Sprintf("获取产品id失败: OrderNumber=%s, error=%v", order.OrderNumber, err))
 		return
@@ -254,12 +254,12 @@ func (s *TaskService) handleMatchedOrder(order *platform.PlatformOrder, cfg *mod
 
 	orderRecord := &model.Order{
 		Mobile:            order.AccountNum,
-		ProductID:         productIDInt,
+		ProductID:         productObject.ID,
 		Denom:             order.FaceValue,
 		OfficialPayment:   order.SettlementAmount,
 		UserQuotePayment:  order.SettlementAmount,
 		UserPayment:       order.SettlementAmount,
-		Price:             order.SettlementAmount,
+		Price:             productObject.Price,
 		Status:            model.OrderStatusPendingRecharge,
 		IsDel:             0,
 		Client:            3,

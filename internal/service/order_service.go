@@ -53,7 +53,7 @@ type OrderService interface {
 	// CleanupOrders 清理指定时间范围的订单及相关日志
 	CleanupOrders(ctx context.Context, start, end string) (int64, error)
 	// GetProductID 根据价格、ISP和状态获取产品ID
-	GetProductID(price float64, isp int, status int) (int64, error)
+	GetProductID(price float64, isp int, status int) (*model.Product, error)
 	// GetOrderStatistics 按 customer_id 统计今日订单总数、成功订单数、失败订单数、今日成交金额（Denom 字段）
 	GetOrderStatistics(ctx context.Context, customerID int64) (*OrderStatistics, error)
 	// GetOrdersByUserID 根据用户ID获取订单列表
@@ -462,7 +462,7 @@ func (s *orderService) CleanupOrders(ctx context.Context, start, end string) (in
 
 // GetProductID 根据价格、ISP和状态获取产品ID
 // 支持价格误差容忍（0.01），并输出详细日志
-func (s *orderService) GetProductID(price float64, isp int, status int) (int64, error) {
+func (s *orderService) GetProductID(price float64, isp int, status int) (*model.Product, error) {
 	logger.Info("GetProductID called",
 		"price", price,
 		"isp", isp,
@@ -476,10 +476,10 @@ func (s *orderService) GetProductID(price float64, isp int, status int) (int64, 
 			"status", status,
 			"error", err,
 		)
-		return 0, fmt.Errorf("未找到匹配的产品: price=%.2f, isp=%d, status=%d", price, isp, status)
+		return nil, fmt.Errorf("未找到匹配的产品: price=%.2f, isp=%d, status=%d", price, isp, status)
 	}
 	logger.Info("匹配到产品", "product_id", product.ID, "price", product.Price, "isp", product.ISP, "status", product.Status)
-	return product.ID, nil
+	return product, nil
 }
 
 // GetOrderStatistics 按 customer_id 统计今日订单总数、成功订单数、失败订单数、今日成交金额（Denom 字段）

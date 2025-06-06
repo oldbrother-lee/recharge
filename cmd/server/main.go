@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"time"
 
@@ -10,6 +11,10 @@ import (
 )
 
 func main() {
+	// 添加命令行参数
+	configPath := flag.String("config", "configs/config.yaml", "配置文件路径")
+	flag.Parse()
+
 	// 记录应用启动时间
 	uptimeManager := utils.GetUptimeManager()
 	uptimeManager.SetStartTime(time.Now())
@@ -20,8 +25,8 @@ func main() {
 		log.Fatalf("初始化数据库失败: %v", err)
 	}
 
-	// 创建容器
-	container, err := app.NewContainer()
+	// 创建容器时传入配置文件路径和服务名
+	container, err := app.NewContainerWithConfigAndService(*configPath, "server")
 	if err != nil {
 		log.Fatalf("创建容器失败: %v", err)
 	}

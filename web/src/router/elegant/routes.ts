@@ -230,6 +230,7 @@ export const generatedRoutes: GeneratedRoute[] = [
         component: 'view.system_settings',
         meta: {
           title: 'system_settings',
+          icon: 'mdi:pause-octagon-outline',
           i18nKey: 'route.system_settings'
         }
       },
@@ -250,7 +251,8 @@ export const generatedRoutes: GeneratedRoute[] = [
         component: 'view.system_user-grade',
         meta: {
           title: 'system_user-grade',
-          i18nKey: 'route.system_user-grade'
+          i18nKey: 'route.system_user-grade',
+          hideInMenu: true
         }
       }
     ]

@@ -444,6 +444,7 @@ func (s *Service) GetChannelList(appkey string, userid string, apiUrl string) ([
 	}
 
 	url := fmt.Sprintf("%s/api/task/recharge/taskChannelList", apiUrl)
+	fmt.Println(url, "************")
 	req, err := http.NewRequest("POST", url, nil)
 	if err != nil {
 		logger.Error("创建HTTP请求失败", "url", url, "error", err)
@@ -457,6 +458,7 @@ func (s *Service) GetChannelList(appkey string, userid string, apiUrl string) ([
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		logger.Error("发送HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("发送请求失败: %v", err)
 	}
 	defer resp.Body.Close()

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -243,12 +244,24 @@ func (s *Service) QueryTask(token string, apiURL string, apiKey, userID string) 
 	if result.Code != 0 {
 		return nil, fmt.Errorf("业务错误: %s", result.Msg)
 	}
-
-	if result.Result.MatchStatus != 3 || len(result.Result.Orders) == 0 {
+	// result.Result.MatchStatus 如果等于 2 表示匹配失败，返回 nil
+	if result.Result.MatchStatus == 2 {
+		return nil, errors.New("匹配失败")
+	}
+	// result.Result.MatchStatus 如果等于 3 表示匹配成功，返回 result.Result.Orders[0]
+	if result.Result.MatchStatus == 3 && len(result.Result.Orders) > 0 {
+		return &result.Result.Orders[0], nil
+	}
+	//result.Result.MatchStatus 如果等于 1 表示匹配中，返回 nil
+	if result.Result.MatchStatus == 1 {
 		return nil, nil
 	}
 
-	return &result.Result.Orders[0], nil
+	// if result.Result.MatchStatus != 3 || len(result.Result.Orders) == 0 {
+	// 	return nil, nil
+	// }
+
+	return nil, nil
 }
 
 // ReportTask 上报做单订单结果

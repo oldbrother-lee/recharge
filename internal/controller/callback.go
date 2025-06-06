@@ -192,8 +192,10 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 // HandleDayuanrenCallback 处理大猿人平台回调
 func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 1. 获取userid
+	logger.Info("处理大猿人平台回调!!!")
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
+		logger.Error("处理大猿人平台回调 返回：400 缺少userid")
 		utils.Error(ctx, 400, "缺少userid")
 		return
 	}
@@ -201,6 +203,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 2. 获取平台账号信息
 	account, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
+		logger.Error("处理大猿人平台回调 返回：400 平台账号不存在", zap.Error(err))
 		utils.Error(ctx, 400, "平台账号不存在")
 		return
 	}
@@ -208,6 +211,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 3. 读取原始请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
+		logger.Error("处理大猿人平台回调 返回：400 读取请求体失败", zap.Error(err))
 		utils.Error(ctx, 400, "读取请求体失败")
 		return
 	}
@@ -215,6 +219,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 4. 解析表单参数
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
+		logger.Error("处理大猿人平台回调 返回：400 解析参数失败", zap.Error(err))
 		utils.Error(ctx, 400, "解析参数失败")
 		return
 	}
@@ -227,6 +232,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 
 	// 5. 签名校验
 	if !signature.VerifyDayuanrenSign(params, account.AppSecret) {
+		logger.Error("处理大猿人平台回调 返回：400 签名校验失败")
 		utils.Error(ctx, 400, "签名校验失败")
 		return
 	}
@@ -234,10 +240,12 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 6. 调用 service 层处理业务
 	err = c.rechargeService.HandleCallback(ctx, "dayuanren", body)
 	if err != nil {
+		logger.Error("处理大猿人平台回调 返回：500 处理回调失败", zap.Error(err))
 		utils.Error(ctx, 500, err.Error())
 		return
 	}
 
 	// 7. 返回成功
+	logger.Info("处理大猿人平台回调 返回：200 成功")
 	ctx.String(200, "success")
 }

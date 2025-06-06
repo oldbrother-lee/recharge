@@ -252,7 +252,15 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 
 	// 记录原始请求数据
 	logger.Info("【收到可客帮订单查询请求】request: %+v", req)
-
+	userid := ctx.Param("userid")
+	// 1. 查询 platform_accounts 表，找到 account_name = userid 的账号
+	accountRepo := repository.NewPlatformRepository(database.DB)
+	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
+	if err != nil || account == nil {
+		logger.Error("【无效的账号标识】userid: %s", userid)
+		utils.Error(ctx, http.StatusBadRequest, "无效的账号标识")
+		return
+	}
 	// 验证签名
 	params := map[string]interface{}{
 		"app_key":       req.AppKey,
@@ -261,7 +269,7 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 	}
 
 	// TODO: 从配置或数据库获取 secretKey
-	secretKey := "your_secret_key"
+	secretKey := account.AppSecret
 
 	if !signature.VerifyKekebangSign(params, req.Sign, secretKey) {
 		logger.Error("【签名验证失败】request: %+v", req)

@@ -1061,8 +1061,8 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 		return fmt.Errorf("commit transaction failed: %v", err)
 	}
 
-	logger.Info("【订单状态和成本价更新成功】order_id: %d, status: %d, const_price: %f",
-		order.ID, model.OrderStatusRecharging, apiParam.Price)
+	logger.Info(fmt.Sprintf("【订单状态和成本价更新成功】order_id: %d, status: %d, const_price: %f",
+		order.ID, model.OrderStatusRecharging, apiParam.Price))
 	return nil
 }
 

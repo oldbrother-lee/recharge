@@ -3,6 +3,7 @@ package signature
 import (
 	"crypto/md5"
 	"fmt"
+	"recharge-go/pkg/logger"
 	"sort"
 	"strings"
 )
@@ -21,6 +22,7 @@ func GenerateDayuanrenSign(params map[string]string, apiKey string) string {
 		signParts = append(signParts, fmt.Sprintf("%s=%s", k, params[k]))
 	}
 	signStr := strings.Join(signParts, "&") + "&apikey=" + apiKey
+	logger.Info(fmt.Sprintf("大猿人签名前字符串 %s", signStr))
 	md5Sum := md5.Sum([]byte(signStr))
 	return strings.ToUpper(fmt.Sprintf("%x", md5Sum))
 }

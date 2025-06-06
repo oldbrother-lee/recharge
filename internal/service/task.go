@@ -163,16 +163,24 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 	logger.Info(fmt.Sprintf("处理任务配置: ChannelID=%d, ProductID=%s accountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
 
 	// 获取或申请token
+	logger.Info(fmt.Sprintf("开始申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
+	tokenApplyStartTime := time.Now()
+
 	token, err := s.platformSvc.GetToken(channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL, cfg.ID)
 	if err != nil {
-		logger.Error(fmt.Sprintf("获取 token 失败: ChannelID=%d, ProductID=%s, error=%v", channelID, productID, err))
+		logger.Error(fmt.Sprintf("申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
+			channelID, productID, accountName, time.Since(tokenApplyStartTime), err))
 		return
 	}
-	logger.Info(fmt.Sprintf("获取 token 成功: ChannelID=%d, ProductID=%s, token=%s", channelID, productID, token))
+
+	logger.Info(fmt.Sprintf("申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, token=%s, 耗时=%v",
+		channelID, productID, accountName, token, time.Since(tokenApplyStartTime)))
 
 	// 开始查询循环：基于token创建时间判断5分钟过期，不限制查询次数
 	queryInterval := 2 * time.Second
 	tokenStartTime := time.Now() // 记录token开始使用的时间
+	logger.Info(fmt.Sprintf("token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s",
+		token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05")))
 
 	for {
 		select {
@@ -183,40 +191,81 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 
 		// 检查token是否已过期（5分钟）
 		if time.Since(tokenStartTime) >= 5*time.Minute {
-			logger.Info(fmt.Sprintf("token已过期(5分钟)，停止查询: ChannelID=%d, ProductID=%s", channelID, productID))
+			tokenLifetime := time.Since(tokenStartTime)
+			logger.Info(fmt.Sprintf("token已过期，结束生命周期: token=%s, ChannelID=%d, ProductID=%s, 生命周期=%v, 过期时间=%s",
+				token, channelID, productID, tokenLifetime, time.Now().Format("2006-01-02 15:04:05")))
 			return
 		}
 
 		// 查询订单
 		order, err := s.platformSvc.QueryTask(token, platform.ApiURL, appkey, accountName)
 		if err != nil {
-			logger.Error(fmt.Sprintf("查询任务匹配状态失败: token=%s, error=%v", token, err))
+			tokenLifetime := time.Since(tokenStartTime)
+			logger.Error(fmt.Sprintf("查询任务匹配状态失败: token=%s, 生命周期=%v, error=%v", token, tokenLifetime, err))
+			if strings.Contains(err.Error(), "匹配失败") {
+				// 匹配失败，让当前token失效并重新申请token
+				tokenLifetime := time.Since(tokenStartTime)
+				logger.Info(fmt.Sprintf("主动失效token: token=%s, 原因=匹配失败, 生命周期=%v, 失效时间=%s",
+					token, tokenLifetime, time.Now().Format("2006-01-02 15:04:05")))
+				_ = s.platformSvc.InvalidateToken(cfg.ID)
+
+				logger.Info(fmt.Sprintf("匹配订单失败重新申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
+				reapplyStartTime := time.Now()
+
+				newToken, err := s.platformSvc.GetToken(channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL, cfg.ID)
+				if err != nil {
+					logger.Error(fmt.Sprintf("匹配订单失败重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
+						channelID, productID, accountName, time.Since(reapplyStartTime), err))
+					return
+				}
+
+				token = newToken
+				tokenStartTime = time.Now() // 重置token开始时间
+				logger.Info(fmt.Sprintf("匹配订单失败重新申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, 新token=%s, 耗时=%v",
+					channelID, productID, accountName, token, time.Since(reapplyStartTime)))
+				logger.Info(fmt.Sprintf("新token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s",
+					token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05")))
+				time.Sleep(1 * time.Second)
+				continue
+			}
 			return
 		}
 
 		if order != nil {
 			// 匹配到订单，处理订单并重新申请token
-			logger.Info(fmt.Sprintf("匹配到订单: OrderNumber=%s, AccountNum=%s, SettlementAmount=%.2f",
-				order.OrderNumber, order.AccountNum, order.SettlementAmount))
+			logger.Info(fmt.Sprintf("匹配到订单: token=%s OrderNumber=%s, AccountNum=%s,SettlementAmount=%.2f",
+				token, order.OrderNumber, order.AccountNum, order.SettlementAmount))
 
 			// 让当前token失效
+			tokenLifetime := time.Since(tokenStartTime)
+			logger.Info(fmt.Sprintf("主动失效token: token=%s, 原因=匹配到订单, 生命周期=%v, 失效时间=%s",
+				token, tokenLifetime, time.Now().Format("2006-01-02 15:04:05")))
 			_ = s.platformSvc.InvalidateToken(cfg.ID)
 
 			// 处理订单
 			s.handleMatchedOrder(order, cfg, channelID, productID, platformAccount, platform)
 
 			// 重新申请token继续查询
+			logger.Info(fmt.Sprintf("开始重新申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
+			reapplyStartTime := time.Now()
+
 			newToken, err := s.platformSvc.GetToken(channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL, cfg.ID)
 			if err != nil {
-				logger.Error(fmt.Sprintf("重新申请 token 失败: ChannelID=%d, ProductID=%s, error=%v", channelID, productID, err))
+				logger.Error(fmt.Sprintf("重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
+					channelID, productID, accountName, time.Since(reapplyStartTime), err))
 				return
 			}
+
 			token = newToken
 			tokenStartTime = time.Now() // 重置token开始时间
-			logger.Info(fmt.Sprintf("重新申请 token 成功: ChannelID=%d, ProductID=%s, token=%s", channelID, productID, token))
+			logger.Info(fmt.Sprintf("重新申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, 新token=%s, 耗时=%v",
+				channelID, productID, accountName, token, time.Since(reapplyStartTime)))
+			logger.Info(fmt.Sprintf("新token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s",
+				token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05")))
 		} else {
 			// 未匹配到订单，等待后继续查询
-			logger.Debug(fmt.Sprintf("未匹配到订单，继续查询: token=%s", token))
+			tokenLifetime := time.Since(tokenStartTime)
+			logger.Debug(fmt.Sprintf("未匹配到订单，继续查询: token=%s, 生命周期=%v", token, tokenLifetime))
 		}
 
 		// 等待查询间隔

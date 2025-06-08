@@ -163,6 +163,18 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 	}
 	// 发送通知
 	if err := t.platformService.SendNotification(ctx, order); err != nil {
+		// 记录通知发送失败的详细错误信息
+		logger.Error("通知发送失败",
+			"error", err,
+			"notification_id", dbRecord.ID,
+			"order_id", dbRecord.OrderID,
+			"order_number", order.OrderNumber,
+			"platform_code", dbRecord.PlatformCode,
+			"notification_type", dbRecord.NotificationType,
+			"retry_count", dbRecord.RetryCount,
+			"callback_url", order.PlatformCallbackURL,
+		)
+
 		// 业务终态错误关键字
 		if strings.Contains(err.Error(), "此订单已做单失败") {
 			logger.Error("遇到终态业务错误，不再重试",

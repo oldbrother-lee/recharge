@@ -281,7 +281,7 @@ func (c *Container) initServices() error {
 		repository.NewUserTagRelationRepository(c.db),
 	)
 
-	c.services.Platform = service.NewPlatformService(c.repositories.Platform, c.repositories.Order)
+	c.services.Platform = service.NewPlatformService(c.repositories.Platform, c.repositories.Order, c.repositories.ExternalAPIKey)
 	c.services.PlatformService = c.services.Platform
 	c.services.Statistics = service.NewStatisticsService(c.repositories.OrderStatistics, c.repositories.Order)
 	c.services.Notification = notificationService.NewNotificationService(c.repositories.Notification, queueInstance)

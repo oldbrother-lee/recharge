@@ -3,7 +3,6 @@ package controller
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 type MF178OrderController struct {
@@ -147,7 +147,7 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 
 	// 3. 检查订单是否已存在
 	order, err := c.orderService.GetOrderByOutTradeNum(ctx, strconv.FormatInt(req.UserOrderID, 10))
-	if err != nil && !errors.Is(err, repository.ErrOrderNotFound) {
+	if err != nil && err != gorm.ErrRecordNotFound {
 		logger.Log.Error("查询订单失败",
 			zap.Error(err),
 			zap.String("order_id", strconv.FormatInt(req.UserOrderID, 10)))

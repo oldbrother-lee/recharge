@@ -64,11 +64,12 @@ type Repositories struct {
 	TaskOrder           *repository.TaskOrderRepository
 	DaichongOrder       *repository.DaichongOrderRepository
 	PhoneLocation       *repository.PhoneLocationRepository
-	Permission          *repository.PermissionRepository   // 添加Permission repository
-	Role                *repository.RoleRepository         // 添加Role repository
-	UserLog             *repository.UserLogRepository      // 添加UserLog repository
-	CreditLog           *repository.CreditLogRepository    // 添加CreditLog repository
-	SystemConfig        *repository.SystemConfigRepository // 添加SystemConfig repository
+	Permission          *repository.PermissionRepository    // 添加Permission repository
+	Role                *repository.RoleRepository          // 添加Role repository
+	UserLog             *repository.UserLogRepository       // 添加UserLog repository
+	CreditLog           *repository.CreditLogRepository     // 添加CreditLog repository
+	SystemConfig        *repository.SystemConfigRepository  // 添加SystemConfig repository
+	ExternalAPIKey      repository.ExternalAPIKeyRepository // 添加ExternalAPIKey repository
 }
 
 // Services 服务集合
@@ -236,6 +237,7 @@ func (c *Container) initRepositories() {
 		UserLog:             repository.NewUserLogRepository(c.db),
 		CreditLog:           repository.NewCreditLogRepository(c.db),
 		SystemConfig:        repository.NewSystemConfigRepository(c.db),
+		ExternalAPIKey:      repository.NewExternalAPIKeyRepository(c.db),
 	}
 }
 
@@ -251,6 +253,12 @@ func (c *Container) initServices() error {
 		c.repositories.PlatformAccount,
 		c.repositories.User,
 		c.repositories.BalanceLog,
+	)
+
+	// 初始化余额服务（需要在充值服务之前创建）
+	c.services.Balance = service.NewBalanceService(
+		c.repositories.BalanceLog,
+		c.repositories.User,
 	)
 
 	// 创建其他服务
@@ -290,6 +298,7 @@ func (c *Container) initServices() error {
 		c.repositories.Product,
 		c.repositories.PlatformAPIParam,
 		c.services.PlatformAccountBalance,
+		c.services.Balance,
 		c.repositories.Notification,
 		queueInstance,
 	)
@@ -300,6 +309,9 @@ func (c *Container) initServices() error {
 		c.services.Recharge,
 		c.repositories.Notification,
 		queueInstance,
+		c.repositories.BalanceLog,
+		c.repositories.User,
+		c.repositories.Product,
 	)
 
 	// 设置相互依赖
@@ -314,12 +326,6 @@ func (c *Container) initServices() error {
 		c.repositories.ProductAPIRelation,
 		c.services.Recharge,
 		c.services.Order,
-	)
-
-	// 初始化余额服务
-	c.services.Balance = service.NewBalanceService(
-		c.repositories.BalanceLog,
-		c.repositories.User,
 	)
 
 	// 初始化统计任务服务

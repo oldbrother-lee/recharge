@@ -18,6 +18,8 @@ import (
 type OrderService interface {
 	// CreateOrder 创建订单
 	CreateOrder(ctx context.Context, order *model.Order) error
+	// CreateExternalOrder 创建外部订单（事务性处理：先扣款再创建订单）
+	CreateExternalOrder(ctx context.Context, order *model.Order, platformAccountID int64) error
 	// GetOrderByID 根据ID获取订单
 	GetOrderByID(ctx context.Context, id int64) (*model.Order, error)
 	// GetOrderByOrderNumber 根据订单号获取订单
@@ -36,14 +38,16 @@ type OrderService interface {
 	ProcessOrderFail(ctx context.Context, orderID int64, remark string) error
 	// ProcessOrderRefund 处理订单退款
 	ProcessOrderRefund(ctx context.Context, orderID int64, remark string) error
+	// ProcessExternalRefund 处理外部订单退款
+	ProcessExternalRefund(ctx context.Context, outTradeNum string, reason string) error
+	// GetOrderByOutTradeNum 根据外部交易号获取订单
+	GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error)
 	// ProcessOrderCancel 处理订单取消
 	ProcessOrderCancel(ctx context.Context, orderID int64, remark string) error
 	// ProcessOrderSplit 处理订单拆单
 	ProcessOrderSplit(ctx context.Context, orderID int64, remark string) error
 	// ProcessOrderPartial 处理订单部分充值
 	ProcessOrderPartial(ctx context.Context, orderID int64, remark string) error
-	// GetOrderByOutTradeNum 根据外部交易号获取订单
-	GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error)
 	// GetOrders 获取订单列表
 	GetOrders(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error)
 	// SetRechargeService 设置充值服务
@@ -74,6 +78,9 @@ type orderService struct {
 	rechargeService  RechargeService
 	notificationRepo notificationRepo.Repository
 	queue            queue.Queue
+	balanceLogRepo   *repository.BalanceLogRepository
+	userRepo         *repository.UserRepository
+	productRepo      repository.ProductRepository
 }
 
 // NewOrderService 创建订单服务实例
@@ -82,12 +89,18 @@ func NewOrderService(
 	rechargeService RechargeService,
 	notificationRepo notificationRepo.Repository,
 	queue queue.Queue,
+	balanceLogRepo *repository.BalanceLogRepository,
+	userRepo *repository.UserRepository,
+	productRepo repository.ProductRepository,
 ) OrderService {
 	return &orderService{
 		orderRepo:        orderRepo,
 		rechargeService:  rechargeService,
 		notificationRepo: notificationRepo,
 		queue:            queue,
+		balanceLogRepo:   balanceLogRepo,
+		userRepo:         userRepo,
+		productRepo:      productRepo,
 	}
 }
 
@@ -315,17 +328,41 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 
 	// 如果订单已经支付，需要退还余额
 	if order.Status == model.OrderStatusPendingRecharge || order.Status == model.OrderStatusRecharging || order.Status == model.OrderStatusProcessing {
-		// 退还余额
-		if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, orderID, "订单失败退还余额"); err != nil {
-			logger.Error("退还余额失败",
-				"error", err,
+		// 检查是否为外部订单
+		if order.Client == 2 {
+			// 外部订单直接退款到用户余额
+			logger.Info("外部订单失败，退款到用户余额",
+				"order_id", orderID,
+				"customer_id", order.CustomerID,
+				"amount", order.Price)
+
+			// 使用用户余额服务进行退款
+			balanceService := s.rechargeService.GetUserBalanceService()
+			if err := balanceService.Refund(ctx, order.CustomerID, order.Price, orderID, "外部订单失败退款", "system"); err != nil {
+				logger.Error("外部订单退款失败",
+					"error", err,
+					"order_id", orderID,
+					"customer_id", order.CustomerID,
+					"amount", order.Price)
+				return fmt.Errorf("外部订单退款失败: %v", err)
+			}
+			logger.Info("外部订单退款成功",
+				"order_id", orderID,
+				"customer_id", order.CustomerID,
+				"amount", order.Price)
+		} else {
+			// 平台订单使用原有的退款方法
+			if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, orderID, "订单失败退还余额"); err != nil {
+				logger.Error("退还余额失败",
+					"error", err,
+					"order_id", orderID,
+					"amount", order.Price)
+				return fmt.Errorf("refund balance failed: %v", err)
+			}
+			logger.Info("退还余额成功",
 				"order_id", orderID,
 				"amount", order.Price)
-			return fmt.Errorf("refund balance failed: %v", err)
 		}
-		logger.Info("退还余额成功",
-			"order_id", orderID,
-			"amount", order.Price)
 	}
 
 	// 更新备注
@@ -347,6 +384,114 @@ func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, re
 
 	// 更新订单状态为已退款
 	return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusRefunded)
+}
+
+// ProcessExternalRefund 处理外部订单退款
+func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum string, reason string) error {
+	logger.Info("开始处理外部订单退款",
+		"out_trade_num", outTradeNum,
+		"reason", reason)
+
+	// 1. 根据外部交易号获取订单
+	order, err := s.GetOrderByOutTradeNum(ctx, outTradeNum)
+	if err != nil {
+		logger.Error("获取订单失败",
+			"error", err,
+			"out_trade_num", outTradeNum)
+		return fmt.Errorf("订单不存在")
+	}
+
+	// 2. 检查订单状态是否允许退款
+	if order.Status == model.OrderStatusRefunded {
+		logger.Info("订单已退款，跳过处理",
+			"order_id", order.ID,
+			"out_trade_num", outTradeNum)
+		return fmt.Errorf("订单已退款")
+	}
+
+	// 只有成功、失败、待充值状态的订单可以退款
+	if order.Status != model.OrderStatusSuccess &&
+		order.Status != model.OrderStatusFailed &&
+		order.Status != model.OrderStatusPendingRecharge {
+		logger.Error("订单状态不允许退款",
+			"order_id", order.ID,
+			"status", order.Status,
+			"out_trade_num", outTradeNum)
+		return fmt.Errorf("订单状态不允许退款")
+	}
+
+	// 3. 检查是否为外部订单
+	if order.Client != 2 {
+		logger.Error("非外部订单，不能使用此退款方法",
+			"order_id", order.ID,
+			"client", order.Client,
+			"out_trade_num", outTradeNum)
+		return fmt.Errorf("非外部订单")
+	}
+
+	// 开启事务
+	tx := s.orderRepo.(*repository.OrderRepositoryImpl).DB().Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			logger.Error("外部订单退款发生panic，事务回滚", "panic", r)
+		}
+	}()
+
+	if tx.Error != nil {
+		logger.Error("开启事务失败", "error", tx.Error)
+		return fmt.Errorf("开启事务失败: %v", tx.Error)
+	}
+
+	// 4. 直接退款到用户余额（外部订单使用用户余额系统）
+	balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
+	if err := balanceService.Recharge(ctx, order.CustomerID, order.Price, fmt.Sprintf("外部订单退款: %s", reason), "system"); err != nil {
+		tx.Rollback()
+		logger.Error("退款到用户余额失败",
+			"error", err,
+			"order_id", order.ID,
+			"customer_id", order.CustomerID,
+			"amount", order.Price)
+		return fmt.Errorf("退款失败: %v", err)
+	}
+
+	logger.Info("退款到用户余额成功",
+		"order_id", order.ID,
+		"customer_id", order.CustomerID,
+		"amount", order.Price)
+
+	// 5. 更新订单备注
+	if err := s.orderRepo.UpdateRemark(ctx, order.ID, fmt.Sprintf("外部订单退款: %s", reason)); err != nil {
+		tx.Rollback()
+		logger.Error("更新订单备注失败", "error", err, "order_id", order.ID)
+		return fmt.Errorf("更新订单备注失败: %v", err)
+	}
+
+	// 6. 更新订单状态为已退款
+	if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusRefunded); err != nil {
+		tx.Rollback()
+		logger.Error("更新订单状态失败", "error", err, "order_id", order.ID)
+		return fmt.Errorf("更新订单状态失败: %v", err)
+	}
+
+	// 提交事务
+	if err := tx.Commit().Error; err != nil {
+		logger.Error("提交事务失败", "error", err)
+		return fmt.Errorf("提交事务失败: %v", err)
+	}
+
+	logger.Info("外部订单退款完成",
+		"order_id", order.ID,
+		"order_number", order.OrderNumber,
+		"out_trade_num", outTradeNum,
+		"amount", order.Price)
+
+	return nil
+}
+
+// GetOrderByOutTradeNum 根据外部交易号获取订单
+func (s *orderService) GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error) {
+	return s.orderRepo.GetByOutTradeNum(ctx, outTradeNum)
 }
 
 // ProcessOrderCancel 处理订单取消
@@ -385,11 +530,6 @@ func (s *orderService) ProcessOrderPartial(ctx context.Context, orderID int64, r
 	return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusPartial)
 }
 
-// GetOrderByOutTradeNum 根据外部交易号获取订单
-func (s *orderService) GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error) {
-	return s.orderRepo.GetOrderByOutTradeNum(ctx, outTradeNum)
-}
-
 // GetOrders 获取订单列表
 func (s *orderService) GetOrders(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error) {
 	// 如果参数中包含 user_id，说明是代理商查询自己的订单
@@ -399,6 +539,186 @@ func (s *orderService) GetOrders(ctx context.Context, params map[string]interfac
 
 	// 否则是管理员查询所有订单
 	return s.orderRepo.GetOrders(ctx, params, page, pageSize)
+}
+
+// CreateExternalOrder 创建外部订单（事务性处理：先验证商品再扣款创建订单）
+func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Order, userID int64) error {
+	logger.Info("开始创建外部订单",
+		"out_trade_num", order.OutTradeNum,
+		"user_id", userID,
+		"product_id", order.ProductID)
+
+	// 1. 验证商品是否存在
+	product, err := s.productRepo.GetByID(ctx, order.ProductID)
+	if err != nil {
+		logger.Error("获取商品信息失败",
+			"error", err,
+			"product_id", order.ProductID)
+		return fmt.Errorf("商品不存在: %v", err)
+	}
+
+	// 检查商品状态
+	if product.Status != 1 {
+		logger.Error("商品已下架",
+			"product_id", order.ProductID,
+			"status", product.Status)
+		return fmt.Errorf("商品已下架")
+	}
+
+	// 使用商品表的价格
+	actualPrice := product.Price
+	logger.Info("使用商品表价格",
+		"product_id", order.ProductID,
+		"product_name", product.Name,
+		"actual_price", actualPrice)
+
+	// 开启事务
+	tx := s.orderRepo.(*repository.OrderRepositoryImpl).DB().Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			logger.Error("创建外部订单发生panic，事务回滚", "panic", r)
+		}
+	}()
+
+	if tx.Error != nil {
+		logger.Error("开启事务失败", "error", tx.Error)
+		return fmt.Errorf("开启事务失败: %v", tx.Error)
+	}
+
+	// 2. 从用户余额扣款（使用商品表的价格）
+	logger.Info("开始扣除用户余额",
+		"user_id", userID,
+		"amount", actualPrice)
+
+	// 创建余额服务实例
+	balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
+	if err := balanceService.Deduct(ctx, userID, actualPrice, model.BalanceStyleOrderDeduct, "外部订单预扣款", "system"); err != nil {
+		tx.Rollback()
+		logger.Error("扣除用户余额失败",
+			"error", err,
+			"user_id", userID,
+			"amount", actualPrice)
+		return fmt.Errorf("余额不足: %v", err)
+	}
+
+	logger.Info("扣除用户余额成功",
+		"user_id", userID,
+		"amount", actualPrice)
+
+	// 3. 创建订单（直接设置为待充值状态，使用商品表价格）
+	order.OrderNumber = generateOrderNumber()
+	order.CreateTime = time.Now()
+	order.UpdatedAt = time.Now()
+	order.Status = model.OrderStatusPendingRecharge // 直接设置为待充值状态
+	order.CustomerID = userID
+	order.IsDel = 0
+	order.Price = actualPrice // 使用商品表的价格
+
+	if err := s.orderRepo.Create(ctx, order); err != nil {
+		tx.Rollback()
+		// 回滚扣款
+		if refundErr := balanceService.Recharge(ctx, userID, actualPrice, "订单创建失败退款", "system"); refundErr != nil {
+			logger.Error("订单创建失败，退款也失败",
+				"create_error", err,
+				"refund_error", refundErr,
+				"user_id", userID,
+				"amount", actualPrice)
+		} else {
+			logger.Info("订单创建失败，已自动退款",
+				"user_id", userID,
+				"amount", actualPrice)
+		}
+		return fmt.Errorf("创建订单失败: %v", err)
+	}
+
+	logger.Info("订单创建成功",
+		"order_id", order.ID,
+		"order_number", order.OrderNumber,
+		"status", order.Status,
+		"actual_price", actualPrice)
+
+	// 4. 更新扣款记录的订单ID（将之前的临时扣款记录关联到具体订单）
+	if err := s.updateUserBalanceLogOrderID(ctx, userID, actualPrice, order.ID); err != nil {
+		logger.Error("更新扣款记录订单ID失败", "error", err, "order_id", order.ID)
+		// 这个错误不影响主流程，只记录日志
+	}
+
+	// 5. 推送到充值队列
+	if err := s.rechargeService.PushToRechargeQueue(ctx, order.ID); err != nil {
+		logger.Error("推送到充值队列失败", "error", err, "order_id", order.ID)
+		// 这个错误不影响主流程，只记录日志
+	}
+
+	// 提交事务
+	if err := tx.Commit().Error; err != nil {
+		logger.Error("提交事务失败", "error", err)
+		return fmt.Errorf("提交事务失败: %v", err)
+	}
+
+	logger.Info("外部订单创建完成",
+		"order_id", order.ID,
+		"order_number", order.OrderNumber,
+		"out_trade_num", order.OutTradeNum,
+		"status", order.Status)
+
+	return nil
+}
+
+// updateBalanceLogOrderID 更新余额日志的订单ID
+func (s *orderService) updateBalanceLogOrderID(ctx context.Context, platformAccountID int64, amount float64, orderID int64) error {
+	// 查找最近的扣款记录（订单ID为0的记录）
+	db := s.orderRepo.(*repository.OrderRepositoryImpl).DB()
+	err := db.Model(&model.BalanceLog{}).
+		Where("platform_account_id = ? AND amount = ? AND order_id = ? AND style = ?",
+			platformAccountID, amount, 0, model.BalanceStyleOrderDeduct).
+		Order("created_at DESC").
+		Limit(1).
+		Update("order_id", orderID).Error
+
+	if err != nil {
+		logger.Error("更新余额日志订单ID失败",
+			"error", err,
+			"platform_account_id", platformAccountID,
+			"amount", amount,
+			"order_id", orderID)
+		return err
+	}
+
+	logger.Info("更新余额日志订单ID成功",
+		"platform_account_id", platformAccountID,
+		"amount", amount,
+		"order_id", orderID)
+
+	return nil
+}
+
+// updateUserBalanceLogOrderID 更新用户余额日志的订单ID
+func (s *orderService) updateUserBalanceLogOrderID(ctx context.Context, userID int64, amount float64, orderID int64) error {
+	// 查找最近的扣款记录（订单ID为0的记录）
+	db := s.orderRepo.(*repository.OrderRepositoryImpl).DB()
+	err := db.Model(&model.BalanceLog{}).
+		Where("user_id = ? AND amount = ? AND order_id = ? AND style = ?",
+			userID, -amount, 0, model.BalanceStyleOrderDeduct).
+		Order("created_at DESC").
+		Limit(1).
+		Update("order_id", orderID).Error
+
+	if err != nil {
+		logger.Error("更新用户余额日志订单ID失败",
+			"error", err,
+			"user_id", userID,
+			"amount", amount,
+			"order_id", orderID)
+		return err
+	}
+
+	logger.Info("更新用户余额日志订单ID成功",
+		"user_id", userID,
+		"amount", amount,
+		"order_id", orderID)
+
+	return nil
 }
 
 // generateOrderNumber 生成订单号

@@ -86,6 +86,9 @@ func InitDB() error {
 		&model.PlatformAccount{},
 		&model.SystemConfig{},
 		&model.Platform{},
+		&model.PlatformAccount{},
+		&model.ExternalAPIKey{},
+		&model.ExternalOrderLog{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate tables: %v", err)
 	}

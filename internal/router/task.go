@@ -41,6 +41,8 @@ func RegisterTaskRoutes(r *gin.RouterGroup, platformSvc *platform.Service) {
 		balanceLogRepo,
 	)
 
+	userBalanceService := service.NewBalanceService(balanceLogRepo, userRepo)
+
 	productRepo := repository.NewProductRepository(db)
 	rechargeService := service.NewRechargeService(
 		db,
@@ -53,6 +55,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, platformSvc *platform.Service) {
 		productRepo,
 		platformAPIParamRepo,
 		balanceService,
+		userBalanceService,
 		notificationRepo,
 		queueInstance,
 	)
@@ -62,6 +65,9 @@ func RegisterTaskRoutes(r *gin.RouterGroup, platformSvc *platform.Service) {
 		rechargeService,
 		notificationRepo,
 		queueInstance,
+		balanceLogRepo,
+		userRepo,
+		productRepo,
 	)
 
 	taskConfig := &service.TaskConfig{

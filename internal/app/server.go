@@ -40,6 +40,7 @@ func (s *ServerApp) Start(ctx context.Context) error {
 		s.container.GetControllers(),         // 传递控制器
 		s.container.GetServices().User,       // 用户服务
 		s.container.GetControllers().UserLog, // 用户日志控制器
+		s.container.GetDB(),                  // 数据库
 	)
 
 	// 创建HTTP服务器

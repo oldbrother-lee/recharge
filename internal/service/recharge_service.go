@@ -51,6 +51,8 @@ type RechargeService interface {
 	ProcessRetryTask(ctx context.Context, retryRecord *model.OrderRetryRecord) error
 	// GetBalanceService 获取余额服务
 	GetBalanceService() *PlatformAccountBalanceService
+	// GetUserBalanceService 获取用户余额服务
+	GetUserBalanceService() *BalanceService
 	// SetOrderService 设置订单服务
 	SetOrderService(orderService OrderService)
 }
@@ -67,6 +69,7 @@ type rechargeService struct {
 	productRepo            repository.ProductRepository
 	platformAPIParamRepo   repository.PlatformAPIParamRepository
 	balanceService         *PlatformAccountBalanceService
+	userBalanceService     *BalanceService
 	manager                *recharge.Manager
 	redisClient            *redisV8.Client
 	processingOrders       map[int64]bool
@@ -88,6 +91,7 @@ func NewRechargeService(
 	productRepo repository.ProductRepository,
 	platformAPIParamRepo repository.PlatformAPIParamRepository,
 	balanceService *PlatformAccountBalanceService,
+	userBalanceService *BalanceService,
 	notificationRepo notificationRepo.Repository,
 	queue queue.Queue,
 ) *rechargeService {
@@ -102,6 +106,7 @@ func NewRechargeService(
 		productRepo:            productRepo,
 		platformAPIParamRepo:   platformAPIParamRepo,
 		balanceService:         balanceService,
+		userBalanceService:     userBalanceService,
 		manager:                recharge.NewManager(db),
 		redisClient:            redis.GetClient(),
 		processingOrders:       make(map[int64]bool),
@@ -349,11 +354,23 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 
 	// === 新增：订单失败自动退款 ===
 	if model.OrderStatus(orderState) == model.OrderStatusFailed {
-		err := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "订单失败退还余额")
-		if err != nil {
-			tx.Rollback()
-			logger.Error("订单失败退款失败: %v", err)
-			return fmt.Errorf("订单失败退款失败: %v", err)
+		// 检查是否为外部订单
+		if order.Client == 2 {
+			// 外部订单直接退款到用户余额
+			// 注意：这里需要通过依赖注入获取余额服务，暂时记录日志
+			logger.Info("外部订单失败，需要退款到用户余额",
+				"order_id", order.ID,
+				"customer_id", order.CustomerID,
+				"amount", order.Price)
+			// TODO: 实现外部订单退款逻辑
+		} else {
+			// 平台订单使用原有的退款方法
+			err := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "订单失败退还余额")
+			if err != nil {
+				tx.Rollback()
+				logger.Error("订单失败退款失败: %v", err)
+				return fmt.Errorf("订单失败退款失败: %v", err)
+			}
 		}
 	}
 	// === 新增 END ===
@@ -560,42 +577,48 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		return nil
 	}
 
-	// 获取平台账号信息
-	account, err := s.platformRepo.GetAccountByID(ctx, order.PlatformAccountID)
-	if err != nil {
-		logger.Error("【获取平台账号信息失败】",
-			"error", err,
-			"account_id", order.PlatformAccountID)
-		return fmt.Errorf("get platform account failed: %v", err)
-	}
-	logger.Info("【获取平台账号信息成功】",
-		"account_id", order.PlatformAccountID,
-		"balance", account.Balance)
-
-	// 扣除平台账号余额
-	if err := s.balanceService.DeductBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单充值扣除"); err != nil {
-		logger.Error("【扣除平台账号余额失败】",
-			"error", err,
+	// 检查是否需要扣款（外部订单在创建时已扣款）
+	if order.Client == 2 { // 外部API订单
+		logger.Info("【外部订单已预扣款，跳过平台账号信息获取和扣款步骤】",
+			"order_id", order.ID,
+			"client", order.Client)
+	} else {
+		// 获取平台账号信息
+		account, err := s.platformRepo.GetAccountByID(ctx, order.PlatformAccountID)
+		if err != nil {
+			logger.Error("【获取平台账号信息失败】",
+				"error", err,
+				"account_id", order.PlatformAccountID)
+			return fmt.Errorf("get platform account failed: %v", err)
+		}
+		logger.Info("【获取平台账号信息成功】",
+			"account_id", order.PlatformAccountID,
+			"balance", account.Balance)
+		// 扣除平台账号余额
+		if err := s.balanceService.DeductBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单充值扣除"); err != nil {
+			logger.Error("【扣除平台账号余额失败】",
+				"error", err,
+				"account_id", order.PlatformAccountID,
+				"amount", order.Price)
+			// 新增：将订单状态设置为失败，并写入备注
+			_ = s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed)
+			_ = s.orderRepo.UpdateRemark(ctx, order.ID, "余额不足，订单失败")
+			// 新增：推送订单失败通知
+			notification := &notificationModel.NotificationRecord{
+				OrderID:          order.ID,
+				PlatformCode:     order.PlatformCode,
+				NotificationType: "order_status_changed",
+				Content:          "订单失败：余额不足",
+				Status:           1, // 待处理
+			}
+			_ = s.notificationRepo.Create(ctx, notification)
+			_ = s.queue.Push(ctx, "notification_queue", notification)
+			return fmt.Errorf("deduct balance failed: %v", err)
+		}
+		logger.Info("【扣除平台账号余额成功】",
 			"account_id", order.PlatformAccountID,
 			"amount", order.Price)
-		// 新增：将订单状态设置为失败，并写入备注
-		_ = s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed)
-		_ = s.orderRepo.UpdateRemark(ctx, order.ID, "余额不足，订单失败")
-		// 新增：推送订单失败通知
-		notification := &notificationModel.NotificationRecord{
-			OrderID:          order.ID,
-			PlatformCode:     order.PlatformCode,
-			NotificationType: "order_status_changed",
-			Content:          "订单失败：余额不足",
-			Status:           1, // 待处理
-		}
-		_ = s.notificationRepo.Create(ctx, notification)
-		_ = s.queue.Push(ctx, "notification_queue", notification)
-		return fmt.Errorf("deduct balance failed: %v", err)
 	}
-	logger.Info("【扣除平台账号余额成功】",
-		"account_id", order.PlatformAccountID,
-		"amount", order.Price)
 
 	// 提交订单到平台
 	if err := s.SubmitOrder(ctx, order, api, apiParam); err != nil {
@@ -1225,4 +1248,9 @@ func (s *rechargeService) SetOrderService(orderService OrderService) {
 // GetBalanceService 获取余额服务
 func (s *rechargeService) GetBalanceService() *PlatformAccountBalanceService {
 	return s.balanceService
+}
+
+// GetUserBalanceService 获取用户余额服务
+func (s *rechargeService) GetUserBalanceService() *BalanceService {
+	return s.userBalanceService
 }

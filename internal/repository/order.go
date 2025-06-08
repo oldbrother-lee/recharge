@@ -40,6 +40,8 @@ type OrderRepository interface {
 	Delete(ctx context.Context, id int64) error
 	// GetOrderByOutTradeNum 根据外部交易号获取订单
 	GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error)
+	// GetByOutTradeNum 根据外部交易号获取订单
+	GetByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error)
 	// GetOrders 获取订单列表
 	GetOrders(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error)
 	// GetByStatus 根据状态获取订单列表
@@ -125,6 +127,15 @@ func (r *OrderRepositoryImpl) GetByOrderNumber(ctx context.Context, orderNumber 
 	return &order, nil
 }
 
+// GetByOutTradeNum 根据外部交易号获取订单
+func (r *OrderRepositoryImpl) GetByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error) {
+	var order model.Order
+	if err := r.db.Where("out_trade_num = ? AND is_del = 0", outTradeNum).First(&order).Error; err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
 // GetByCustomerID 根据客户ID获取订单列表
 func (r *OrderRepositoryImpl) GetByCustomerID(ctx context.Context, customerID int64, page, pageSize int) ([]*model.Order, int64, error) {
 	var orders []*model.Order
@@ -185,9 +196,8 @@ func (r *OrderRepositoryImpl) Delete(ctx context.Context, id int64) error {
 func (r *OrderRepositoryImpl) GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error) {
 	var order model.Order
 	if err := r.db.Where("out_trade_num = ? AND is_del = 0", outTradeNum).First(&order).Error; err != nil {
-		return nil, ErrOrderNotFound
+		return nil, err
 	}
-	fmt.Println(order, "gggg")
 	return &order, nil
 }
 

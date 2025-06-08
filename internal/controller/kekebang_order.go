@@ -2,7 +2,6 @@ package controller
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"recharge-go/internal/model"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 )
 
 // KekebangOrderController 可客帮订单控制器
@@ -86,7 +86,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 	logger.Info(fmt.Sprintf("【收到可客帮订单请求】request: %+v", req))
 	//先检查订单是否存在
 	order, err := c.orderService.GetOrderByOutTradeNum(ctx, strconv.FormatInt(req.UserOrderID, 10))
-	if err != nil && !errors.Is(err, repository.ErrOrderNotFound) {
+	if err != nil && err != gorm.ErrRecordNotFound {
 		logger.Log.Error("查询订单失败",
 			zap.Error(err),
 			zap.String("order_id", strconv.FormatInt(req.UserOrderID, 10)))

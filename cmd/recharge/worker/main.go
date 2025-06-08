@@ -48,6 +48,7 @@ func main() {
 	platformAccountRepo := repository.NewPlatformAccountRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	balanceLogRepo := repository.NewBalanceLogRepository(db)
+	productRepo := repository.NewProductRepository(db)
 
 	// 初始化平台管理器
 	platformManager := recharge.NewManager(db)
@@ -66,12 +67,14 @@ func main() {
 		balanceLogRepo,
 	)
 
+	// 初始化用户余额服务
+	userBalanceService := service.NewBalanceService(balanceLogRepo, userRepo)
+
 	// 初始化平台API仓库
 	platformAPIRepo := repository.NewPlatformAPIRepository(db)
 
 	// 初始化服务
-	orderService := service.NewOrderService(orderRepo, nil, notificationRepo, queue)
-	productRepo := repository.NewProductRepository(db)
+	orderService := service.NewOrderService(orderRepo, nil, notificationRepo, queue, balanceLogRepo, userRepo, productRepo)
 	rechargeService := service.NewRechargeService(
 		db,
 		orderRepo,
@@ -83,6 +86,7 @@ func main() {
 		productRepo,
 		platformAPIParamRepo,
 		balanceService,
+		userBalanceService,
 		notificationRepo,
 		queue,
 	)

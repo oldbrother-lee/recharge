@@ -79,6 +79,37 @@ func (s *BalanceService) Deduct(ctx context.Context, userID int64, amount float6
 	return s.repo.CreateLog(ctx, log)
 }
 
+// Refund 退款到用户余额（带订单ID）
+func (s *BalanceService) Refund(ctx context.Context, userID int64, amount float64, orderID int64, remark, operator string) error {
+	if amount <= 0 {
+		return errors.New("退款金额必须大于0")
+	}
+	// 获取退款前余额
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	before := user.Balance
+	// 增加余额
+	if err := s.repo.AddBalance(ctx, userID, amount); err != nil {
+		return err
+	}
+	// 写入流水
+	log := &model.BalanceLog{
+		UserID:        userID,
+		Amount:        amount,
+		Type:          1, // 收入
+		Style:         4, // 充值
+		Balance:       before + amount,
+		BalanceBefore: before,
+		Remark:        remark,
+		Operator:      operator,
+		OrderID:       orderID, // 设置订单ID
+		CreatedAt:     time.Now(),
+	}
+	return s.repo.CreateLog(ctx, log)
+}
+
 // ListLogs 查询余额流水
 func (s *BalanceService) ListLogs(ctx context.Context, userID int64, offset, limit int) ([]model.BalanceLog, int64, error) {
 	return s.repo.ListLogs(ctx, userID, offset, limit)

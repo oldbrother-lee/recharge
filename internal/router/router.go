@@ -11,6 +11,7 @@ import (
 	"recharge-go/pkg/logger"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func SetupRouter(
@@ -36,6 +37,7 @@ func SetupRouter(
 	orderController *controller.OrderController,
 	notificationHandler *handler.NotificationHandler,
 	systemConfigController *controller.SystemConfigController,
+	db *gorm.DB,
 ) *gin.Engine {
 	r := gin.New()
 
@@ -63,7 +65,7 @@ func SetupRouter(
 		RegisterDaichongOrderRoutes(api)
 
 		// 外部订单接口 - 不需要认证
-		RegisterExternalOrderRoutes(api)
+		RegisterExternalOrderRoutes(api, db)
 
 		// 回调接口 - 不需要认证
 		callback := api.Group("/callback")
@@ -161,6 +163,11 @@ func SetupRouter(
 			{
 				orderGroup.GET("/statistics", orderController.GetOrderStatistics)
 			}
+
+			// API密钥管理路由
+			apiKeyRepo := repository.NewExternalAPIKeyRepository(database.DB)
+			apiKeyController := controller.NewExternalAPIKeyController(apiKeyRepo, userRepo)
+			RegisterExternalAPIKeyRoutes(auth, apiKeyController, userService)
 		}
 
 		// 注册系统配置路由

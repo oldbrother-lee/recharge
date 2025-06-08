@@ -25,29 +25,37 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 	// 创建队列实例
 	queueInstance := queue.NewRedisQueue()
 
+	// 初始化repository
+	platformAccountRepo := repository.NewPlatformAccountRepository(database.DB)
+	userRepo := repository.NewUserRepository(database.DB)
+	balanceLogRepo := repository.NewBalanceLogRepository(database.DB)
+	productRepo := repository.NewProductRepository(database.DB)
+
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
 		nil, // 先传入 nil，后面再设置
 		notificationRepo,
 		queueInstance,
+		balanceLogRepo,
+		userRepo,
+		productRepo,
 	)
 
 	// 创建充值服务
-	platformAccountRepo := repository.NewPlatformAccountRepository(database.DB)
-	userRepo := repository.NewUserRepository(database.DB)
-	balanceLogRepo := repository.NewBalanceLogRepository(database.DB)
 	balanceService := service.NewPlatformAccountBalanceService(
 		database.DB,
 		platformAccountRepo,
 		userRepo,
 		balanceLogRepo,
 	)
+
+	userBalanceService := service.NewBalanceService(balanceLogRepo, userRepo)
+
 	platformAPIRepo := repository.NewPlatformAPIRepository(database.DB)
 	productAPIRelationRepo := repository.NewProductAPIRelationRepository(database.DB)
 	platformAPIParamRepo := repository.NewPlatformAPIParamRepository(database.DB)
 	retryRepo := repository.NewRetryRepository(database.DB)
-	productRepo := repository.NewProductRepository(database.DB)
 
 	rechargeService := service.NewRechargeService(
 		database.DB,
@@ -60,6 +68,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		productRepo,
 		platformAPIParamRepo,
 		balanceService,
+		userBalanceService,
 		notificationRepo,
 		queueInstance,
 	)

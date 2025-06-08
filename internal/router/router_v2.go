@@ -13,6 +13,7 @@ import (
 	"recharge-go/pkg/middleware"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // SetupRouterV2 使用优化后的依赖注入设置路由
@@ -22,6 +23,7 @@ func SetupRouterV2(
 	controllersInterface interface{}, // 控制器接口，避免循环导入
 	userService interface{}, // 用户服务
 	userLogController interface{}, // 用户日志控制器
+	db *gorm.DB,
 ) *gin.Engine {
 	r := gin.New()
 
@@ -49,6 +51,7 @@ func SetupRouterV2(
 	creditController := getControllerByName(controllersValue, "Credit")
 	statisticsController := getControllerByName(controllersValue, "Statistics")
 	systemConfigController := getControllerByName(controllersValue, "SystemConfig")
+	externalAPIKeyController := getControllerByName(controllersValue, "ExternalAPIKey")
 	// userLogController := getControllerByName(controllersValue, "UserLog") // 从参数获取
 
 	// 类型断言
@@ -93,7 +96,7 @@ func SetupRouterV2(
 		RegisterDaichongOrderRoutes(v1)
 
 		// 外部订单接口 - 不需要认证
-		RegisterExternalOrderRoutes(v1)
+		RegisterExternalOrderRoutes(v1, db)
 
 		// 回调接口 - 不需要认证
 		if cc := assertCallbackController(callbackController); cc != nil {
@@ -218,6 +221,11 @@ func SetupRouterV2(
 			// System config routes
 			if scc := assertSystemConfigController(systemConfigController); scc != nil {
 				RegisterSystemConfigRoutes(auth, scc)
+			}
+
+			// External API Key routes
+			if eakc := assertExternalAPIKeyController(externalAPIKeyController); eakc != nil {
+				RegisterExternalAPIKeyRoutes(auth, eakc, userSvc)
 			}
 
 			// TODO: 以下路由对应的控制器暂未初始化，需要对应的服务支持
@@ -427,6 +435,16 @@ func assertSystemConfigController(ctrl interface{}) *controller.SystemConfigCont
 	}
 	if scc, ok := ctrl.(*controller.SystemConfigController); ok {
 		return scc
+	}
+	return nil
+}
+
+func assertExternalAPIKeyController(ctrl interface{}) *controller.ExternalAPIKeyController {
+	if ctrl == nil {
+		return nil
+	}
+	if eakc, ok := ctrl.(*controller.ExternalAPIKeyController); ok {
+		return eakc
 	}
 	return nil
 }

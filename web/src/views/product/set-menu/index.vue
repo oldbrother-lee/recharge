@@ -60,9 +60,9 @@
           <NButton v-if="hasRole('SUPER_ADMIN')" type="primary" @click="showCategoryModal">
             分类管理
           </NButton>
-          <NButton v-if="hasRole('SUPER_ADMIN')" type="primary" @click="handleReset(); showModal()">
-            新增商品
-          </NButton>
+          <NButton v-if="hasRole('SUPER_ADMIN')" type="primary" @click="handleAdd()">
+        新增商品
+      </NButton>
         </NSpace>
       </template>
       <NDataTable
@@ -587,6 +587,7 @@ const handleFormSubmit = async () => {
       message.success('创建成功');
     }
     hideModal();
+    resetForm();
     fetchProducts();
   } catch (error) {
     message.error('操作失败');
@@ -603,6 +604,12 @@ const handleReset = () => {
     status: null
   };
   fetchProducts();
+};
+
+// 新增商品
+const handleAdd = () => {
+  resetForm();
+  showModal();
 };
 
 // 添加这些处理函数
@@ -1032,4 +1039,4 @@ onMounted(() => {
     min-height: 28px !important;
   }
 }
-</style> 
+</style>

@@ -1025,6 +1025,7 @@
   const taskConfigColumns: DataTableColumns<any> = [
     { type: 'selection', width: 40 },
     { title: 'ID', key: 'id', width: 60 },
+    { title: '渠道ID', key: 'channel_id', width: 80 },
     { title: '渠道', key: 'channel_name', width: 120 },
     { title: '产品', key: 'product_name', width: 120 },
     { title: '面值', key: 'face_values' },

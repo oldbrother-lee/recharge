@@ -70,6 +70,7 @@ func (TaskConfig) TableName() string {
 type UpdateTaskConfigRequest struct {
 	ID                *int64       `json:"id"`
 	ChannelID         *int64       `json:"channel_id"`
+	ProductID         *string      `json:"product_id"`
 	PlatformID        *int64       `json:"platform_id"`
 	PlatformAccountID *int64       `json:"platform_account_id"`
 	FaceValues        *string      `json:"face_values"`

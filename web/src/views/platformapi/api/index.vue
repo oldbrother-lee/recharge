@@ -47,7 +47,7 @@
     <NCard :title="'接口管理'" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton type="primary" @click="handleReset(); showModal()">
+          <NButton type="primary" @click="handleAdd()">
             新增接口
           </NButton>
         </NSpace>
@@ -522,6 +522,7 @@ const handleFormSubmit = async () => {
       message.success('创建成功');
     }
     hideModal();
+    resetForm();
     fetchAPIs();
   } catch (error) {
     message.error('操作失败');
@@ -536,6 +537,12 @@ const handleReset = () => {
     status: null
   };
   fetchAPIs();
+};
+
+// 新增接口
+const handleAdd = () => {
+  resetForm();
+  showModal();
 };
 
 // 添加这些处理函数
@@ -580,7 +587,7 @@ const fetchAPIParams = async (apiId: number) => {
 const handleDeleteParam = async (row: PlatformAPIParam) => {
   try {
     await request({
-      url: `/platform/api/${row.id}`,
+      url: `/platform/api/params/${row.id}`,
       method: 'DELETE'
     });
     message.success('删除成功');
@@ -672,4 +679,4 @@ onMounted(() => {
 .gap-8px {
   gap: 8px;
 }
-</style> 
+</style>

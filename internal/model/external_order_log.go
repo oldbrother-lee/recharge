@@ -21,6 +21,7 @@ type ExternalOrderLog struct {
 	UserQuoteType    int       `json:"user_quote_type" gorm:"comment:用户报价类型"`
 	UserQuotePayment int       `json:"user_quote_payment" gorm:"comment:用户报价支付金额"`
 	UserPayment      float64   `json:"user_payment" gorm:"type:decimal(10,2);comment:用户支付金额"`
+	ProcessTime      int       `json:"process_time" gorm:"comment:处理时间(毫秒)"`
 	Timestamp        int64     `json:"timestamp" gorm:"comment:时间戳"`
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`

@@ -622,7 +622,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 
 	// 提交订单到平台
 	if err := s.SubmitOrder(ctx, order, api, apiParam); err != nil {
-		logger.Error("【提交订单到平台失败】",
+		logger.Error("【提交订单到平台失败1】",
 			"error", err,
 			"order_id", order.ID)
 
@@ -1045,7 +1045,7 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 	// 获取平台实例
 	platform, err := s.manager.GetPlatform(api.Code)
 	if err != nil {
-		return fmt.Errorf("get platform failed: %v", err)
+		return fmt.Errorf("通过 %s 获取平台失败: %v", api.Code, err)
 	}
 	// 提交订单到平台
 	err = platform.SubmitOrder(ctx, order, api, apiParam)

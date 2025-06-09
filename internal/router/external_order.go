@@ -80,7 +80,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 
 	// 创建控制器
 	externalOrderController := controller.NewExternalOrderController(orderService, productService, externalOrderLogRepo)
-	externalCallbackController := controller.NewExternalCallbackController(orderService, apiKeyRepo)
+	externalCallbackController := controller.NewExternalCallbackController(orderService, apiKeyRepo, externalOrderLogRepo)
 	externalRefundController := controller.NewExternalRefundController(orderService)
 
 	// 注册外部订单API路由（需要认证）

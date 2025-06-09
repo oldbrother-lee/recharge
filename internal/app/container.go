@@ -4,7 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"recharge-go/internal/config"
+	"recharge-go/configs"
 	"recharge-go/internal/middleware"
 	"recharge-go/internal/pkg/db"
 	"recharge-go/internal/repository"
@@ -28,7 +28,7 @@ import (
 
 // Container 依赖注入容器
 type Container struct {
-	config             *config.Config
+	config             *configs.Config
 	db                 *gorm.DB
 	redis              *redisV8.Client
 	redisClient        *redisV8.Client
@@ -119,7 +119,7 @@ func NewContainerWithConfigAndService(configPath, serviceName string) (*Containe
 
 	// 加载指定的配置文件
 	var err error
-	c.config, err = config.LoadConfig(configPath)
+	c.config, err = configs.LoadConfig(configPath)
 	if err != nil {
 		return nil, err
 	}
@@ -167,11 +167,11 @@ func NewContainerWithConfigAndService(configPath, serviceName string) (*Containe
 // 初始化数据库
 func (c *Container) initDB() error {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		c.config.Database.User,
-		c.config.Database.Password,
-		c.config.Database.Host,
-		c.config.Database.Port,
-		c.config.Database.DBName,
+		c.config.DB.User,
+		c.config.DB.Password,
+		c.config.DB.Host,
+		c.config.DB.Port,
+		c.config.DB.Name,
 	)
 
 	dbInstance, err := db.NewDB(dsn)
@@ -342,10 +342,10 @@ func (c *Container) initServices() error {
 
 	// 初始化TaskService
 	taskConfig := &service.TaskConfig{
-		Interval:      time.Second * 1, // 每秒检查一次，匹配订单
-		MaxRetries:    3,
-		RetryDelay:    time.Second * 30,
-		MaxConcurrent: 5,
+		Interval:      time.Duration(c.config.Task.Interval) * time.Second,
+		MaxRetries:    c.config.Task.MaxRetries,
+		RetryDelay:    time.Duration(c.config.Task.RetryDelay) * time.Second,
+		MaxConcurrent: c.config.Task.MaxConcurrent,
 	}
 	c.services.Task = service.NewTaskService(
 		c.repositories.TaskConfig,
@@ -420,7 +420,7 @@ func (c *Container) initLogger(serviceName string) error {
 }
 
 // GetConfig 获取配置
-func (c *Container) GetConfig() *config.Config {
+func (c *Container) GetConfig() *configs.Config {
 	return c.config
 }
 
@@ -500,11 +500,11 @@ func (c *Container) initOptimizedComponents() error {
 
 	// 初始化数据库管理器
 	dbConfig := &database.DatabaseConfig{
-		Host:            c.config.Database.Host,
-		Port:            c.config.Database.Port,
-		User:            c.config.Database.User,
-		Password:        c.config.Database.Password,
-		Name:            c.config.Database.DBName,
+		Host:            c.config.DB.Host,
+		Port:            c.config.DB.Port,
+		User:            c.config.DB.User,
+		Password:        c.config.DB.Password,
+		Name:            c.config.DB.Name,
 		Charset:         "utf8mb4",
 		MaxIdleConns:    10,
 		MaxOpenConns:    100,

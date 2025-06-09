@@ -104,9 +104,9 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 
 	// 解析请求参数
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		logData.ErrorMsg = fmt.Sprintf("Invalid request parameters: %v", err)
-		c.respondError(ctx, http.StatusBadRequest, "Invalid request parameters", &logData, startTime)
-		logger.Error(fmt.Sprintf("Invalid request parameters: %v", err))
+		logData.ErrorMsg = fmt.Sprintf("请求参数错误 %v", err)
+		c.respondError(ctx, http.StatusBadRequest, "请求参数错误", &logData, startTime)
+		logger.Error(fmt.Sprintf("请求参数错误: %v", err))
 		return
 	}
 
@@ -158,9 +158,11 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 		logData.GoodsID = existingOrder.ProductID
 		logData.Amount = existingOrder.TotalPrice
 
-		// 记录日志到数据库
-		if err := c.logRepo.Create(ctx, &logData); err != nil {
-			logger.Error("Failed to create external order log", "error", err)
+		// 记录日志到数据库，但只有当order_id不为空时才插入
+		if logData.OrderID != "" {
+			if err := c.logRepo.Create(ctx, &logData); err != nil {
+				logger.Error("Failed to create external order log", "error", err)
+			}
 		}
 
 		ctx.JSON(http.StatusOK, response)
@@ -238,9 +240,11 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 	logData.Amount = order.TotalPrice
 	logData.Status = 1
 
-	// 记录成功日志到数据库
-	if err := c.logRepo.Create(ctx, &logData); err != nil {
-		logger.Error("Failed to create external order log", "error", err)
+	// 记录成功日志到数据库，但只有当order_id不为空时才插入
+	if logData.OrderID != "" {
+		if err := c.logRepo.Create(ctx, &logData); err != nil {
+			logger.Error("Failed to create external order log", "error", err)
+		}
 	}
 
 	// 构建响应
@@ -329,9 +333,11 @@ func (c *ExternalOrderController) GetOrder(ctx *gin.Context) {
 	logData.Amount = order.TotalPrice
 	logData.Status = 1
 
-	// 记录成功日志到数据库
-	if err := c.logRepo.Create(ctx, &logData); err != nil {
-		logger.Error("Failed to create external order log", "error", err)
+	// 记录成功日志到数据库，但只有当order_id不为空时才插入
+	if logData.OrderID != "" {
+		if err := c.logRepo.Create(ctx, &logData); err != nil {
+			logger.Error("Failed to create external order log", "error", err)
+		}
 	}
 
 	// 构建响应
@@ -369,9 +375,11 @@ func (c *ExternalOrderController) respondError(ctx *gin.Context, statusCode int,
 		Timestamp: time.Now().Unix(),
 	}
 
-	// 记录错误日志到数据库
-	if err := c.logRepo.Create(ctx, logData); err != nil {
-		logger.Error("Failed to create external order error log", "error", err)
+	// 记录错误日志到数据库，但只有当order_id不为空时才插入
+	if logData.OrderID != "" {
+		if err := c.logRepo.Create(ctx, logData); err != nil {
+			logger.Error("Failed to create external order error log", "error", err)
+		}
 	}
 
 	ctx.JSON(statusCode, response)

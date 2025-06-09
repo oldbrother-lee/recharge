@@ -1,6 +1,7 @@
 package router
 
 import (
+	"recharge-go/configs"
 	"recharge-go/internal/controller"
 	"recharge-go/internal/handler"
 	"recharge-go/internal/repository"
@@ -70,14 +71,16 @@ func RegisterTaskRoutes(r *gin.RouterGroup, platformSvc *platform.Service) {
 		productRepo,
 	)
 
+	// 从配置文件加载配置
+	cfg := configs.GetConfig()
 	taskConfig := &service.TaskConfig{
-		Interval:      5 * time.Minute, // 每5分钟执行一次
-		MaxRetries:    3,               // 最大重试3次
-		RetryDelay:    1 * time.Minute, // 重试间隔1分钟
-		MaxConcurrent: 5,               // 最大并发5个任务
-		APIKey:        "",              // API密钥
-		UserID:        "",              // 用户ID
-		BaseURL:       "",              // API基础URL
+		Interval:      time.Duration(cfg.Task.Interval) * time.Second,
+		MaxRetries:    cfg.Task.MaxRetries,
+		RetryDelay:    time.Duration(cfg.Task.RetryDelay) * time.Second,
+		MaxConcurrent: cfg.Task.MaxConcurrent,
+		APIKey:        cfg.API.Key,
+		UserID:        cfg.API.UserID,
+		BaseURL:       cfg.API.BaseURL,
 	}
 
 	taskOrderHandler := handler.NewTaskOrderHandler(taskOrderRepo)

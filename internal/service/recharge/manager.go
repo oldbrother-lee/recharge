@@ -31,6 +31,8 @@ func NewManager(db *gorm.DB) *Manager {
 			"kekebang":     reflect.TypeOf((*KekebangPlatform)(nil)).Elem(),
 			"xianzhuanxia": reflect.TypeOf((*XianzhuanxiaPlatform)(nil)).Elem(),
 			"mishi":        reflect.TypeOf((*MishiPlatform)(nil)).Elem(),
+			"external_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
+			"internal_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 		},
 	}
 }
@@ -74,6 +76,10 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewMishiPlatform(m.platformRepo.GetDB())
 	case "dayuanren":
 		platform = NewDayuanrenPlatform(m.platformRepo.GetDB())
+	case "external_api":
+		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
+	case "internal_api":
+		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}

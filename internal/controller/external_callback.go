@@ -9,6 +9,7 @@ import (
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
+	"recharge-go/pkg/logger"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 type ExternalCallbackController struct {
 	orderService  service.OrderService
 	apiKeyRepo    repository.ExternalAPIKeyRepository
+	logRepo       repository.ExternalOrderLogRepository
 	signValidator *utils.SignatureValidator
 }
 
@@ -27,10 +29,12 @@ type ExternalCallbackController struct {
 func NewExternalCallbackController(
 	orderService service.OrderService,
 	apiKeyRepo repository.ExternalAPIKeyRepository,
+	logRepo repository.ExternalOrderLogRepository,
 ) *ExternalCallbackController {
 	return &ExternalCallbackController{
 		orderService:  orderService,
 		apiKeyRepo:    apiKeyRepo,
+		logRepo:       logRepo,
 		signValidator: utils.NewSignatureValidator(),
 	}
 }
@@ -39,13 +43,10 @@ func NewExternalCallbackController(
 type CallbackRequest struct {
 	AppID       string `json:"app_id" binding:"required"`
 	OutTradeNum string `json:"out_trade_num" binding:"required"`
-	OrderNumber string `json:"order_number"`
 	Status      int    `json:"status" binding:"required"`
-	Message     string `json:"message"`
 	Timestamp   int64  `json:"timestamp" binding:"required"`
 	Nonce       string `json:"nonce" binding:"required"`
-
-	Sign string `json:"sign" binding:"required"`
+	Sign        string `json:"sign" binding:"required"`
 }
 
 // CallbackResponse 回调响应结构
@@ -102,30 +103,39 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 	params := map[string]interface{}{
 		"app_id":        req.AppID,
 		"out_trade_num": req.OutTradeNum,
-		"order_number":  req.OrderNumber,
 		"status":        strconv.Itoa(req.Status),
-		"message":       req.Message,
 		"timestamp":     strconv.FormatInt(req.Timestamp, 10),
 		"nonce":         req.Nonce,
 	}
 
+	// 添加调试日志
+	logger.Info("接收端签名验证参数",
+		"app_id", req.AppID,
+		"out_trade_num", req.OutTradeNum,
+		"status", req.Status,
+		"status_str", strconv.Itoa(req.Status),
+		"timestamp", req.Timestamp,
+		"timestamp_str", strconv.FormatInt(req.Timestamp, 10),
+		"nonce", req.Nonce,
+		"received_sign", req.Sign,
+		"app_secret_length", len(apiKeyInfo.AppSecret),
+		"params_count", len(params),
+	)
+
 	if err := c.signValidator.ValidateSignature(params, req.Sign, apiKeyInfo.AppSecret); err != nil {
 		logData.ErrorMsg = fmt.Sprintf("Signature validation failed: %v", err)
+		logger.Error("签名验证失败详细信息",
+			"error", err,
+			"received_sign", req.Sign,
+			"app_secret_length", len(apiKeyInfo.AppSecret),
+			"params", params,
+		)
 		c.respondCallbackError(ctx, http.StatusUnauthorized, "Signature validation failed", &logData, startTime)
 		return
 	}
 
 	// 查询订单
-	var order *model.Order
-	if req.OutTradeNum != "" {
-		order, err = c.orderService.GetOrderByOutTradeNum(ctx, req.OutTradeNum)
-	} else if req.OrderNumber != "" {
-		order, err = c.orderService.GetOrderByOrderNumber(ctx, req.OrderNumber)
-	} else {
-		logData.ErrorMsg = "out_trade_num or order_number is required"
-		c.respondCallbackError(ctx, http.StatusBadRequest, "out_trade_num or order_number is required", &logData, startTime)
-		return
-	}
+	order, err := c.orderService.GetOrderByOutTradeNum(ctx, req.OutTradeNum)
 
 	if err != nil {
 		logData.ErrorMsg = fmt.Sprintf("Order not found: %v", err)
@@ -164,6 +174,7 @@ func (c *ExternalCallbackController) respondCallbackError(ctx *gin.Context, stat
 	if logData.ErrorMsg == "" {
 		logData.ErrorMsg = message
 	}
+	logData.ProcessTime = int(time.Since(startTime).Milliseconds())
 
 	response := &CallbackResponse{
 		Code:      statusCode,
@@ -171,22 +182,34 @@ func (c *ExternalCallbackController) respondCallbackError(ctx *gin.Context, stat
 		Timestamp: time.Now().Unix(),
 	}
 
-	// 记录日志（这里应该调用日志服务）
-	// TODO: 记录到数据库
+	// 记录日志到数据库
+	if logData.OrderID != "" {
+		if err := c.logRepo.Create(ctx, logData); err != nil {
+			// 日志记录失败不影响主流程，只记录错误
+			fmt.Printf("Failed to create callback error log: %v\n", err)
+		}
+	}
 
 	ctx.JSON(statusCode, response)
 }
 
 // respondCallbackSuccess 回调成功响应
 func (c *ExternalCallbackController) respondCallbackSuccess(ctx *gin.Context, message string, logData *model.ExternalOrderLog) {
+	logData.Status = 1 // 成功状态
+
 	response := &CallbackResponse{
 		Code:      200,
 		Message:   message,
 		Timestamp: time.Now().Unix(),
 	}
 
-	// 记录日志（这里应该调用日志服务）
-	// TODO: 记录到数据库
+	// 记录日志到数据库
+	if logData.OrderID != "" {
+		if err := c.logRepo.Create(ctx, logData); err != nil {
+			// 日志记录失败不影响主流程，只记录错误
+			fmt.Printf("Failed to create callback success log: %v\n", err)
+		}
+	}
 
 	ctx.JSON(http.StatusOK, response)
 }

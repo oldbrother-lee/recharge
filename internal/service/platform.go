@@ -605,19 +605,16 @@ func (s *PlatformService) sendExternalAPINotification(ctx context.Context, order
 // buildExternalAPIParams 构建外部API通知参数
 func (s *PlatformService) buildExternalAPIParams(order *model.Order) map[string]interface{} {
 	params := map[string]interface{}{
-		"user_order_id": order.OutTradeNum,
-		"order_number":  order.OrderNumber,
-		"mobile":        order.Mobile,
-		"denom":         order.Denom,
+		"out_trade_num": order.OrderNumber,
 		"status":        s.getExternalAPIStatus(order.Status),
-		"status_desc":   s.getExternalAPIStatusDesc(order.Status),
-		"finish_time":   "",
 		"timestamp":     time.Now().Unix(),
+		"nonce":         fmt.Sprintf("%d", time.Now().UnixNano()),
 	}
 
-	// 如果订单已完成，添加完成时间
-	if order.FinishTime != nil {
-		params["finish_time"] = order.FinishTime.Unix()
+	// 添加app_id参数（从订单的客户ID获取）
+	apiKeys, _, err := s.externalAPIKeyRepo.GetByUserID(order.CustomerID, 0, 1)
+	if err == nil && len(apiKeys) > 0 {
+		params["app_id"] = apiKeys[0].AppID
 	}
 
 	return params
@@ -665,7 +662,7 @@ func (s *PlatformService) generateExternalAPISign(params map[string]interface{},
 
 	// 使用第一个API密钥生成签名
 	apiKey := apiKeys[0]
-	logger.Info("使用API密钥生成签名",
+	logger.Info("发送端签名生成参数",
 		"customer_id", order.CustomerID,
 		"order_id", order.ID,
 		"order_number", order.OrderNumber,
@@ -673,16 +670,17 @@ func (s *PlatformService) generateExternalAPISign(params map[string]interface{},
 		"app_id", apiKey.AppID,
 		"secret_length", len(apiKey.AppSecret),
 		"params_count", len(params),
+		"params", params,
 	)
 
 	sign := signature.GenerateSign(params, apiKey.AppSecret)
-	logger.Info("外部API签名生成完成",
+	logger.Info("发送端签名生成完成",
 		"customer_id", order.CustomerID,
 		"order_id", order.ID,
 		"order_number", order.OrderNumber,
 		"api_key_id", apiKey.ID,
+		"generated_sign", sign,
 		"sign_length", len(sign),
-		"sign_preview", sign[:min(8, len(sign))]+"...",
 	)
 
 	return sign
@@ -754,10 +752,20 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "RechargeGo-Notification/1.0")
 
+	// 从参数中获取API密钥和签名，添加到请求头
+	if appKey, ok := params["app_key"].(string); ok {
+		req.Header.Set("X-API-Key", appKey)
+	}
+	if sign, ok := params["sign"].(string); ok {
+		req.Header.Set("X-Signature", sign)
+	}
+
 	logger.Info("HTTP请求头设置完成",
 		"callback_url", callbackURL,
 		"content_type", req.Header.Get("Content-Type"),
 		"user_agent", req.Header.Get("User-Agent"),
+		"x_api_key", req.Header.Get("X-API-Key"),
+		"x_signature_length", len(req.Header.Get("X-Signature")),
 	)
 
 	// 发送请求

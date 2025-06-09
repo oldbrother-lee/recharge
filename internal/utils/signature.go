@@ -31,51 +31,43 @@ func NewSignatureValidator() *SignatureValidator {
 	}
 }
 
-// GenerateSignature 生成签名
+// GenerateSignature 生成签名 - 按照API文档标准实现
 func (sv *SignatureValidator) GenerateSignature(params map[string]interface{}, appSecret string) (string, error) {
-	// 1. 过滤空值参数和签名参数
+	// 1. 过滤掉空值参数和签名参数本身
 	filteredParams := make(map[string]string)
 	for k, v := range params {
-		if v != nil && v != "" && k != "sign" {
-			switch val := v.(type) {
-			case string:
-				if val != "" {
-					filteredParams[k] = val
-				}
-			case int, int64, float64:
-				filteredParams[k] = fmt.Sprintf("%v", val)
-			default:
-				filteredParams[k] = fmt.Sprintf("%v", val)
-			}
+		if k != "sign" && k != "signature" && v != nil && v != "" {
+			filteredParams[k] = fmt.Sprintf("%v", v)
 		}
 	}
-
-	// 2. 参数排序
+	
+	// 2. 按参数名进行字典序排序
 	keys := make([]string, 0, len(filteredParams))
 	for k := range filteredParams {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 
-	// 3. 拼接参数字符串
+	// 3. 按照 key=value&key=value 的格式拼接
 	var paramPairs []string
 	for _, k := range keys {
 		paramPairs = append(paramPairs, fmt.Sprintf("%s=%s", k, filteredParams[k]))
 	}
 	paramString := strings.Join(paramPairs, "&")
-
-	// 4. 添加密钥
+	
+	// 4. 在拼接字符串末尾添加 &key=app_secret
 	signString := paramString + "&key=" + appSecret
-	fmt.Printf("signString##########:%+v\n", signString)
-	// 5. 使用MD5计算签名
-	hash := md5.Sum([]byte(signString))
-	return strings.ToUpper(hex.EncodeToString(hash[:])), nil
+	
+	// 5. 计算MD5并转换为大写
+	h := md5.New()
+	h.Write([]byte(signString))
+	result := strings.ToUpper(hex.EncodeToString(h.Sum(nil)))
+	return result, nil
 }
 
 // ValidateSignature 验证签名
 func (sv *SignatureValidator) ValidateSignature(params map[string]interface{}, signature string, appSecret string) error {
 	// 1. 检查时间戳
-	fmt.Printf("params##########:%+v\n", params)
 
 	// 获取timestamp参数
 	timestampValue, exists := params["timestamp"]
@@ -127,7 +119,7 @@ func (sv *SignatureValidator) ValidateSignature(params map[string]interface{}, s
 	}
 
 	// 4. 比较签名
-	if strings.ToUpper(signature) != strings.ToUpper(expectedSignature) {
+	if signature != expectedSignature {
 		return fmt.Errorf("signature mismatch")
 	}
 

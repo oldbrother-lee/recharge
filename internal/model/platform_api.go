@@ -43,6 +43,7 @@ type PlatformAPIParam struct {
 	Cost            float64   `json:"cost" gorm:"type:decimal(10,4);default:0.0000;comment:产品成本" validate:"min=0"`
 	ParValue        float64   `json:"par_value" gorm:"type:decimal(10,4);default:0.0000;comment:套餐值" `
 	Price           float64   `json:"price" gorm:"type:decimal(10,4);default:0.0000;comment:价格" `
+	CallbackURL     string    `json:"callback_url" gorm:"size:255;comment:回调地址"`
 	AllowProvinces  string    `json:"allow_provinces" gorm:"type:text;comment:允许的省份"`
 	AllowCities     string    `json:"allow_cities" gorm:"type:text;comment:允许的城市"`
 	ForbidProvinces string    `json:"forbid_provinces" gorm:"type:text;comment:禁止的省份"`

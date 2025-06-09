@@ -118,8 +118,9 @@ func (s *TaskService) processTask() {
 	logger.Info(fmt.Sprintf("获取到 %d 个启用的任务配置", len(configs)))
 
 	maxConcurrent := s.config.MaxConcurrent
+	logger.Info(fmt.Sprintf("最大并发数: %d", maxConcurrent))
 	if maxConcurrent <= 0 {
-		maxConcurrent = 5 // 默认最大并发数
+		maxConcurrent = 20 // 默认最大并发数
 	}
 	sem := make(chan struct{}, maxConcurrent)
 	var wg sync.WaitGroup
@@ -163,7 +164,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 	logger.Info(fmt.Sprintf("处理任务配置: ChannelID=%d, ProductID=%s accountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
 
 	// 获取或申请token
-	logger.Info(fmt.Sprintf("开始申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
+	logger.Info(fmt.Sprintf("开始申请token: ChannelID=%d, ProductID=%s, AccountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
 	tokenApplyStartTime := time.Now()
 
 	token, err := s.platformSvc.GetToken(channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL, cfg.ID)
@@ -179,8 +180,8 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 	// 开始查询循环：基于token创建时间判断5分钟过期，不限制查询次数
 	queryInterval := 2 * time.Second
 	tokenStartTime := time.Now() // 记录token开始使用的时间
-	logger.Info(fmt.Sprintf("token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s",
-		token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05")))
+	logger.Info(fmt.Sprintf("token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s AccountName=%s",
+		token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05"), accountName))
 
 	for {
 		select {
@@ -192,8 +193,8 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 		// 检查token是否已过期（5分钟）
 		if time.Since(tokenStartTime) >= 5*time.Minute {
 			tokenLifetime := time.Since(tokenStartTime)
-			logger.Info(fmt.Sprintf("token已过期，结束生命周期: token=%s, ChannelID=%d, ProductID=%s, 生命周期=%v, 过期时间=%s",
-				token, channelID, productID, tokenLifetime, time.Now().Format("2006-01-02 15:04:05")))
+			logger.Info(fmt.Sprintf("token已过期，结束生命周期: token=%s, ChannelID=%d, ProductID=%s, 生命周期=%v, 过期时间=%s AccountName=%s",
+				token, channelID, productID, tokenLifetime, time.Now().Format("2006-01-02 15:04:05"), accountName))
 			return
 		}
 

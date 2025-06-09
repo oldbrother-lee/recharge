@@ -64,6 +64,23 @@ type APIConfig struct {
 
 var config *Config
 
+// LoadConfig 从指定路径加载配置文件
+func LoadConfig(path string) (*Config, error) {
+	viper.SetConfigFile(path)
+	viper.AutomaticEnv()
+
+	if err := viper.ReadInConfig(); err != nil {
+		return nil, err
+	}
+
+	cfg := &Config{}
+	if err := viper.Unmarshal(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
 func GetConfig() *Config {
 	if config == nil {
 		viper.SetConfigName("config")

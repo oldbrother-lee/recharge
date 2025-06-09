@@ -3,32 +3,32 @@ package recharge
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/pkg/logger"
+	"recharge-go/pkg/signature"
 
 	"gorm.io/gorm"
 )
 
 // ExternalAPIPlatform 外部API平台（使用本系统的外部API创建订单）
 type ExternalAPIPlatform struct {
-	platformRepo repository.PlatformRepository
+	platformRepo       repository.PlatformRepository
+	signatureValidator *signature.ExternalAPISignatureValidator
 }
 
 // NewExternalAPIPlatform 创建外部API平台实例
 func NewExternalAPIPlatform(db *gorm.DB) *ExternalAPIPlatform {
 	return &ExternalAPIPlatform{
-		platformRepo: repository.NewPlatformRepository(db),
+		platformRepo:       repository.NewPlatformRepository(db),
+		signatureValidator: signature.NewExternalAPISignatureValidator(),
 	}
 }
 
@@ -263,29 +263,12 @@ func (p *ExternalAPIPlatform) generateNonce() string {
 
 // generateSign 生成签名
 func (p *ExternalAPIPlatform) generateSign(params map[string]interface{}, appSecret string) string {
-	// 1. 排序参数
-	keys := make([]string, 0, len(params))
-	for k := range params {
-		if k != "sign" {
-			keys = append(keys, k)
-		}
+	sign, err := p.signatureValidator.GenerateExternalAPISignature(params, appSecret)
+	if err != nil {
+		logger.Error("Failed to generate external API signature", "error", err)
+		return ""
 	}
-	sort.Strings(keys)
-
-	// 2. 构建签名字符串
-	var signStr strings.Builder
-	for i, k := range keys {
-		if i > 0 {
-			signStr.WriteString("&")
-		}
-		signStr.WriteString(fmt.Sprintf("%s=%v", k, params[k]))
-	}
-	signStr.WriteString("&key=")
-	signStr.WriteString(appSecret)
-
-	// 3. MD5加密并转换为大写
-	hash := md5.Sum([]byte(signStr.String()))
-	return strings.ToUpper(fmt.Sprintf("%x", hash))
+	return sign
 }
 
 // mapOrderStatus 映射订单状态

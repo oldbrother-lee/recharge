@@ -1,4 +1,4 @@
-package utils
+package signature
 
 import (
 	"crypto/md5"
@@ -11,28 +11,28 @@ import (
 	"time"
 )
 
-// SignatureConfig 签名配置
-type SignatureConfig struct {
+// ExternalAPISignatureConfig 外部API签名配置
+type ExternalAPISignatureConfig struct {
 	AppID     string `json:"app_id"`
 	AppSecret string `json:"app_secret"`
 	Timestamp int64  `json:"timestamp"`
 	Nonce     string `json:"nonce"`
 }
 
-// SignatureValidator 签名验证器
-type SignatureValidator struct {
+// ExternalAPISignatureValidator 外部API签名验证器
+type ExternalAPISignatureValidator struct {
 	TimeWindow int64 // 时间窗口，单位秒，默认300秒(5分钟)
 }
 
-// NewSignatureValidator 创建签名验证器
-func NewSignatureValidator() *SignatureValidator {
-	return &SignatureValidator{
+// NewExternalAPISignatureValidator 创建外部API签名验证器
+func NewExternalAPISignatureValidator() *ExternalAPISignatureValidator {
+	return &ExternalAPISignatureValidator{
 		TimeWindow: 300, // 默认5分钟时间窗口
 	}
 }
 
-// GenerateSignature 生成签名 - 按照API文档标准实现
-func (sv *SignatureValidator) GenerateSignature(params map[string]interface{}, appSecret string) (string, error) {
+// GenerateExternalAPISignature 生成外部API签名 - 按照API文档标准实现
+func (sv *ExternalAPISignatureValidator) GenerateExternalAPISignature(params map[string]interface{}, appSecret string) (string, error) {
 	// 1. 过滤掉空值参数和签名参数本身
 	filteredParams := make(map[string]string)
 	for k, v := range params {
@@ -40,7 +40,7 @@ func (sv *SignatureValidator) GenerateSignature(params map[string]interface{}, a
 			filteredParams[k] = fmt.Sprintf("%v", v)
 		}
 	}
-	
+
 	// 2. 按参数名进行字典序排序
 	keys := make([]string, 0, len(filteredParams))
 	for k := range filteredParams {
@@ -54,10 +54,10 @@ func (sv *SignatureValidator) GenerateSignature(params map[string]interface{}, a
 		paramPairs = append(paramPairs, fmt.Sprintf("%s=%s", k, filteredParams[k]))
 	}
 	paramString := strings.Join(paramPairs, "&")
-	
+
 	// 4. 在拼接字符串末尾添加 &key=app_secret
 	signString := paramString + "&key=" + appSecret
-	
+	fmt.Printf("外部api signString: %s\n", signString)
 	// 5. 计算MD5并转换为大写
 	h := md5.New()
 	h.Write([]byte(signString))
@@ -65,14 +65,12 @@ func (sv *SignatureValidator) GenerateSignature(params map[string]interface{}, a
 	return result, nil
 }
 
-// ValidateSignature 验证签名
-func (sv *SignatureValidator) ValidateSignature(params map[string]interface{}, signature string, appSecret string) error {
+// ValidateExternalAPISignature 验证外部API签名
+func (sv *ExternalAPISignatureValidator) ValidateExternalAPISignature(params map[string]interface{}, signature string, appSecret string) error {
 	// 1. 检查时间戳
-
-	// 获取timestamp参数
 	timestampValue, exists := params["timestamp"]
 	if !exists {
-		return fmt.Errorf("timestamp is required!!!")
+		return fmt.Errorf("timestamp is required")
 	}
 
 	// 处理不同类型的timestamp
@@ -99,11 +97,13 @@ func (sv *SignatureValidator) ValidateSignature(params map[string]interface{}, s
 		return fmt.Errorf("invalid timestamp type: %T", v)
 	}
 
+	// 检查时间戳是否在有效范围内
 	now := time.Now().Unix()
 	if abs(now-timestamp) > sv.TimeWindow {
 		return fmt.Errorf("timestamp expired")
 	}
 	params["timestamp"] = timestamp
+
 	// 2. 移除签名参数
 	validateParams := make(map[string]interface{})
 	for k, v := range params {
@@ -113,7 +113,7 @@ func (sv *SignatureValidator) ValidateSignature(params map[string]interface{}, s
 	}
 
 	// 3. 生成签名
-	expectedSignature, err := sv.GenerateSignature(validateParams, appSecret)
+	expectedSignature, err := sv.GenerateExternalAPISignature(validateParams, appSecret)
 	if err != nil {
 		return err
 	}
@@ -127,7 +127,7 @@ func (sv *SignatureValidator) ValidateSignature(params map[string]interface{}, s
 }
 
 // ParseFormParams 解析表单参数
-func (sv *SignatureValidator) ParseFormParams(formData url.Values) map[string]interface{} {
+func (sv *ExternalAPISignatureValidator) ParseFormParams(formData url.Values) map[string]interface{} {
 	params := make(map[string]interface{})
 	for k, v := range formData {
 		if len(v) > 0 {
@@ -138,8 +138,18 @@ func (sv *SignatureValidator) ParseFormParams(formData url.Values) map[string]in
 }
 
 // ParseJSONParams 解析JSON参数
-func (sv *SignatureValidator) ParseJSONParams(jsonData map[string]interface{}) map[string]interface{} {
+func (sv *ExternalAPISignatureValidator) ParseJSONParams(jsonData map[string]interface{}) map[string]interface{} {
 	return jsonData
+}
+
+// GenerateExternalAPINonce 生成随机字符串
+func GenerateExternalAPINonce(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+	}
+	return string(b)
 }
 
 // abs 计算绝对值
@@ -148,14 +158,4 @@ func abs(x int64) int64 {
 		return -x
 	}
 	return x
-}
-
-// GenerateNonce 生成随机字符串
-func GenerateNonce(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
-	}
-	return string(b)
 }

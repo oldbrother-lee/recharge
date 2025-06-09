@@ -605,7 +605,7 @@ func (s *PlatformService) sendExternalAPINotification(ctx context.Context, order
 // buildExternalAPIParams 构建外部API通知参数
 func (s *PlatformService) buildExternalAPIParams(order *model.Order) map[string]interface{} {
 	params := map[string]interface{}{
-		"out_trade_num": order.OrderNumber,
+		"out_trade_num": order.OutTradeNum,
 		"status":        s.getExternalAPIStatus(order.Status),
 		"timestamp":     time.Now().Unix(),
 		"nonce":         fmt.Sprintf("%d", time.Now().UnixNano()),
@@ -673,7 +673,18 @@ func (s *PlatformService) generateExternalAPISign(params map[string]interface{},
 		"params", params,
 	)
 
-	sign := signature.GenerateSign(params, apiKey.AppSecret)
+	// 使用外部API签名验证器生成签名
+	signatureValidator := signature.NewExternalAPISignatureValidator()
+	sign, err := signatureValidator.GenerateExternalAPISignature(params, apiKey.AppSecret)
+	if err != nil {
+		logger.Error("外部API签名生成失败",
+			"error", err,
+			"customer_id", order.CustomerID,
+			"order_id", order.ID,
+			"order_number", order.OrderNumber,
+		)
+		return ""
+	}
 	logger.Info("发送端签名生成完成",
 		"customer_id", order.CustomerID,
 		"order_id", order.ID,

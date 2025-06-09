@@ -130,7 +130,7 @@ func (r *OrderRepositoryImpl) GetByOrderNumber(ctx context.Context, orderNumber 
 // GetByOutTradeNum 根据外部交易号获取订单
 func (r *OrderRepositoryImpl) GetByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error) {
 	var order model.Order
-	if err := r.db.Where("out_trade_num = ? AND is_del = 0", outTradeNum).First(&order).Error; err != nil {
+	if err := r.db.Where("order_number = ? AND is_del = 0", outTradeNum).First(&order).Error; err != nil {
 		return nil, err
 	}
 	return &order, nil

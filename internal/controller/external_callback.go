@@ -8,8 +8,8 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
 	"recharge-go/pkg/logger"
+	"recharge-go/pkg/signature"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +22,7 @@ type ExternalCallbackController struct {
 	orderService  service.OrderService
 	apiKeyRepo    repository.ExternalAPIKeyRepository
 	logRepo       repository.ExternalOrderLogRepository
-	signValidator *utils.SignatureValidator
+	signValidator *signature.ExternalAPISignatureValidator
 }
 
 // NewExternalCallbackController 创建外部回调控制器
@@ -35,7 +35,7 @@ func NewExternalCallbackController(
 		orderService:  orderService,
 		apiKeyRepo:    apiKeyRepo,
 		logRepo:       logRepo,
-		signValidator: utils.NewSignatureValidator(),
+		signValidator: signature.NewExternalAPISignatureValidator(),
 	}
 }
 
@@ -122,7 +122,7 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 		"params_count", len(params),
 	)
 
-	if err := c.signValidator.ValidateSignature(params, req.Sign, apiKeyInfo.AppSecret); err != nil {
+	if err := c.signValidator.ValidateExternalAPISignature(params, req.Sign, apiKeyInfo.AppSecret); err != nil {
 		logData.ErrorMsg = fmt.Sprintf("Signature validation failed: %v", err)
 		logger.Error("签名验证失败详细信息",
 			"error", err,

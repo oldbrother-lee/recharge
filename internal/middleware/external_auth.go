@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/utils"
+	"recharge-go/pkg/signature"
 	"strings"
 	"time"
 
@@ -18,7 +19,7 @@ import (
 // ExternalAuthMiddleware 外部认证中间件结构体
 type ExternalAuthMiddleware struct {
 	apiKeyRepo         repository.ExternalAPIKeyRepository
-	signatureValidator *utils.SignatureValidator
+	signatureValidator *signature.ExternalAPISignatureValidator
 	rateLimit          map[string]*RateLimiter
 }
 
@@ -33,7 +34,7 @@ type RateLimiter struct {
 func NewExternalAuthMiddleware(apiKeyRepo repository.ExternalAPIKeyRepository) *ExternalAuthMiddleware {
 	return &ExternalAuthMiddleware{
 		apiKeyRepo:         apiKeyRepo,
-		signatureValidator: utils.NewSignatureValidator(),
+		signatureValidator: signature.NewExternalAPISignatureValidator(),
 		rateLimit:          make(map[string]*RateLimiter),
 	}
 }
@@ -145,7 +146,7 @@ func (m *ExternalAuthMiddleware) validateSignature(c *gin.Context, appSecret str
 	}
 
 	// 验证签名
-	return m.signatureValidator.ValidateSignature(params, signature, appSecret)
+	return m.signatureValidator.ValidateExternalAPISignature(params, signature, appSecret)
 }
 
 // checkRateLimit 检查请求频率限制

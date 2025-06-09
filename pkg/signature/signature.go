@@ -54,7 +54,7 @@ func GenerateSign(params map[string]interface{}, appSecret string) string {
 
 	// 4. 添加 app_secret
 	signStr.WriteString(appSecret)
-	fmt.Println("signStr.String()-------", appSecret)
+	fmt.Printf("signStr.String()-------%+v\n", signStr)
 	// 5. MD5加密
 	h := md5.New()
 	h.Write([]byte(signStr.String()))

@@ -27,6 +27,9 @@ type TaskService struct {
 	mu                  sync.Mutex
 	isRunning           bool
 	platformAccountRepo *repository.PlatformAccountRepository
+	// 任务上下文管理
+	taskContexts        map[int64]context.CancelFunc // 任务ID -> 取消函数
+	taskMutex           sync.RWMutex                 // 保护taskContexts的读写锁
 }
 
 type TaskConfig struct {
@@ -61,6 +64,7 @@ func NewTaskService(
 		ctx:                 ctx,
 		cancel:              cancel,
 		platformAccountRepo: platformAccountRepo,
+		taskContexts:        make(map[int64]context.CancelFunc),
 	}
 }
 
@@ -105,6 +109,34 @@ func (s *TaskService) StopTask() {
 	s.wg.Wait()
 }
 
+// StopTaskByID 主动停止特定任务
+func (s *TaskService) StopTaskByID(taskID int64) {
+	s.taskMutex.RLock()
+	if cancel, exists := s.taskContexts[taskID]; exists {
+		cancel()
+		logger.Info(fmt.Sprintf("主动停止任务: TaskID=%d", taskID))
+	}
+	s.taskMutex.RUnlock()
+}
+
+// ReloadTaskConfig 重新加载任务配置（用于API调用时主动触发热更新）
+func (s *TaskService) ReloadTaskConfig() error {
+	logger.Info("开始重新加载任务配置")
+
+	// 获取最新的任务配置
+	configs, err := s.taskConfigRepo.GetEnabledConfigs()
+	if err != nil {
+		logger.Error("重新加载任务配置失败", err)
+		return err
+	}
+
+	// 检查并停止过时的任务
+	s.checkAndStopObsoleteTasks(configs)
+
+	logger.Info(fmt.Sprintf("任务配置重新加载完成，当前启用配置数量: %d", len(configs)))
+	return nil
+}
+
 // processTask 处理取单任务
 func (s *TaskService) processTask() {
 	logger.Info("开始执行定时任务")
@@ -116,6 +148,9 @@ func (s *TaskService) processTask() {
 		return
 	}
 	logger.Info(fmt.Sprintf("获取到 %d 个启用的任务配置", len(configs)))
+
+	// 检查配置变更，停止已删除或禁用的任务
+	s.checkAndStopObsoleteTasks(configs)
 
 	maxConcurrent := s.config.MaxConcurrent
 	logger.Info(fmt.Sprintf("最大并发数: %d", maxConcurrent))
@@ -140,8 +175,83 @@ func (s *TaskService) processTask() {
 	wg.Wait()
 }
 
+// checkAndStopObsoleteTasks 检查并停止已删除或禁用的任务
+func (s *TaskService) checkAndStopObsoleteTasks(currentConfigs []model.TaskConfig) {
+	// 构建当前启用的任务ID集合
+	currentTaskIDs := make(map[int64]bool)
+	for _, cfg := range currentConfigs {
+		currentTaskIDs[cfg.ID] = true
+	}
+
+	// 检查正在运行的任务，停止不在当前配置中的任务
+	s.taskMutex.RLock()
+	var tasksToStop []int64
+	for taskID := range s.taskContexts {
+		if !currentTaskIDs[taskID] {
+			tasksToStop = append(tasksToStop, taskID)
+		}
+	}
+	s.taskMutex.RUnlock()
+
+	// 停止过时的任务
+	for _, taskID := range tasksToStop {
+		s.StopTaskByID(taskID)
+		// 从任务上下文中移除
+		s.taskMutex.Lock()
+		delete(s.taskContexts, taskID)
+		s.taskMutex.Unlock()
+		logger.Info(fmt.Sprintf("已停止过时任务: TaskID=%d", taskID))
+	}
+}
+
+// checkTaskConfigChanged 检查任务配置是否发生变更
+func (s *TaskService) checkTaskConfigChanged(oldCfg *model.TaskConfig) bool {
+	// 从数据库获取最新配置
+	newCfg, err := s.taskConfigRepo.GetByID(oldCfg.ID)
+	if err != nil {
+		logger.Error(fmt.Sprintf("获取任务配置失败: TaskID=%d, error=%v", oldCfg.ID, err))
+		return false
+	}
+
+	// 检查任务是否被禁用
+	if newCfg.Status != 1 {
+		logger.Info(fmt.Sprintf("任务配置已被禁用: TaskID=%d", oldCfg.ID))
+		return true
+	}
+
+	// 检查关键配置是否发生变更
+	if oldCfg.PlatformAccountID != newCfg.PlatformAccountID ||
+		oldCfg.ChannelID != newCfg.ChannelID ||
+		oldCfg.ProductID != newCfg.ProductID ||
+		oldCfg.FaceValues != newCfg.FaceValues ||
+		oldCfg.MinSettleAmounts != newCfg.MinSettleAmounts ||
+		oldCfg.Provinces != newCfg.Provinces {
+		logger.Info(fmt.Sprintf("任务配置发生变更: TaskID=%d", oldCfg.ID))
+		return true
+	}
+
+	return false
+}
+
 // processTaskConfig 处理单个任务配置
 func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
+	// 创建任务专用的上下文
+	taskCtx, taskCancel := context.WithCancel(s.ctx)
+	taskID := cfg.ID
+
+	// 注册任务上下文
+	s.taskMutex.Lock()
+	s.taskContexts[taskID] = taskCancel
+	s.taskMutex.Unlock()
+
+	// 确保任务结束时清理上下文
+	defer func() {
+		s.taskMutex.Lock()
+		delete(s.taskContexts, taskID)
+		s.taskMutex.Unlock()
+		taskCancel()
+	}()
+
 	channelID := int(cfg.ChannelID)
 	productID := cfg.ProductID
 	provinces := cfg.Provinces
@@ -189,11 +299,27 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 	logger.Info(fmt.Sprintf("token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s AccountName=%s",
 		token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05"), accountName))
 
+	// 配置检查计时器
+	configCheckInterval := 30 * time.Second // 每30秒检查一次配置
+	lastConfigCheck := time.Now()
+
 	for {
 		select {
+		case <-taskCtx.Done():
+			logger.Info(fmt.Sprintf("任务被主动停止: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
+			return
 		case <-s.ctx.Done():
 			return
 		default:
+		}
+
+		// 定期检查配置是否有变更
+		if time.Since(lastConfigCheck) >= configCheckInterval {
+			if s.checkTaskConfigChanged(cfg) {
+				logger.Info(fmt.Sprintf("检测到任务配置变更，重启任务: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
+				return
+			}
+			lastConfigCheck = time.Now()
 		}
 
 		// 检查token是否已过期（5分钟）

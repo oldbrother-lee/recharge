@@ -7,6 +7,7 @@ import (
 	"recharge-go/internal/controller"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
+	"recharge-go/internal/service/platform"
 	"recharge-go/pkg/database"
 	"recharge-go/pkg/logger"
 	"recharge-go/pkg/metrics"
@@ -217,6 +218,13 @@ func SetupRouterV2(
 
 			// Task config routes
 			RegisterTaskConfigRoutes(auth)
+
+			// Task routes (包含task-config路由)
+			// 需要创建平台服务实例
+			platformTokenRepo := repository.NewPlatformTokenRepository(database.DB)
+			platformRepo := repository.NewPlatformRepository(database.DB)
+			platformSvc := platform.NewService(platformTokenRepo, platformRepo)
+			RegisterTaskRoutes(auth, platformSvc)
 
 			// System config routes
 			if scc := assertSystemConfigController(systemConfigController); scc != nil {

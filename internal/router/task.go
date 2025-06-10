@@ -85,7 +85,6 @@ func RegisterTaskRoutes(r *gin.RouterGroup, platformSvc *platform.Service) {
 
 	taskOrderHandler := handler.NewTaskOrderHandler(taskOrderRepo)
 	taskConfigService := service.NewTaskConfigService(taskConfigRepo)
-	taskConfigController := controller.NewTaskConfigController(taskConfigService)
 	taskSvc := service.NewTaskService(
 		taskConfigRepo,
 		taskOrderRepo,
@@ -96,9 +95,7 @@ func RegisterTaskRoutes(r *gin.RouterGroup, platformSvc *platform.Service) {
 		taskConfig,
 		platformAccountRepo,
 	)
-
-	// 启动自动取单任务
-	taskSvc.StartTask()
+	taskConfigController := controller.NewTaskConfigController(taskConfigService, taskSvc)
 
 	// 取单任务配置路由
 	taskConfigGroup := r.Group("/task-config")

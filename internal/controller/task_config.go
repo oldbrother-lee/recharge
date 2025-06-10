@@ -12,11 +12,13 @@ import (
 
 type TaskConfigController struct {
 	taskConfigService *service.TaskConfigService
+	taskService       *service.TaskService
 }
 
-func NewTaskConfigController(taskConfigService *service.TaskConfigService) *TaskConfigController {
+func NewTaskConfigController(taskConfigService *service.TaskConfigService, taskService *service.TaskService) *TaskConfigController {
 	return &TaskConfigController{
 		taskConfigService: taskConfigService,
+		taskService:       taskService,
 	}
 }
 
@@ -55,6 +57,13 @@ func (c *TaskConfigController) Update(ctx *gin.Context) {
 		return
 	}
 
+	// 触发任务配置热更新
+	if err := c.taskService.ReloadTaskConfig(); err != nil {
+		// 记录错误但不影响响应，因为配置已经更新成功
+		utils.Error(ctx, http.StatusInternalServerError, "配置更新成功但热更新失败")
+		return
+	}
+
 	// 获取更新后的完整配置
 	config, err := c.taskConfigService.GetByID(ctx, *req.ID)
 	if err != nil {
@@ -75,6 +84,13 @@ func (c *TaskConfigController) Delete(ctx *gin.Context) {
 
 	if err := c.taskConfigService.Delete(ctx, id); err != nil {
 		utils.Error(ctx, http.StatusInternalServerError, "删除任务配置失败")
+		return
+	}
+
+	// 触发任务配置热更新
+	if err := c.taskService.ReloadTaskConfig(); err != nil {
+		// 记录错误但不影响响应，因为配置已经删除成功
+		utils.Error(ctx, http.StatusInternalServerError, "配置删除成功但热更新失败")
 		return
 	}
 

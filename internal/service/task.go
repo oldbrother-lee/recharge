@@ -160,7 +160,13 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 		return
 	}
 
-	fmt.Printf("userid %d platformAccount++++++++!!!!!!!!%+v", *platformAccount.BindUserID, platformAccount)
+	if platformAccount.BindUserID != nil {
+		fmt.Printf("userid %d platformAccount++++++++!!!!!!!!%+v", *platformAccount.BindUserID, platformAccount)
+	} else {
+		fmt.Printf("userid <nil> platformAccount++++++++!!!!!!!!%+v", platformAccount)
+		logger.Warn(fmt.Sprintf("平台账号未绑定用户，跳过任务处理: PlatformAccountID=%d, ChannelID=%d, ProductID=%s", cfg.PlatformAccountID, channelID, productID))
+		return
+	}
 	logger.Info(fmt.Sprintf("处理任务配置: ChannelID=%d, ProductID=%s accountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
 
 	// 获取或申请token
@@ -302,6 +308,15 @@ func (s *TaskService) handleMatchedOrder(order *platform.PlatformOrder, cfg *mod
 		return
 	}
 
+	var customerID int64
+	if platformAccount.BindUserID != nil {
+		customerID = *platformAccount.BindUserID
+	} else {
+		// 如果没有绑定用户，跳过订单创建
+		logger.Warn(fmt.Sprintf("平台账号未绑定用户，跳过订单创建: PlatformAccountID=%d, OrderNumber=%s", cfg.PlatformAccountID, order.OrderNumber))
+		return
+	}
+
 	orderRecord := &model.Order{
 		Mobile:            order.AccountNum,
 		ProductID:         productObject.ID,
@@ -320,7 +335,7 @@ func (s *TaskService) handleMatchedOrder(order *platform.PlatformOrder, cfg *mod
 		CreateTime:        order.CreateTime.Time,
 		OutTradeNum:       order.OrderNumber,
 		PlatformAccountID: cfg.PlatformAccountID,
-		CustomerID:        *platformAccount.BindUserID,
+		CustomerID:        customerID,
 		PlatformName:      platformInfo.Name,
 		PlatformCode:      platformInfo.Code,
 	}

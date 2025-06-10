@@ -181,7 +181,10 @@ const columns: DataTableColumns<Order> = [
     key: 'platform_name',
     title: '来源',
     align: 'center',
-    width: 100
+    width: 100,
+    render(row) {
+      return (row as any).platform_name || 'API下单';
+    }
   },
   {
     key: 'create_time',
@@ -351,4 +354,4 @@ function formatLocalDatetime(ts: number | null) {
       </template>
     </NModal>
   </NCard>
-</template> 
+</template>

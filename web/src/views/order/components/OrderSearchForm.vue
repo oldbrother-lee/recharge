@@ -31,7 +31,7 @@ const handleReset = () => {
       <n-form-item-gi span="24 s:12 m:6" label="订单号" path="order_number" class="pr-24px">
         <n-input v-model:value="searchForm.order_number" placeholder="请输入订单号" />
       </n-form-item-gi>
-      <n-form-item-gi span="24 s:12 m:6" label="外部订单号" path="out_trade_num" class="pr-24px">
+      <n-form-item-gi span="24 s:12 m:6" label="外部订单" path="out_trade_num" class="pr-24px">
         <n-input v-model:value="searchForm.out_trade_num" placeholder="请输入外部订单号" />
       </n-form-item-gi>
       <n-form-item-gi span="24 s:12 m:6" label="手机号" path="mobile" class="pr-24px">
@@ -56,18 +56,7 @@ const handleReset = () => {
           
         />
       </n-form-item-gi>
-      <n-form-item-gi span="24 s:12 m:6" label="来源" path="client" class="pr-24px">
-        <n-select
-          v-model:value="searchForm.platform_code"
-          :options="[
-            { label: '客客帮', value: 'kekebang' },
-            { label: '小蜜蜂', value: 'mifeng' },
-            { label: '闲赚侠', value: 'xianzuanxia' }
-          ]"
-          placeholder="请选择来源"
-          clearable
-        />
-      </n-form-item-gi>
+
       <n-form-item-gi span="24 s:12 m:6" label="创建时间" path="date_range" class="pr-24px">
         <n-date-picker v-model:value="searchForm.date_range" type="daterange" clearable />
       </n-form-item-gi>

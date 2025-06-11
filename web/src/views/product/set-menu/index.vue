@@ -330,6 +330,51 @@ const { loading, data, pagination, handlePageChange, handlePageSizeChange, handl
 const { visible, showModal, hideModal } = useModal();
 const { formRef, formModel, rules, handleSubmit, resetForm } = useForm();
 
+// 设置表单验证规则
+rules.value = {
+  name: {
+    required: true,
+    message: '请输入商品名称',
+    trigger: ['blur', 'input']
+  },
+  type: {
+    required: true,
+    type: 'number',
+    message: '请选择商品类型',
+    trigger: ['blur', 'change']
+  },
+  category_id: {
+    required: true,
+    type: 'number',
+    message: '请选择商品分类',
+    trigger: ['blur', 'change']
+  },
+  show_style: {
+    required: true,
+    type: 'number',
+    message: '请选择显示端',
+    trigger: ['blur', 'change']
+  },
+  isp: {
+    required: true,
+    type: 'array',
+    message: '请选择运营商',
+    trigger: ['blur', 'change']
+  },
+  price: {
+    required: true,
+    type: 'number',
+    message: '请输入基础价格',
+    trigger: ['blur', 'change']
+  },
+  status: {
+    required: true,
+    type: 'number',
+    message: '请选择状态',
+    trigger: ['blur', 'change']
+  }
+};
+
 const categoryModalRef = ref();
 const productTypes = ref<ProductType[]>([]);
 const productCategories = ref<ProductCategory[]>([]);
@@ -609,6 +654,8 @@ const handleReset = () => {
 // 新增商品
 const handleAdd = () => {
   resetForm();
+  // 设置默认值
+  formModel.value.status = 1; // 默认启用状态
   showModal();
 };
 

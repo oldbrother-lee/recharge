@@ -50,10 +50,11 @@ type LogConfig struct {
 }
 
 type TaskConfig struct {
-	Interval      int `mapstructure:"interval"`
-	MaxRetries    int `mapstructure:"max_retries"`
-	RetryDelay    int `mapstructure:"retry_delay"`
-	MaxConcurrent int `mapstructure:"max_concurrent"`
+	Interval           int `mapstructure:"interval"`
+	OrderDetailsInterval int `mapstructure:"order_details_interval"`
+	MaxRetries         int `mapstructure:"max_retries"`
+	RetryDelay         int `mapstructure:"retry_delay"`
+	MaxConcurrent      int `mapstructure:"max_concurrent"`
 }
 
 type APIConfig struct {

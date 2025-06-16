@@ -869,7 +869,7 @@ const loadInterfaceOptions = async () => {
 const loadPackageOptions = async (apiId: number) => {
   try {
     const res = await request({
-      url: `/platform/api/params?api_id=${apiId}`,
+      url: `/platform/api/params?api_id=${apiId}&page=1&page_size=100`,
       method: 'GET'
     });
     if (res.data) {

@@ -342,10 +342,11 @@ func (c *Container) initServices() error {
 
 	// 初始化TaskService
 	taskConfig := &service.TaskConfig{
-		Interval:      time.Duration(c.config.Task.Interval) * time.Second,
-		MaxRetries:    c.config.Task.MaxRetries,
-		RetryDelay:    time.Duration(c.config.Task.RetryDelay) * time.Second,
-		MaxConcurrent: c.config.Task.MaxConcurrent,
+		Interval:             time.Duration(c.config.Task.Interval) * time.Second,
+		OrderDetailsInterval: time.Duration(c.config.Task.OrderDetailsInterval) * time.Second,
+		MaxRetries:           c.config.Task.MaxRetries,
+		RetryDelay:           time.Duration(c.config.Task.RetryDelay) * time.Second,
+		MaxConcurrent:        c.config.Task.MaxConcurrent,
 	}
 	c.services.Task = service.NewTaskService(
 		c.repositories.TaskConfig,

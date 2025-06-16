@@ -43,8 +43,10 @@ func (t *TaskApp) Start(ctx context.Context) error {
 
 	// 启动任务服务
 	t.taskService.StartTask()
+	// 启动订单详情查询任务
+	t.taskService.StartOrderDetailsTask()
 
-	log.Println("任务应用已启动，正在处理启用的任务配置")
+	log.Println("任务应用已启动，正在处理启用的任务配置和订单详情查询")
 	return nil
 }
 

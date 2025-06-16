@@ -406,13 +406,32 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 	// 查询订单
 	order, err := c.orderService.GetOrderByOutTradeNum(ctx, strconv.FormatInt(req.UserOrderID, 10))
 	if err != nil {
-		logger.Log.Info("查询订单失败",
+		// 判断是否为记录不存在错误
+		if err.Error() == "record not found" {
+			logger.Log.Info("订单不存在",
+				zap.Error(err),
+				zap.Int64("order_id", req.UserOrderID),
+				zap.String("request_id", ctx.GetString("request_id")))
+			response := gin.H{
+				"code":    0,
+				"message": "订单不存在",
+				"data": gin.H{
+					"status":   3,
+					"rsp_info": "订单不存在或已失效",
+					"rsp_time": time.Now().Unix(),
+				},
+			}
+			ctx.JSON(http.StatusOK, response)
+			return
+		}
+		// 其他数据库错误
+		logger.Log.Error("数据库查询订单失败",
 			zap.Error(err),
 			zap.Int64("order_id", req.UserOrderID),
 			zap.String("request_id", ctx.GetString("request_id")))
 		response := gin.H{
 			"code":    1,
-			"message": "查询订单失败",
+			"message": "查询订单失败，请稍后重试",
 			"data":    gin.H{},
 		}
 		ctx.JSON(http.StatusOK, response)
@@ -420,10 +439,17 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 	}
 
 	if order == nil {
+		logger.Log.Info("订单查询结果为空",
+			zap.Int64("order_id", req.UserOrderID),
+			zap.String("request_id", ctx.GetString("request_id")))
 		response := gin.H{
-			"code":    1,
+			"code":    0,
 			"message": "订单不存在",
-			"data":    gin.H{},
+			"data": gin.H{
+				"status":   3,
+				"rsp_info": "订单不存在或已失效",
+				"rsp_time": time.Now().Unix(),
+			},
 		}
 		ctx.JSON(http.StatusOK, response)
 		return

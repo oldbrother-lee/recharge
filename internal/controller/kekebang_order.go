@@ -280,23 +280,74 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 	// 查询订单
 	order, err := c.orderService.GetOrderByOutTradeNum(ctx, strconv.FormatInt(req.UserOrderID, 10))
 	if err != nil {
+		// 判断是否为记录不存在错误
+		if err.Error() == "record not found" {
+			logger.Info("【订单不存在】order_id: %d", req.UserOrderID)
+			response := gin.H{
+				"code":    0,
+				"message": "success",
+				"data": gin.H{
+					"status":   3,
+					"rsp_info": "订单不存在或已失效",
+					"rsp_time": time.Now().Unix(),
+				},
+			}
+			ctx.JSON(http.StatusOK, response)
+			return
+		}
+		// 其他数据库错误
 		logger.Error("【查询订单失败】error: %v", err)
 		utils.Error(ctx, 500, "查询订单失败")
 		return
 	}
 
-	// 转换订单状态为可客帮状态
-	status := convertOrderStatus(order.Status)
+	if order == nil {
+		logger.Info("【订单查询结果为空】order_id: %d", req.UserOrderID)
+		response := gin.H{
+			"code":    0,
+			"message": "success",
+			"data": gin.H{
+				"status":   3,
+				"rsp_info": "订单不存在或已失效",
+				"rsp_time": time.Now().Unix(),
+			},
+		}
+		ctx.JSON(http.StatusOK, response)
+		return
+	}
 
-	response.Success(ctx, gin.H{
-		"order_id":     order.ID,
-		"order_number": order.OrderNumber,
-		"status":       status,
-		"amount":       order.TotalPrice,
-		"mobile":       order.Mobile,
-		"create_time":  order.CreateTime.Unix(),
-		"finish_time":  getFinishTime(order.FinishTime),
-	})
+	// 转换订单状态为可客帮状态
+	status, rsp_info := getKekebangOrderStatusAndInfo(order)
+	response := gin.H{
+		"code":    0,
+		"message": "success",
+		"data": gin.H{
+			"status":   status,
+			"rsp_info": rsp_info,
+			"rsp_time": time.Now().Unix(),
+		},
+	}
+	ctx.JSON(http.StatusOK, response)
+}
+func getKekebangOrderStatusAndInfo(order *model.Order) (int, string) {
+	switch order.Status {
+	case model.OrderStatusPendingPayment, model.OrderStatusPendingRecharge, model.OrderStatusRecharging:
+		return 1, "充值中"
+	case model.OrderStatusSuccess:
+		return 2, "充值成功"
+	case model.OrderStatusFailed:
+		return 3, order.Remark
+	case model.OrderStatusRefunded:
+		return 4, "已退款"
+	case model.OrderStatusCancelled:
+		return 3, "订单已取消"
+	case model.OrderStatusPartial:
+		return 3, "部分充值"
+	case model.OrderStatusSplit:
+		return 3, "订单已拆单"
+	default:
+		return 0, "未知状态"
+	}
 }
 
 // convertOrderStatus 转换订单状态为可客帮状态

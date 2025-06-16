@@ -238,22 +238,27 @@ func (s *Service) QueryTask(token string, apiURL string, apiKey, userID string) 
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
+		logger.Error(fmt.Sprintf("查询订单响应解析失败: userid=%s url=%s, body=%s, error=%v", userID, url, string(body), err))
 		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 
 	if result.Code != 0 {
+		logger.Info(fmt.Sprintf("查询订单业务错误:userid=%s url=%s, code=%d, msg=%s", userID, url, result.Code, result.Msg))
 		return nil, fmt.Errorf("业务错误: %s", result.Msg)
 	}
 	// result.Result.MatchStatus 如果等于 2 表示匹配失败，返回 nil
 	if result.Result.MatchStatus == 2 {
+		logger.Info(fmt.Sprintf("查询订单匹配失败:userid=%s, url=%s, code=%d, msg=%s, MatchStatus=%d", userID, url, result.Code, result.Msg, result.Result.MatchStatus))
 		return nil, errors.New("匹配失败")
 	}
 	// result.Result.MatchStatus 如果等于 3 表示匹配成功，返回 result.Result.Orders[0]
 	if result.Result.MatchStatus == 3 && len(result.Result.Orders) > 0 {
+		logger.Info(fmt.Sprintf("查询订单匹配成功:userid=%s url=%s, code=%d, msg=%s, MatchStatus=%d", userID, url, result.Code, result.Msg, result.Result.MatchStatus))
 		return &result.Result.Orders[0], nil
 	}
 	//result.Result.MatchStatus 如果等于 1 表示匹配中，返回 nil
 	if result.Result.MatchStatus == 1 {
+		logger.Info(fmt.Sprintf("查询订单匹配中:userid=%s url=%s, code=%d, msg=%s, MatchStatus=%d", userID, url, result.Code, result.Msg, result.Result.MatchStatus))
 		return nil, nil
 	}
 
@@ -377,28 +382,34 @@ func (s *Service) GetOrderDetail(orderNumber string) (*PlatformOrder, error) {
 }
 
 // GetOrderList 查询做单订单详情（分页）
-func (s *Service) GetOrderList(orderNumber string, orderStatus, settlementStatus, pageNum, pageSize int) ([]PlatformOrder, *PageResult, error) {
+func (s *Service) GetOrderList(orderNumber string, orderStatus, settlementStatus, pageNum, pageSize int, apiurl string, account *model.PlatformAccount) ([]PlatformOrder, *PageResult, error) {
 	params := map[string]string{
-		"orderNumber":      orderNumber,
-		"orderStatus":      strconv.Itoa(orderStatus),
-		"settlementStatus": strconv.Itoa(settlementStatus),
-		"pageNum":          strconv.Itoa(pageNum),
-		"pageSize":         strconv.Itoa(pageSize),
+		// "orderNumber":      orderNumber,
+		"orderStatus": strconv.Itoa(orderStatus),
+		// "settlementStatus": strconv.Itoa(settlementStatus),
+		"pageNum":  strconv.Itoa(pageNum),
+		"pageSize": strconv.Itoa(pageSize),
 	}
-
-	authToken, queryTime, err := signature.GenerateXianzhuanxiaSignature(params, s.apiKey, s.userID)
+	logger.Info(fmt.Sprintf("key %s userid %s", account.AppKey, account.AccountName))
+	authToken, queryTime, err := signature.GenerateXianzhuanxiaSignature(params, account.AppKey, account.AccountName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("生成签名失败: %v", err)
 	}
+	url := fmt.Sprintf("%s/api/task/recharge/page", apiurl)
+	jsonData, err := json.Marshal(params)
+	if err != nil {
+		logger.Error("创建HTTP请求失败", "url", url, "error", err)
+		return nil, nil, err
+	}
 
-	url := fmt.Sprintf("%s/api/task/recharge/page", s.baseURL)
-	req, err := http.NewRequest("POST", url, nil)
+	logger.Info(fmt.Sprintf("获取订单列表url: %s", url))
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Auth-Token", authToken)
+	req.Header.Set("Auth_Token", authToken)
 	req.Header.Set("Query-Time", queryTime)
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -412,7 +423,7 @@ func (s *Service) GetOrderList(orderNumber string, orderStatus, settlementStatus
 	if err != nil {
 		return nil, nil, fmt.Errorf("读取响应失败: %v", err)
 	}
-
+	logger.Info(fmt.Sprintf("获取订单列表响应: %s", string(body)))
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("请求失败: %s", string(body))
 	}
@@ -565,13 +576,14 @@ func (s *Service) GetStockInfo(channelID, productID int, provinces string) ([]St
 	return result.Result, nil
 }
 
-// 获取有效 token
-func (s *Service) GetToken(channelID int, productID, provinces, faceValues, minSettleAmounts string, apiKey, userID, apiURL string, taskConfigID int64) (string, error) {
+// GetToken 获取或申请 token，带重试机制
+func (s *Service) GetToken(taskConfigID int64, channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
+	// 尝试获取现有 token
 	tokenData, err := s.tokenRepo.Get(taskConfigID)
 	if err != nil {
 		// 如果获取失败（记录不存在），申请新 token
 		logger.Info(fmt.Sprintf("token 不存在，申请新 token: ChannelID=%d, ProductID=%s", channelID, productID))
-		token, err := s.SubmitTask(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+		token, err := s.submitTaskWithRetry(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
 		if err != nil {
 			return "", err
 		}
@@ -582,7 +594,7 @@ func (s *Service) GetToken(channelID int, productID, provinces, faceValues, minS
 	// 检查 token 是否过期（5分钟）
 	if time.Since(tokenData.CreatedAt) >= 5*time.Minute {
 		logger.Info(fmt.Sprintf("token 已过期，申请新 token: ChannelID=%d, ProductID=%s", channelID, productID))
-		token, err := s.SubmitTask(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+		token, err := s.submitTaskWithRetry(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
 		if err != nil {
 			return "", err
 		}
@@ -594,6 +606,23 @@ func (s *Service) GetToken(channelID int, productID, provinces, faceValues, minS
 	_ = s.tokenRepo.UpdateLastUsed(taskConfigID)
 	logger.Info(fmt.Sprintf("使用现有 token: ChannelID=%d, ProductID=%s, token=%s", channelID, productID, tokenData.Token))
 	return tokenData.Token, nil
+}
+
+// submitTaskWithRetry 带重试机制的申请token方法
+func (s *Service) submitTaskWithRetry(channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
+	const (
+		retryDelay = 1 * time.Minute // 固定1分钟重试间隔
+	)
+
+	for attempt := 0; ; attempt++ { // 无限重试
+		token, err := s.SubmitTask(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+		if err == nil {
+			return token, nil
+		}
+
+		logger.Error(fmt.Sprintf("Token申请失败 (第%d次重试), 错误: %v, 60秒后重试", attempt+1, err))
+		time.Sleep(retryDelay)
+	}
 }
 
 // 匹配到订单后让 token 失效

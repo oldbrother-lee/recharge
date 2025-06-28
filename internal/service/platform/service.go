@@ -578,12 +578,17 @@ func (s *Service) GetStockInfo(channelID, productID int, provinces string) ([]St
 
 // GetToken 获取或申请 token，带重试机制
 func (s *Service) GetToken(taskConfigID int64, channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
+	return s.GetTokenWithContext(context.Background(), taskConfigID, channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+}
+
+// GetTokenWithContext 获取或申请 token，带重试机制和context支持
+func (s *Service) GetTokenWithContext(ctx context.Context, taskConfigID int64, channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
 	// 尝试获取现有 token
 	tokenData, err := s.tokenRepo.Get(taskConfigID)
 	if err != nil {
 		// 如果获取失败（记录不存在），申请新 token
 		logger.Info(fmt.Sprintf("token 不存在，申请新 token: ChannelID=%d, ProductID=%s", channelID, productID))
-		token, err := s.submitTaskWithRetry(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+		token, err := s.submitTaskWithRetryContext(ctx, channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
 		if err != nil {
 			return "", err
 		}
@@ -594,7 +599,7 @@ func (s *Service) GetToken(taskConfigID int64, channelID int, productID string, 
 	// 检查 token 是否过期（5分钟）
 	if time.Since(tokenData.CreatedAt) >= 5*time.Minute {
 		logger.Info(fmt.Sprintf("token 已过期，申请新 token: ChannelID=%d, ProductID=%s", channelID, productID))
-		token, err := s.submitTaskWithRetry(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+		token, err := s.submitTaskWithRetryContext(ctx, channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
 		if err != nil {
 			return "", err
 		}
@@ -610,18 +615,39 @@ func (s *Service) GetToken(taskConfigID int64, channelID int, productID string, 
 
 // submitTaskWithRetry 带重试机制的申请token方法
 func (s *Service) submitTaskWithRetry(channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
+	return s.submitTaskWithRetryContext(context.Background(), channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+}
+
+// submitTaskWithRetryContext 带重试机制和context支持的申请token方法
+func (s *Service) submitTaskWithRetryContext(ctx context.Context, channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
 	const (
 		retryDelay = 1 * time.Minute // 固定1分钟重试间隔
 	)
 
 	for attempt := 0; ; attempt++ { // 无限重试
+		// 检查context是否被取消
+		select {
+		case <-ctx.Done():
+			logger.Info(fmt.Sprintf("Token申请被取消: ChannelID=%d, ProductID=%s, 原因=%v", channelID, productID, ctx.Err()))
+			return "", ctx.Err()
+		default:
+		}
+
 		token, err := s.SubmitTask(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
 		if err == nil {
 			return token, nil
 		}
 
 		logger.Error(fmt.Sprintf("Token申请失败 (第%d次重试), 错误: %v, 60秒后重试", attempt+1, err))
-		time.Sleep(retryDelay)
+		
+		// 在等待期间也要检查context取消
+		select {
+		case <-ctx.Done():
+			logger.Info(fmt.Sprintf("Token申请在等待期间被取消: ChannelID=%d, ProductID=%s, 原因=%v", channelID, productID, ctx.Err()))
+			return "", ctx.Err()
+		case <-time.After(retryDelay):
+			// 继续下一次重试
+		}
 	}
 }
 

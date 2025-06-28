@@ -15,7 +15,7 @@ type rechargeService struct {
 	platformRepo        repository.PlatformRepository
 	balanceService      interface { // 只用接口，避免循环依赖
 		DeductBalance(ctx context.Context, accountID int64, amount float64, orderID int64, remark string) error
-		RefundBalance(ctx context.Context, accountID int64, amount float64, orderID int64, remark string) error
+		RefundBalance(ctx context.Context, tx interface{}, accountID int64, amount float64, orderID int64, remark string) error
 	}
 	orderRepo repository.OrderRepository
 	manager   *Manager
@@ -27,7 +27,7 @@ func NewRechargeService(
 	platformRepo repository.PlatformRepository,
 	balanceService interface {
 		DeductBalance(ctx context.Context, accountID int64, amount float64, orderID int64, remark string) error
-		RefundBalance(ctx context.Context, accountID int64, amount float64, orderID int64, remark string) error
+		RefundBalance(ctx context.Context, tx interface{}, accountID int64, amount float64, orderID int64, remark string) error
 	},
 	orderRepo repository.OrderRepository,
 	manager *Manager,
@@ -78,7 +78,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			"error", err,
 			"order_id", order.ID)
 		// 如果获取API信息失败，退还余额
-		if refundErr := s.balanceService.RefundBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "获取API信息失败退还"); refundErr != nil {
+		if refundErr := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "获取API信息失败退还"); refundErr != nil {
 			logger.Error("退还余额失败",
 				"error", refundErr,
 				"account_id", order.PlatformAccountID,
@@ -96,7 +96,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			"error", err,
 			"order_id", order.ID)
 		// 5. 如果提交失败，退还余额
-		if refundErr := s.balanceService.RefundBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单提交失败退还"); refundErr != nil {
+		if refundErr := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "订单提交失败退还"); refundErr != nil {
 			logger.Error("退还余额失败",
 				"error", refundErr,
 				"account_id", order.PlatformAccountID,
@@ -143,11 +143,11 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 
 	// 如果充值失败，退还余额
 	if callbackData.Status == "failed" {
-		if err := s.balanceService.RefundBalance(ctx, order.PlatformAccountID, order.TotalPrice, order.ID, "充值失败退还"); err != nil {
+		if err := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "充值失败退还"); err != nil {
 			logger.Error("退还余额失败",
 				"error", err,
 				"account_id", order.PlatformAccountID,
-				"amount", order.TotalPrice)
+				"amount", order.Price)
 			// 这里不返回错误，因为回调处理不应该因为余额退还失败而失败
 		}
 	}

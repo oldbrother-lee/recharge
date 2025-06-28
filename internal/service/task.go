@@ -28,8 +28,16 @@ type TaskService struct {
 	isRunning           bool
 	platformAccountRepo *repository.PlatformAccountRepository
 	// 任务上下文管理
-	taskContexts map[int64]context.CancelFunc // 任务ID -> 取消函数
-	taskMutex    sync.RWMutex                 // 保护taskContexts的读写锁
+	taskContexts map[int64]*TaskContext // 任务ID -> 任务上下文
+	taskMutex    sync.RWMutex           // 保护taskContexts的读写锁
+	// 配置监听器
+	configListener *TaskConfigListener
+}
+
+// TaskContext 任务上下文信息
+type TaskContext struct {
+	Ctx    context.Context
+	Cancel context.CancelFunc
 }
 
 type TaskConfig struct {
@@ -65,7 +73,26 @@ func NewTaskService(
 		ctx:                 ctx,
 		cancel:              cancel,
 		platformAccountRepo: platformAccountRepo,
-		taskContexts:        make(map[int64]context.CancelFunc),
+		taskContexts:        make(map[int64]*TaskContext),
+	}
+}
+
+// SetConfigListener 设置配置监听器（仅在Task进程中调用）
+func (s *TaskService) SetConfigListener(listener *TaskConfigListener) {
+	s.configListener = listener
+}
+
+// StartConfigListener 启动配置监听器（仅在Task进程中调用）
+func (s *TaskService) StartConfigListener() {
+	if s.configListener != nil {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			if err := s.configListener.Start(); err != nil {
+				logger.Error(fmt.Sprintf("配置监听器启动失败: %v", err))
+			}
+		}()
+		logger.Info("任务配置监听器已启动")
 	}
 }
 
@@ -97,10 +124,34 @@ func (s *TaskService) StartTask() {
 			}
 		}
 	}()
+
+	// 启动配置检查定时器（每30秒检查一次配置变更）
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		configTicker := time.NewTicker(30 * time.Second)
+		defer configTicker.Stop()
+
+		logger.Info("启动配置检查定时器，检查间隔: 30秒")
+
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-configTicker.C:
+				logger.Debug("开始定时检查配置变更")
+				err := s.ReloadTaskConfig()
+				if err != nil {
+					logger.Error("定时配置检查失败", err)
+				}
+			}
+		}
+	}()
 }
 
 // StartOrderDetailsTask 启动订单详情查询任务
 func (s *TaskService) StartOrderDetailsTask() {
+	logger.Info(fmt.Sprintf("启动订单详情查询任务，执行间隔: %v", s.config.OrderDetailsInterval))
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -128,6 +179,11 @@ func (s *TaskService) StopTask() {
 	s.isRunning = false
 	s.mu.Unlock()
 
+	// 停止配置监听器
+	if s.configListener != nil {
+		s.configListener.Stop()
+	}
+
 	s.cancel()
 	s.wg.Wait()
 }
@@ -135,12 +191,12 @@ func (s *TaskService) StopTask() {
 // StopTaskByID 主动停止特定任务
 func (s *TaskService) StopTaskByID(taskID int64) {
 	s.taskMutex.RLock()
-	cancel, exists := s.taskContexts[taskID]
+	taskCtx, exists := s.taskContexts[taskID]
 	s.taskMutex.RUnlock()
-	
+
 	if exists {
 		logger.Info(fmt.Sprintf("主动停止任务: TaskID=%d", taskID))
-		cancel() // 触发context取消，会导致processTaskConfig中的defer清理逻辑执行
+		taskCtx.Cancel() // 触发context取消，会导致processTaskConfig中的defer清理逻辑执行
 	} else {
 		logger.Debug(fmt.Sprintf("任务不存在或已停止: TaskID=%d", taskID))
 	}
@@ -148,7 +204,7 @@ func (s *TaskService) StopTaskByID(taskID int64) {
 
 // ReloadTaskConfig 重新加载任务配置（用于API调用时主动触发热更新）
 func (s *TaskService) ReloadTaskConfig() error {
-	logger.Info("开始重新加载任务配置")
+	logger.Debug("开始重新加载任务配置")
 
 	// 获取最新的任务配置
 	configs, err := s.taskConfigRepo.GetEnabledConfigs()
@@ -157,15 +213,36 @@ func (s *TaskService) ReloadTaskConfig() error {
 		return err
 	}
 
+	// 获取当前运行的任务数量
+	s.taskMutex.RLock()
+	runningTaskCount := len(s.taskContexts)
+	s.taskMutex.RUnlock()
+
+	logger.Debug(fmt.Sprintf("配置检查: 数据库中启用配置=%d个, 当前运行任务=%d个", len(configs), runningTaskCount))
+
 	// 检查并停止过时的任务
 	s.checkAndStopObsoleteTasks(configs)
 
-	logger.Info(fmt.Sprintf("任务配置重新加载完成，当前启用配置数量: %d", len(configs)))
+	// 启动新启用的任务
+	s.startNewEnabledTasks(configs)
+
+	// 获取更新后的运行任务数量
+	s.taskMutex.RLock()
+	newRunningTaskCount := len(s.taskContexts)
+	s.taskMutex.RUnlock()
+
+	if newRunningTaskCount != runningTaskCount {
+		logger.Info(fmt.Sprintf("任务配置已更新: 启用配置=%d个, 运行任务数量: %d -> %d", len(configs), runningTaskCount, newRunningTaskCount))
+	} else {
+		logger.Debug(fmt.Sprintf("任务配置无变化: 启用配置=%d个, 运行任务=%d个", len(configs), newRunningTaskCount))
+	}
+
 	return nil
 }
 
 // processOrderDetails 处理订单详情查询
 func (s *TaskService) processOrderDetails() {
+	logger.Info("开始执行订单详情查询任务")
 	configs, err := s.taskConfigRepo.GetEnabledConfigs()
 	if err != nil {
 		logger.Error(fmt.Sprintf("获取任务配置失败: %v", err))
@@ -205,18 +282,30 @@ func (s *TaskService) processTask() {
 	var wg sync.WaitGroup
 
 	for _, config := range configs {
-		// 检查任务是否已在运行
-		s.taskMutex.RLock()
-		_, isRunning := s.taskContexts[config.ID]
-		s.taskMutex.RUnlock()
-		
+		// 检查任务是否已在运行（使用双重检查确保准确性）
+		s.taskMutex.Lock()
+		taskCtx, isRunning := s.taskContexts[config.ID]
 		if isRunning {
-			logger.Debug(fmt.Sprintf("任务已在运行，跳过: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
+			// 验证上下文是否仍然有效
+			select {
+			case <-taskCtx.Ctx.Done():
+				// 上下文已取消，删除无效的映射
+				delete(s.taskContexts, config.ID)
+				isRunning = false
+				logger.Debug(fmt.Sprintf("清理无效的任务上下文: TaskID=%d", config.ID))
+			default:
+				// 上下文仍然有效，任务确实在运行
+				logger.Debug(fmt.Sprintf("任务已在运行，跳过: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
+			}
+		}
+		s.taskMutex.Unlock()
+
+		if isRunning {
 			continue
 		}
-		
+
 		logger.Info(fmt.Sprintf("启动新任务: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
-		
+
 		sem <- struct{}{} // 占用一个并发槽
 		wg.Add(1)
 		go func(cfg *model.TaskConfig) {
@@ -257,6 +346,60 @@ func (s *TaskService) checkAndStopObsoleteTasks(currentConfigs []model.TaskConfi
 	}
 }
 
+// startNewEnabledTasks 启动新启用的任务
+func (s *TaskService) startNewEnabledTasks(configs []model.TaskConfig) {
+	maxConcurrent := s.config.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 20 // 默认最大并发数
+	}
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	newTaskCount := 0
+
+	for _, config := range configs {
+		// 检查任务是否已在运行（使用双重检查确保准确性）
+		s.taskMutex.Lock()
+		taskCtx, isRunning := s.taskContexts[config.ID]
+		if isRunning {
+			// 验证上下文是否仍然有效
+			select {
+			case <-taskCtx.Ctx.Done():
+				// 上下文已取消，删除无效的映射
+				delete(s.taskContexts, config.ID)
+				isRunning = false
+				logger.Debug(fmt.Sprintf("清理无效的任务上下文: TaskID=%d", config.ID))
+			default:
+				// 上下文仍然有效，任务确实在运行
+				logger.Debug(fmt.Sprintf("任务已在运行，跳过: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
+			}
+		}
+		s.taskMutex.Unlock()
+
+		if isRunning {
+			continue
+		}
+
+		newTaskCount++
+		logger.Info(fmt.Sprintf("启动新任务: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
+
+		sem <- struct{}{} // 占用一个并发槽
+		wg.Add(1)
+		go func(cfg *model.TaskConfig) {
+			defer func() {
+				<-sem // 释放并发槽
+				wg.Done()
+			}()
+
+			s.processTaskConfig(cfg)
+		}(&config)
+	}
+	wg.Wait()
+
+	if newTaskCount > 0 {
+		logger.Info(fmt.Sprintf("新任务启动完成，共启动 %d 个新任务", newTaskCount))
+	}
+}
+
 // checkTaskConfigChanged 检查任务配置是否发生变更
 func (s *TaskService) checkTaskConfigChanged(oldCfg *model.TaskConfig) bool {
 	// 从数据库获取最新配置
@@ -291,8 +434,8 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 	// 创建任务专用的上下文
 	taskCtx, taskCancel := context.WithCancel(s.ctx)
 	taskID := cfg.ID
-	
-	logger.Info(fmt.Sprintf("开始处理任务配置: TaskID=%d, PlatformAccountID=%d, ChannelID=%d, ProductID=%s", 
+
+	logger.Info(fmt.Sprintf("开始处理任务配置: TaskID=%d, PlatformAccountID=%d, ChannelID=%d, ProductID=%s",
 		cfg.ID, cfg.PlatformAccountID, cfg.ChannelID, cfg.ProductID))
 
 	// 获取任务配置信息
@@ -301,33 +444,41 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 	provinces := cfg.Provinces
 	faceValues := cfg.FaceValues
 	minSettleAmounts := cfg.MinSettleAmounts
-	
-	// 注册任务上下文（双重检查确保安全）
+
+	// 注册任务上下文（确保原子性操作）
 	s.taskMutex.Lock()
-	if existingCancel, exists := s.taskContexts[taskID]; exists {
+	if existingTaskCtx, exists := s.taskContexts[taskID]; exists {
 		// 如果任务已存在，先取消旧任务
 		logger.Warn(fmt.Sprintf("检测到重复任务，取消旧任务: TaskID=%d", taskID))
-		existingCancel()
+		existingTaskCtx.Cancel()
+		// 立即删除旧的上下文映射
+		delete(s.taskContexts, taskID)
 	}
-	s.taskContexts[taskID] = taskCancel
+	// 注册新的任务上下文
+	s.taskContexts[taskID] = &TaskContext{
+		Ctx:    taskCtx,
+		Cancel: taskCancel,
+	}
 	s.taskMutex.Unlock()
-	
+
 	logger.Info(fmt.Sprintf("任务上下文已注册: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
 
 	// 确保任务结束时清理上下文
 	defer func() {
 		// 先取消上下文
 		taskCancel()
-		
+
 		// 再清理任务上下文映射
 		s.taskMutex.Lock()
-		if _, exists := s.taskContexts[taskID]; exists {
+		defer s.taskMutex.Unlock()
+		
+		// 只有当前上下文仍然存在时才删除（避免重复删除）
+		if currentTaskCtx, exists := s.taskContexts[taskID]; exists && currentTaskCtx.Ctx == taskCtx {
 			delete(s.taskContexts, taskID)
 			logger.Info(fmt.Sprintf("任务上下文已清理: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
 		} else {
-			logger.Warn(fmt.Sprintf("任务上下文不存在，无需清理: TaskID=%d", taskID))
+			logger.Debug(fmt.Sprintf("任务上下文已被其他实例清理或替换: TaskID=%d", taskID))
 		}
-		s.taskMutex.Unlock()
 	}()
 
 	appkey, platform, accountName, err := s.platformSvc.GetAPIKeyAndSecret(cfg.PlatformAccountID)
@@ -355,7 +506,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 	logger.Info(fmt.Sprintf("开始申请token: ChannelID=%d, ProductID=%s, AccountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
 	tokenApplyStartTime := time.Now()
 
-	token, err := s.platformSvc.GetToken(cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
+	token, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
 	if err != nil {
 		logger.Error(fmt.Sprintf("申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
 			channelID, productID, accountName, time.Since(tokenApplyStartTime), err))
@@ -399,16 +550,16 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 			tokenLifetime := time.Since(tokenStartTime)
 			logger.Info(fmt.Sprintf("token已过期，重新申请token: token=%s, ChannelID=%d, ProductID=%s, 生命周期=%v, 过期时间=%s AccountName=%s",
 				token, channelID, productID, tokenLifetime, time.Now().Format("2006-01-02 15:04:05"), accountName))
-			
+
 			// 重新申请token而不是退出任务
 			reapplyStartTime := time.Now()
-			newToken, err := s.platformSvc.GetToken(cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
+			newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
 			if err != nil {
 				logger.Error(fmt.Sprintf("token过期后重新申请失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
 					channelID, productID, accountName, time.Since(reapplyStartTime), err))
 				return
 			}
-			
+
 			token = newToken
 			tokenStartTime = time.Now() // 重置token开始时间
 			logger.Info(fmt.Sprintf("token过期后重新申请成功: ChannelID=%d, ProductID=%s, AccountName=%s, newToken=%s, 耗时=%v",
@@ -417,11 +568,12 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 		}
 
 		// 查询订单
+		// apiurl := "http://60.205.159.182:5000/"
 		order, err := s.platformSvc.QueryTask(token, platform.ApiURL, appkey, accountName)
 		if err != nil {
 			tokenLifetime := time.Since(tokenStartTime)
 			logger.Error(fmt.Sprintf("查询任务匹配状态失败: token=%s, 生命周期=%v, error=%v", token, tokenLifetime, err))
-			
+
 			// 检查任务是否被取消
 			select {
 			case <-taskCtx.Done():
@@ -429,7 +581,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 				return
 			default:
 			}
-			
+
 			if strings.Contains(err.Error(), "匹配失败") {
 				// 匹配失败，让当前token失效并重新申请token
 				tokenLifetime := time.Since(tokenStartTime)
@@ -447,8 +599,8 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 					return
 				default:
 				}
-				
-				newToken, err := s.platformSvc.GetToken(cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
+
+				newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
 				if err != nil {
 					logger.Error(fmt.Sprintf("匹配订单失败重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
 						channelID, productID, accountName, time.Since(reapplyStartTime), err))
@@ -490,7 +642,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 			// 重新申请token继续查询
 			logger.Info(fmt.Sprintf("开始重新申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
 			reapplyStartTime := time.Now()
-			
+
 			// 检查任务是否被取消
 			select {
 			case <-taskCtx.Done():
@@ -499,7 +651,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 			default:
 			}
 
-			newToken, err := s.platformSvc.GetToken(cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
+			newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
 			if err != nil {
 				logger.Error(fmt.Sprintf("重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
 					channelID, productID, accountName, time.Since(reapplyStartTime), err))
@@ -525,6 +677,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 
 // processOrderDetailsForConfig 为指定配置处理订单详情查询
 func (s *TaskService) processOrderDetailsForConfig(cfg *model.TaskConfig) {
+	logger.Info(fmt.Sprintf("开始为配置处理订单详情查询: TaskID=%d, ChannelID=%d, ProductID=%s", cfg.ID, cfg.ChannelID, cfg.ProductID))
 	// 获取平台账号信息
 	platformAccount, err := s.platformAccountRepo.GetByID(cfg.PlatformAccountID)
 	if err != nil {
@@ -540,7 +693,7 @@ func (s *TaskService) processOrderDetailsForConfig(cfg *model.TaskConfig) {
 	}
 
 	// 查询订单列表 - 获取第一页数据，查询状态为1的订单
-	orderList, pageResult, err := s.platformSvc.GetOrderList("", 1, 0, 1, 100, platform.ApiURL, platformAccount) // 查询订单状态为1的订单
+	orderList, pageResult, err := s.platformSvc.GetOrderList("", 4, 0, 1, 100, platform.ApiURL, platformAccount) // 查询订单状态为1的订单
 	if err != nil {
 		logger.Error(fmt.Sprintf("查询订单列表失败: %v", err))
 		return
@@ -552,7 +705,7 @@ func (s *TaskService) processOrderDetailsForConfig(cfg *model.TaskConfig) {
 	}
 
 	// 记录查询结果
-	logger.Info(fmt.Sprintf("查询到 %d 条状态为1的订单，总页数: %d", len(orderList), pageResult.Pages))
+	logger.Info(fmt.Sprintf("查询到 %d 条状态为4的订单，总页数: %d", len(orderList), pageResult.Pages))
 }
 
 // processOrderIfNotExists 检查订单是否存在，如果不存在则创建
@@ -578,27 +731,31 @@ func (s *TaskService) processOrderIfNotExists(order *platform.PlatformOrder, cfg
 // createNewOrder 创建新订单
 func (s *TaskService) createNewOrder(order *platform.PlatformOrder, cfg *model.TaskConfig, platformAccount *model.PlatformAccount, platformInfo *model.Platform) {
 	// 创建任务订单
-	taskOrder := &model.TaskOrder{
-		OrderNumber:      order.OrderNumber,
-		ChannelID:        order.ChannelId,
-		ProductID:        fmt.Sprintf("%d", order.ProductId),
-		AccountNum:       order.AccountNum,
-		AccountLocation:  order.AccountLocation,
-		SettlementAmount: order.SettlementAmount,
-		OrderStatus:      order.OrderStatus,
-		FaceValue:        order.FaceValue,
-		SettlementStatus: 1, // 待结算
-		CreateTime:       order.CreateTime.UnixMilli(),
-		ExpirationTime:   order.ExpirationTime.UnixMilli(),
-	}
+	// taskOrder := &model.TaskOrder{
+	// 	OrderNumber:      order.OrderNumber,
+	// 	ChannelID:        order.ChannelId,
+	// 	ProductID:        fmt.Sprintf("%d", order.ProductId),
+	// 	AccountNum:       order.AccountNum,
+	// 	AccountLocation:  order.AccountLocation,
+	// 	SettlementAmount: order.SettlementAmount,
+	// 	OrderStatus:      order.OrderStatus,
+	// 	FaceValue:        order.FaceValue,
+	// 	SettlementStatus: 1, // 待结算
+	// 	CreateTime:       order.CreateTime.UnixMilli(),
+	// 	ExpirationTime:   order.ExpirationTime.UnixMilli(),
+	// }
 
-	if err := s.taskOrderRepo.Create(taskOrder); err != nil {
-		logger.Error(fmt.Sprintf("保存任务订单失败: OrderNumber=%s, error=%v", order.OrderNumber, err))
-		return
-	}
+	// if err := s.taskOrderRepo.Create(taskOrder); err != nil {
+	// 	logger.Error(fmt.Sprintf("保存任务订单失败: OrderNumber=%s, error=%v", order.OrderNumber, err))
+	// 	return
+	// }
 
 	// 保存订单到 order 订单表
-	productObject, err := s.orderService.GetProductID(order.FaceValue, utils.ISPNameToCode(order.ProductName), 1)
+	// 使用订单面值与商品表products的name字段中的数字进行匹配
+	logger.Info(fmt.Sprintf("开始匹配产品: OrderNumber=%s, FaceValue=%.2f, ProductName=%s", order.OrderNumber, order.FaceValue, order.ProductName))
+
+	// 使用订单面值匹配商品表中name字段包含该数字的产品
+	productObject, err := s.orderService.GetProductByNameValue(order.FaceValue, utils.ISPNameToCode(order.ProductName), 1)
 	if err != nil {
 		logger.Error(fmt.Sprintf("获取产品id失败: OrderNumber=%s, error=%v", order.OrderNumber, err))
 		return
@@ -613,6 +770,19 @@ func (s *TaskService) createNewOrder(order *platform.PlatformOrder, cfg *model.T
 		return
 	}
 
+	// 根据订单状态设置初始状态和备注
+	var initialStatus model.OrderStatus
+	var remark string
+	if order.OrderStatus == 4 {
+		// 状态为4的订单直接设置为失败状态
+		initialStatus = model.OrderStatusFailed
+		remark = "系统检测到第三方平台订单状态为失败，自动创建失败订单"
+		logger.Info(fmt.Sprintf("检测到状态为4的订单，将创建为失败状态: OrderNumber=%s", order.OrderNumber))
+	} else {
+		initialStatus = model.OrderStatusPendingRecharge
+		remark = ""
+	}
+
 	orderRecord := &model.Order{
 		Mobile:            order.AccountNum,
 		ProductID:         productObject.ID,
@@ -621,7 +791,7 @@ func (s *TaskService) createNewOrder(order *platform.PlatformOrder, cfg *model.T
 		UserQuotePayment:  order.SettlementAmount,
 		UserPayment:       order.SettlementAmount,
 		Price:             productObject.Price,
-		Status:            model.OrderStatusPendingRecharge,
+		Status:            initialStatus,
 		IsDel:             0,
 		Client:            3,
 		ISP:               utils.ISPNameToCode(order.ProductName),
@@ -634,6 +804,7 @@ func (s *TaskService) createNewOrder(order *platform.PlatformOrder, cfg *model.T
 		CustomerID:        customerID,
 		PlatformName:      platformInfo.Name,
 		PlatformCode:      platformInfo.Code,
+		Remark:            remark,
 	}
 
 	if err := s.orderService.CreateOrder(s.ctx, orderRecord); err != nil {
@@ -641,32 +812,45 @@ func (s *TaskService) createNewOrder(order *platform.PlatformOrder, cfg *model.T
 		return
 	}
 
-	logger.Info(fmt.Sprintf("通过查单创建新订单成功: OrderNumber=%s", order.OrderNumber))
+	// 如果是状态为4的订单，创建后需要处理失败逻辑（包括发送通知）
+	if order.OrderStatus == 4 {
+		if err := s.orderService.ProcessOrderFail(s.ctx, orderRecord.ID, "第三方平台订单状态为失败，自动处理"); err != nil {
+			logger.Error(fmt.Sprintf("处理失败订单失败: OrderNumber=%s, OrderID=%d, error=%v", order.OrderNumber, orderRecord.ID, err))
+		} else {
+			logger.Info(fmt.Sprintf("失败订单处理完成，已发送通知: OrderNumber=%s, OrderID=%d", order.OrderNumber, orderRecord.ID))
+		}
+	}
+
+	logger.Info(fmt.Sprintf("通过查单创建新订单成功: OrderNumber=%s, Status=%s", order.OrderNumber, initialStatus.String()))
 }
 
 // handleMatchedOrder 处理匹配到的订单
 func (s *TaskService) handleMatchedOrder(order *platform.PlatformOrder, cfg *model.TaskConfig, channelID int, productID string, platformAccount *model.PlatformAccount, platformInfo *model.Platform) {
-	taskOrder := &model.TaskOrder{
-		OrderNumber:      order.OrderNumber,
-		ChannelID:        channelID,
-		ProductID:        productID,
-		AccountNum:       order.AccountNum,
-		AccountLocation:  order.AccountLocation,
-		SettlementAmount: order.SettlementAmount,
-		OrderStatus:      order.OrderStatus,
-		FaceValue:        order.FaceValue,
-		SettlementStatus: 1, // 待结算
-		CreateTime:       order.CreateTime.UnixMilli(),
-		ExpirationTime:   order.ExpirationTime.UnixMilli(),
-	}
+	// taskOrder := &model.TaskOrder{
+	// 	OrderNumber:      order.OrderNumber,
+	// 	ChannelID:        channelID,
+	// 	ProductID:        productID,
+	// 	AccountNum:       order.AccountNum,
+	// 	AccountLocation:  order.AccountLocation,
+	// 	SettlementAmount: order.SettlementAmount,
+	// 	OrderStatus:      order.OrderStatus,
+	// 	FaceValue:        order.FaceValue,
+	// 	SettlementStatus: 1, // 待结算
+	// 	CreateTime:       order.CreateTime.UnixMilli(),
+	// 	ExpirationTime:   order.ExpirationTime.UnixMilli(),
+	// }
 
-	if err := s.taskOrderRepo.Create(taskOrder); err != nil {
-		logger.Error(fmt.Sprintf("保存任务订单失败: OrderNumber=%s, error=%v", order.OrderNumber, err))
-		return
-	}
+	// if err := s.taskOrderRepo.Create(taskOrder); err != nil {
+	// 	logger.Error(fmt.Sprintf("保存任务订单失败: OrderNumber=%s, error=%v", order.OrderNumber, err))
+	// 	return
+	// }
 
 	// 保存订单到 order 订单表
-	productObject, err := s.orderService.GetProductID(order.FaceValue, utils.ISPNameToCode(order.ProductName), 1)
+	// 使用订单面值与商品表products的name字段中的数字进行匹配
+	logger.Info(fmt.Sprintf("开始匹配产品: OrderNumber=%s, FaceValue=%.2f, ProductName=%s", order.OrderNumber, order.FaceValue, order.ProductName))
+
+	// 使用订单面值匹配商品表中name字段包含该数字的产品
+	productObject, err := s.orderService.GetProductByNameValue(order.FaceValue, utils.ISPNameToCode(order.ProductName), 1)
 	if err != nil {
 		logger.Error(fmt.Sprintf("获取产品id失败: OrderNumber=%s, error=%v", order.OrderNumber, err))
 		return

@@ -47,11 +47,17 @@ func (r *RechargeApp) Start(ctx context.Context) error {
 		return err
 	}
 
+	// 获取配置中的批量处理数量，如果未配置或为0则使用默认值10
+	batchSize := r.container.GetConfig().Task.BatchSize
+	if batchSize <= 0 {
+		batchSize = 10
+	}
+
 	// 创建充值工作器
 	r.rechargeWorker = service.NewRechargeWorker(
 		r.container.GetServices().Recharge,
 		time.Second*5, // 每5秒检查一次
-		10,            // 每次处理10个任务
+		batchSize,     // 从配置读取批量处理数量
 	)
 
 	// 创建上下文

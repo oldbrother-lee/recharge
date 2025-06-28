@@ -477,6 +477,12 @@ func (s *rechargeService) GetPendingTasks(ctx context.Context, limit int) ([]*mo
 		order, err := s.orderRepo.GetByID(ctx, orderID)
 		if err != nil {
 			logger.Error("【获取订单信息失败】", "order_id", orderID, "error", err)
+			// 从Redis队列中移除该订单
+			if removeErr := s.redisClient.LRem(ctx, "recharge_queue", 0, orderIDStr).Err(); removeErr != nil {
+				logger.Error("【从队列移除失效订单失败】", "order_id", orderID, "error", removeErr)
+			} else {
+				logger.Info("【成功从队列移除失效订单】", "order_id", orderID)
+			}
 			continue
 		}
 
@@ -579,44 +585,40 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 
 	// 检查是否需要扣款（外部订单在创建时已扣款）
 	if order.Client == 2 { // 外部API订单
-		logger.Info("【外部订单已预扣款，跳过平台账号信息获取和扣款步骤】",
+		logger.Info("【外部订单已预扣款，跳过扣款步骤】",
 			"order_id", order.ID,
 			"client", order.Client)
 	} else {
-		// 获取平台账号信息
-		account, err := s.platformRepo.GetAccountByID(ctx, order.PlatformAccountID)
-		if err != nil {
-			logger.Error("【获取平台账号信息失败】",
-				"error", err,
-				"account_id", order.PlatformAccountID)
-			return fmt.Errorf("get platform account failed: %v", err)
-		}
-		logger.Info("【获取平台账号信息成功】",
-			"account_id", order.PlatformAccountID,
-			"balance", account.Balance)
-		// 扣除平台账号余额
-		if err := s.balanceService.DeductBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单充值扣除"); err != nil {
+		// 平台订单：从平台账号扣款（支持授信额度）
+		logger.Info("【平台订单开始扣款】",
+			"order_id", order.ID,
+			"platform_account_id", order.PlatformAccountID,
+			"amount", order.Price)
+		
+		// 使用平台账号余额服务进行扣款（支持授信额度）
+		balanceService := s.GetBalanceService()
+		if err := balanceService.DeductBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单充值扣除"); err != nil {
 			logger.Error("【扣除平台账号余额失败】",
 				"error", err,
-				"account_id", order.PlatformAccountID,
+				"platform_account_id", order.PlatformAccountID,
 				"amount", order.Price)
-			// 新增：将订单状态设置为失败，并写入备注
+			// 将订单状态设置为失败，并写入备注
 			_ = s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed)
-			_ = s.orderRepo.UpdateRemark(ctx, order.ID, "余额不足，订单失败")
-			// 新增：推送订单失败通知
+			_ = s.orderRepo.UpdateRemark(ctx, order.ID, "平台账号余额和授信额度均不足，订单失败")
+			// 推送订单失败通知
 			notification := &notificationModel.NotificationRecord{
 				OrderID:          order.ID,
 				PlatformCode:     order.PlatformCode,
 				NotificationType: "order_status_changed",
-				Content:          "订单失败：余额不足",
+				Content:          "订单失败：平台账号余额和授信额度均不足",
 				Status:           1, // 待处理
 			}
 			_ = s.notificationRepo.Create(ctx, notification)
 			_ = s.queue.Push(ctx, "notification_queue", notification)
-			return fmt.Errorf("deduct balance failed: %v", err)
+			return fmt.Errorf("deduct platform account balance failed: %v", err)
 		}
 		logger.Info("【扣除平台账号余额成功】",
-			"account_id", order.PlatformAccountID,
+			"platform_account_id", order.PlatformAccountID,
 			"amount", order.Price)
 	}
 

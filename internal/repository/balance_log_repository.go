@@ -5,7 +5,6 @@ import (
 	"recharge-go/internal/model"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 // BalanceLogRepository 余额流水仓储
@@ -34,24 +33,34 @@ func (r *BalanceLogRepository) ListLogs(ctx context.Context, userID int64, offse
 	return logs, total, err
 }
 
-// AddBalance 用户余额增加（带事务）
+// AddBalance 用户余额增加（带事务和行锁）
 func (r *BalanceLogRepository) AddBalance(ctx context.Context, userID int64, amount float64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return tx.Model(&model.User{}).Where("id = ?", userID).UpdateColumn("balance", gorm.Expr("balance + ?", amount)).Error
+		// 使用FOR UPDATE行锁防止并发问题
+		var user model.User
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
+			return err
+		}
+		// 更新余额
+		user.Balance += amount
+		return tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error
 	})
 }
 
-// SubBalance 用户余额扣减（带事务，校验余额充足）
+// SubBalance 用户余额扣减（带事务和行锁，校验余额充足）
 func (r *BalanceLogRepository) SubBalance(ctx context.Context, userID int64, amount float64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 使用FOR UPDATE行锁防止并发问题
 		var user model.User
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", userID).First(&user).Error; err != nil {
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
 			return err
 		}
 		if user.Balance < amount {
 			return gorm.ErrInvalidTransaction // 余额不足
 		}
-		return tx.Model(&model.User{}).Where("id = ?", userID).UpdateColumn("balance", gorm.Expr("balance - ?", amount)).Error
+		// 更新余额
+		user.Balance -= amount
+		return tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error
 	})
 }
 

@@ -58,6 +58,8 @@ type OrderService interface {
 	CleanupOrders(ctx context.Context, start, end string) (int64, error)
 	// GetProductID 根据价格、ISP和状态获取产品ID
 	GetProductID(price float64, isp int, status int) (*model.Product, error)
+	// GetProductByNameValue 根据产品名称数字部分、ISP和状态获取产品
+	GetProductByNameValue(nameValue float64, isp int, status int) (*model.Product, error)
 	// GetOrderStatistics 按 customer_id 统计今日订单总数、成功订单数、失败订单数、今日成交金额（Denom 字段）
 	GetOrderStatistics(ctx context.Context, customerID int64) (*OrderStatistics, error)
 	// GetOrdersByUserID 根据用户ID获取订单列表
@@ -376,13 +378,53 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 
 // ProcessOrderRefund 处理订单退款
 func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, remark string) error {
-	// 更新备注
-	err := s.orderRepo.UpdateRemark(ctx, orderID, remark)
+
+
+	// 1. 获取订单信息
+	order, err := s.orderRepo.GetByID(ctx, orderID)
 	if err != nil {
+		logger.Error("获取订单失败", "error", err, "order_id", orderID)
+		return fmt.Errorf("订单不存在")
+	}
+
+	// 2. 检查订单状态是否允许退款
+	if order.Status == model.OrderStatusRefunded {
+		logger.Info("订单已退款，跳过处理", "order_id", orderID)
+		return fmt.Errorf("订单已退款")
+	}
+
+	// 只有成功、失败、待充值状态的订单可以退款
+	if order.Status != model.OrderStatusSuccess &&
+		order.Status != model.OrderStatusFailed &&
+		order.Status != model.OrderStatusPendingRecharge {
+		logger.Error("订单状态不允许退款", "order_id", orderID, "status", order.Status)
+		return fmt.Errorf("订单状态不允许退款")
+	}
+
+	// 3. 执行退款逻辑
+	if order.Client == 2 {
+		// 外部订单退款到用户余额
+		balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
+		if err := balanceService.Refund(ctx, order.CustomerID, order.Price, orderID, fmt.Sprintf("订单退款: %s", remark), "admin"); err != nil {
+			logger.Error("外部订单退款失败", "error", err, "order_id", orderID)
+			return fmt.Errorf("退款失败: %v", err)
+		}
+		logger.Info("外部订单退款成功", "order_id", orderID, "amount", order.Price)
+	} else {
+		// 平台订单退款到平台账户
+		if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, orderID, fmt.Sprintf("订单退款: %s", remark)); err != nil {
+			logger.Error("平台订单退款失败", "error", err, "order_id", orderID)
+			return fmt.Errorf("退款失败: %v", err)
+		}
+		logger.Info("平台订单退款成功", "order_id", orderID, "amount", order.Price)
+	}
+
+	// 4. 更新备注
+	if err := s.orderRepo.UpdateRemark(ctx, orderID, remark); err != nil {
 		return err
 	}
 
-	// 更新订单状态为已退款
+	// 5. 更新订单状态为已退款
 	return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusRefunded)
 }
 
@@ -445,7 +487,7 @@ func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum st
 
 	// 4. 直接退款到用户余额（外部订单使用用户余额系统）
 	balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
-	if err := balanceService.Recharge(ctx, order.CustomerID, order.Price, fmt.Sprintf("外部订单退款: %s", reason), "system"); err != nil {
+	if err := balanceService.Refund(ctx, order.CustomerID, order.Price, order.ID, fmt.Sprintf("外部订单退款: %s", reason), "system"); err != nil {
 		tx.Rollback()
 		logger.Error("退款到用户余额失败",
 			"error", err,
@@ -618,7 +660,7 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 	if err := s.orderRepo.Create(ctx, order); err != nil {
 		tx.Rollback()
 		// 回滚扣款
-		if refundErr := balanceService.Recharge(ctx, userID, actualPrice, "订单创建失败退款", "system"); refundErr != nil {
+		if refundErr := balanceService.Refund(ctx, userID, actualPrice, 0, "订单创建失败退款", "system"); refundErr != nil {
 			logger.Error("订单创建失败，退款也失败",
 				"create_error", err,
 				"refund_error", refundErr,
@@ -799,6 +841,34 @@ func (s *orderService) GetProductID(price float64, isp int, status int) (*model.
 		return nil, fmt.Errorf("未找到匹配的产品: price=%.2f, isp=%d, status=%d", price, isp, status)
 	}
 	logger.Info("匹配到产品", "product_id", product.ID, "price", product.Price, "isp", product.ISP, "status", product.Status)
+	return product, nil
+}
+
+// GetProductByNameValue 根据产品名称数字部分、ISP和状态获取产品
+func (s *orderService) GetProductByNameValue(nameValue float64, isp int, status int) (*model.Product, error) {
+	logger.Info("GetProductByNameValue called",
+		"nameValue", nameValue,
+		"isp", isp,
+		"status", status,
+	)
+	
+	product, err := s.orderRepo.FindProductByNameValueAndISP(int(nameValue), isp, status)
+	if err != nil {
+		logger.Error("未找到匹配的产品",
+			"nameValue", nameValue,
+			"isp", isp,
+			"status", status,
+			"error", err,
+		)
+		return nil, fmt.Errorf("未找到匹配的产品: nameValue=%.0f, isp=%d, status=%d", nameValue, isp, status)
+	}
+	
+	logger.Info("找到匹配的产品",
+		"productID", product.ID,
+		"productName", product.Name,
+		"nameValue", nameValue,
+	)
+	
 	return product, nil
 }
 

@@ -15,10 +15,15 @@ import (
 type PlatformController struct {
 	service     *service.PlatformService
 	platformSvc *platform.Service
+	beeService  *service.BeeService
 }
 
-func NewPlatformController(service *service.PlatformService, platformSvc *platform.Service) *PlatformController {
-	return &PlatformController{service: service, platformSvc: platformSvc}
+func NewPlatformController(platformService *service.PlatformService, platformSvc *platform.Service) *PlatformController {
+	return &PlatformController{
+		service:     platformService,
+		platformSvc: platformSvc,
+		beeService:  service.NewBeeService(),
+	}
 }
 
 // ListPlatforms 获取平台列表
@@ -240,4 +245,131 @@ func (c *PlatformController) GetChannelList(ctx *gin.Context) {
 		return
 	}
 	utils.Success(ctx, channels)
+}
+
+// GetBeeProductList 获取蜜蜂平台商品列表
+func (c *PlatformController) GetBeeProductList(ctx *gin.Context) {
+	accountID, err := strconv.ParseInt(ctx.Param("accountId"), 10, 64)
+	if err != nil {
+		utils.Error(ctx, http.StatusBadRequest, "invalid account id")
+		return
+	}
+
+	// 获取平台账号信息
+	account, err := c.service.GetPlatformAccountByID(accountID)
+	if err != nil {
+		utils.Error(ctx, http.StatusNotFound, "平台账号不存在")
+		return
+	}
+
+	// 验证是否为蜜蜂平台
+	platform, err := c.service.GetPlatformByID(account.PlatformID)
+	if err != nil || platform.Code != "mifeng" {
+		utils.Error(ctx, http.StatusBadRequest, "该账号不是蜜蜂平台账号")
+		return
+	}
+
+	// 获取分页参数
+	page, _ := strconv.Atoi(ctx.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(ctx.DefaultQuery("page_size", "20"))
+
+	// 调用蜜蜂平台API
+	result, err := c.beeService.GetProductList(account, page, pageSize)
+	if err != nil {
+		utils.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("获取商品列表失败: %v", err))
+		return
+	}
+
+	// 解析数据，处理不同的返回格式
+	parsedData, err := service.ParseProductListData(result.Data)
+	if err != nil {
+		utils.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("解析商品数据失败: %v", err))
+		return
+	}
+
+	// 转换为前端期望的格式
+	response := map[string]interface{}{
+		"list":  parsedData.GoodsInfo,
+		"total": parsedData.StatInfo.Total,
+	}
+
+	utils.Success(ctx, response)
+}
+
+// UpdateBeeProductPrice 更新蜜蜂平台商品价格
+func (c *PlatformController) UpdateBeeProductPrice(ctx *gin.Context) {
+	accountID, err := strconv.ParseInt(ctx.Param("accountId"), 10, 64)
+	if err != nil {
+		utils.Error(ctx, http.StatusBadRequest, "invalid account id")
+		return
+	}
+
+	// 获取平台账号信息
+	account, err := c.service.GetPlatformAccountByID(accountID)
+	if err != nil {
+		utils.Error(ctx, http.StatusNotFound, "平台账号不存在")
+		return
+	}
+
+	// 验证是否为蜜蜂平台
+	platform, err := c.service.GetPlatformByID(account.PlatformID)
+	if err != nil || platform.Code != "mifeng" {
+		utils.Error(ctx, http.StatusBadRequest, "该账号不是蜜蜂平台账号")
+		return
+	}
+
+	// 解析请求参数
+	var req service.BeeUpdatePriceRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 调用蜜蜂平台API
+	err = c.beeService.UpdateProductPrice(account, &req)
+	if err != nil {
+		utils.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("更新商品价格失败: %v", err))
+		return
+	}
+
+	utils.Success(ctx, nil)
+}
+
+// UpdateBeeProductProvince 更新蜜蜂平台商品省份配置
+func (c *PlatformController) UpdateBeeProductProvince(ctx *gin.Context) {
+	accountID, err := strconv.ParseInt(ctx.Param("accountId"), 10, 64)
+	if err != nil {
+		utils.Error(ctx, http.StatusBadRequest, "invalid account id")
+		return
+	}
+
+	// 获取平台账号信息
+	account, err := c.service.GetPlatformAccountByID(accountID)
+	if err != nil {
+		utils.Error(ctx, http.StatusNotFound, "平台账号不存在")
+		return
+	}
+
+	// 验证是否为蜜蜂平台
+	platform, err := c.service.GetPlatformByID(account.PlatformID)
+	if err != nil || platform.Code != "mifeng" {
+		utils.Error(ctx, http.StatusBadRequest, "该账号不是蜜蜂平台账号")
+		return
+	}
+
+	// 解析请求参数
+	var req service.BeeUpdateProvinceRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 调用蜜蜂平台API
+	err = c.beeService.UpdateProductProvince(account, &req)
+	if err != nil {
+		utils.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("更新商品省份配置失败: %v", err))
+		return
+	}
+
+	utils.Success(ctx, nil)
 }

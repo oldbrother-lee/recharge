@@ -34,4 +34,12 @@ func RegisterPlatformRoutes(r *gin.RouterGroup, platformController *controller.P
 	{
 		platform.GET("/channels", platformController.GetChannelList)
 	}
+
+	// 蜜蜂平台接口路由
+	bee := r.Group("/platform/bee")
+	{
+		bee.GET("/accounts/:accountId/products", platformController.GetBeeProductList)
+		bee.PUT("/accounts/:accountId/products/price", platformController.UpdateBeeProductPrice)
+		bee.PUT("/accounts/:accountId/products/province", platformController.UpdateBeeProductProvince)
+	}
 }

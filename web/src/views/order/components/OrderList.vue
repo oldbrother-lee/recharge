@@ -6,6 +6,7 @@ import type { Order } from '@/typings/api';
 import { NDataTable, NCard, useMessage, NTag, NButton, NModal, NInput, NForm, NFormItem, NDatePicker } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { useAuthStore } from '@/store/modules/auth';
+import { formatISP } from '@/utils/format';
 
 
 const authStore = useAuthStore();
@@ -166,6 +167,15 @@ const columns: DataTableColumns<Order> = [
   { key: 'order_number', title: '订单号', align: 'center', minWidth: 180 },
   { key: 'out_trade_num', title: '外部订单号', align: 'center', minWidth: 180 },
   { key: 'mobile', title: '手机号', align: 'center', width: 120 },
+  { 
+    key: 'isp', 
+    title: '运营商', 
+    align: 'center', 
+    width: 120,
+    render(row) {
+      return formatISP(row.isp);
+    }
+  },
   { key: 'denom', title: '订单金额', align: 'center', width: 100 },
   {
     key: 'status',

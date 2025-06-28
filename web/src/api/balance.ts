@@ -1,4 +1,4 @@
-import { request } from '@/utils/request';
+import { request } from '@/service/request';
 
 /** 余额充值 */
 export function rechargeBalance(data: {
@@ -6,24 +6,25 @@ user_id: number;
   amount: number;
   remark: string;
 }) {
-  return request.post('/api/v1/balance/recharge', data);
+  return request({ url: '/api/v1/balance/recharge', method: 'post', data });
 }
 
-/** 余额扣款 */
+/** 余额扣减 */
 export function deductBalance(data: {
-    user_id: number;
+  user_id: number;
   amount: number;
-  style: number;
   remark: string;
 }) {
-  return request.post('/api/v1/balance/deduct', data);
+  return request({ url: '/api/v1/balance/deduct', method: 'post', data });
 }
 
-/** 查询余额流水 */
+/** 获取余额日志 */
 export function getBalanceLogs(params: {
-    user_id: number;
-  page: number;
-  pageSize: number;
+  user_id?: number;
+  page?: number;
+  page_size?: number;
+  start_time?: string;
+  end_time?: string;
 }) {
-  return request.get('/api/v1/balance/logs', { params });
-} 
+  return request({ url: '/api/v1/balance/logs', method: 'get', params });
+}

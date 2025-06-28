@@ -55,6 +55,7 @@ type TaskConfig struct {
 	MaxRetries         int `mapstructure:"max_retries"`
 	RetryDelay         int `mapstructure:"retry_delay"`
 	MaxConcurrent      int `mapstructure:"max_concurrent"`
+	BatchSize          int `mapstructure:"batch_size"`
 }
 
 type APIConfig struct {

@@ -88,6 +88,7 @@ type Services struct {
 	Balance                *service.BalanceService // 添加Balance服务
 	PlatformAccountBalance *service.PlatformAccountBalanceService
 	Task                   *service.TaskService
+	TaskConfigNotifier     *service.TaskConfigNotifier       // 添加任务配置通知器
 	PhoneLocation          *service.PhoneLocationService     // 添加PhoneLocation服务
 	Product                *service.ProductService           // 添加Product服务
 	ProductType            *service.ProductTypeService       // 添加ProductType服务
@@ -358,6 +359,9 @@ func (c *Container) initServices() error {
 		taskConfig,
 		c.repositories.PlatformAccount,
 	)
+
+	// 初始化TaskConfigNotifier
+	c.services.TaskConfigNotifier = service.NewTaskConfigNotifier(c.redisClient)
 
 	// 初始化PhoneLocationService
 	c.services.PhoneLocation = service.NewPhoneLocationService(c.repositories.PhoneLocation)

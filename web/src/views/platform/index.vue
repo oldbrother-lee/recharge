@@ -179,7 +179,7 @@
         <template #header>
           <div style="display: flex; align-items: center; width: 100%; box-sizing: border-box;">
             <span style="flex: 1;">拉取订单配置 - {{ currentPlatformAccount?.account_name }}</span>
-            <NButton type="primary" @click="openChannelModal(currentPlatformAccount.account_name)">增加配置</NButton>
+            <NButton type="primary" @click="openChannelModal(currentPlatformAccount?.account_name || '')">增加配置</NButton>
             <NButton
               type="success"
               style="margin-left: 8px;"
@@ -424,11 +424,33 @@
           </NGridItem>
         </NGrid>
       </NModal>
+
+      <!-- 蜜蜂平台商品管理组件 -->
+      <BeeProductManagement 
+        ref="beeProductManagementRef"
+      />
+
+      <!-- 蜜蜂平台省份配置弹窗 -->
+      <NModal 
+        v-model:show="showBeeProvinceModal" 
+        preset="card" 
+        title="蜜蜂平台省份配置" 
+        style="width: 1000px; max-height: 80vh;"
+        :closable="true"
+        :mask-closable="false"
+      >
+        <ProductPriceForm 
+          v-if="currentBeeAccount" 
+          :account="currentBeeAccount" 
+          mode="province"
+          @close="showBeeProvinceModal = false"
+        />
+      </NModal>
     </div>
   </template>
   
   <script setup lang="tsx">
-  import { ref, h, watch, onMounted, computed } from 'vue';
+  import { ref, h, watch, onMounted, computed, nextTick } from 'vue';
   import { useTable } from '@/hooks/useTable';
   import { useModal } from '@/hooks/useModal';
   import { useForm } from '@/hooks/useForm';
@@ -438,6 +460,8 @@
   import { NButton, NPopconfirm, NCard, NForm, NFormItem, NSpace, NInput, NSelect, NSwitch, NModal, NDataTable, NGrid, NFormItemGi, NTag, NGridItem, NStatistic } from 'naive-ui';
   import { useAppStore } from '@/store/modules/app';
   import PlatformAccountForm from './components/PlatformAccountForm.vue';
+  import BeeProductManagement from './components/BeeProductManagement.vue';
+  import ProductPriceForm from './components/ProductPriceForm.vue';
   import { getChannelList } from '@/api/platform';
   import { getTaskConfigList, deleteTaskConfig, updateTaskConfig, createTaskConfig } from '@/api/taskConfig';
   import type { ApiResponse } from '@/types/api';
@@ -502,11 +526,16 @@
   const { visible, showModal, hideModal } = useModal();
   const { formRef, formModel, rules, handleSubmit, resetForm } = useForm();
   const currentPlatformCode = ref('');
+  const beeProductManagementRef = ref();
   
   // 添加 computed 属性
   const isXianzhuanxia = computed(() => {
     console.log('Computing isXianzhuanxia:', currentPlatformCode.value);
     return currentPlatformCode.value === 'xianzhuanxia';
+  });
+  
+  const isMf178 = computed(() => {
+    return currentPlatformCode.value === 'mifeng';
   });
   
   // 账号相关状态
@@ -750,6 +779,7 @@
       });
      
       if (res.data) {
+        console.log('Account data received:', res.data);
         const items = Array.isArray(res.data.items) ? res.data.items : [];
         accountData.value = items.map((item: PlatformAccount) => ({
           ...item,
@@ -861,6 +891,26 @@
               >
                 配置拉取订单
               </NButton>
+            )}
+            {isMf178.value && (
+              <>
+                <NButton 
+                  type="success" 
+                  ghost 
+                  size="small" 
+                  onClick={() => handleBeeProductManagement(row)}
+                >
+                  商品管理
+                </NButton>
+                <NButton 
+                  type="warning" 
+                  ghost 
+                  size="small" 
+                  onClick={() => handleBeeProvinceConfig(row)}
+                >
+                  省份配置
+                </NButton>
+              </>
             )}
             <NButton type="info" ghost size="small" onClick={() => handleBindUser(row)}>
               {row.bind_user_id ? '更换绑定' : '绑定账号'}
@@ -1009,7 +1059,7 @@
       if (currentPlatformAccount.value) {
         params.platform_account_id = currentPlatformAccount.value.id;
       }
-      const res = await getTaskConfigList(params) as ApiResponse<TaskConfigListData>;
+      const res = await getTaskConfigList(params);
       console.log("rrrrrrr",res)
       if (res.data) {
         console.log(res.data.list,"gggggg");
@@ -1215,8 +1265,8 @@
       .map(([cid, pids]) => {
         const productIds = (pids as number[]);
         return {
-          platform_id: currentPlatformAccount.value.platform_id,
-          platform_account_id: currentPlatformAccount.value.id,
+          platform_id: currentPlatformAccount.value?.platform_id || 0,
+          platform_account_id: currentPlatformAccount.value?.id || 0,
           channel_id: Number(cid),
           channel_name: channels.value.find(c => c.channelId === Number(cid))?.channelName || '',
           face_values: faceValues.value[Number(cid)] || '',
@@ -1261,6 +1311,26 @@
     success_amount: 0,
     processing_count: 0
   })
+
+  // 蜜蜂平台相关状态
+  // 移除showBeeProductModal变量，直接使用组件内置弹窗
+  const showBeeProvinceModal = ref(false)
+  const currentBeeAccount = ref<any>(null)
+
+  // 打开蜜蜂平台商品管理弹窗
+  function handleBeeProductManagement(row: any) {
+    currentBeeAccount.value = row
+    // 直接调用组件的open方法
+    if (beeProductManagementRef.value && row.id) {
+      beeProductManagementRef.value.open(row.id);
+    }
+  }
+
+  // 打开蜜蜂平台省份配置弹窗
+  function handleBeeProvinceConfig(row: any) {
+    currentBeeAccount.value = row
+    showBeeProvinceModal.value = true
+  }
 
   function handleViewOrderStatistics(row: any) {
     const customerId = row.customer_id || row.id;

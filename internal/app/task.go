@@ -32,16 +32,23 @@ func (t *TaskApp) Start(ctx context.Context) error {
 	}
 
 	if len(taskConfigs) == 0 {
-		log.Println("没有找到启用的任务配置")
-		return nil
+		log.Println("没有找到启用的任务配置，但仍启动任务服务以监听配置变化")
+	} else {
+		log.Printf("找到 %d 个启用的任务配置", len(taskConfigs))
 	}
-
-	log.Printf("找到 %d 个启用的任务配置", len(taskConfigs))
 
 	// 创建任务服务
 	t.taskService = t.container.GetServices().Task
 
-	// 启动任务服务
+	// 创建并设置配置监听器
+	redisClient := t.container.GetRedis()
+	configListener := service.NewTaskConfigListener(redisClient, t.taskService)
+	t.taskService.SetConfigListener(configListener)
+
+	// 启动配置监听器
+	t.taskService.StartConfigListener()
+
+	// 无论是否有配置都启动任务服务
 	t.taskService.StartTask()
 	// 启动订单详情查询任务
 	t.taskService.StartOrderDetailsTask()

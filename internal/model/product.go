@@ -21,7 +21,7 @@ type Product struct {
 	Description     string           `json:"description" gorm:"size:500;comment:商品描述"`                                     // 商品描述
 	Price           float64          `json:"price" gorm:"type:decimal(10,2);not null;comment:价格"`                          // 商品价格
 	Type            int64            `json:"type" gorm:"column:type;type:bigint;default:1;comment:'1话费 2流量'"`              // 商品类型ID
-	ISP             string           `json:"isp" gorm:"size:50;default:1,2,3;comment:'支持运营商:1移动 2电信 3联通'"`                 // 运营商
+	ISP             string           `json:"isp" gorm:"type:varchar(255);default:'1,2,3';comment:'支持运营商:1移动 2电信 3联通'"`     // 运营商
 	Status          int              `json:"status" gorm:"type:bigint;default:1;COMMENT:'是否上架'"`                           // 状态：1-启用，0-禁用
 	Sort            int              `json:"sort" gorm:"type:bigint;default:0"`                                            // 排序权重
 	APIEEnabled     bool             `json:"api_enabled" gorm:"default:false;COMMENT:'是否开启接口充值'"`                          // API是否启用

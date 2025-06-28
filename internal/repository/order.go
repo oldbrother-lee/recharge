@@ -60,6 +60,8 @@ type OrderRepository interface {
 	FindProductByPriceAndISP(price float64, isp int, status int) (*model.Product, error)
 	// FindProductByPriceAndISPWithTolerance 根据价格、ISP和状态获取产品，支持价格误差容忍
 	FindProductByPriceAndISPWithTolerance(price float64, isp int, status int, tolerance float64) (*model.Product, error)
+	// FindProductByNameValueAndISP 根据产品名称数字部分、ISP和状态获取产品
+	FindProductByNameValueAndISP(nameValue int, isp int, status int) (*model.Product, error)
 	// UpdateStatusCAS 原子性地将订单状态从 oldStatus 更新为 newStatus，同时写入 api_id
 	UpdateStatusCAS(ctx context.Context, id int64, oldStatus, newStatus model.OrderStatus, apiID int64) (bool, error)
 	// UpdateStatusAndAPIID 更新订单状态和API ID
@@ -317,6 +319,23 @@ func (r *OrderRepositoryImpl) FindProductByPriceAndISP(price float64, isp int, s
 func (r *OrderRepositoryImpl) FindProductByPriceAndISPWithTolerance(price float64, isp int, status int, tolerance float64) (*model.Product, error) {
 	var product model.Product
 	err := r.db.Where("ABS(price - ?) < ? AND isp = ? AND status = ?", price, tolerance, isp, status).First(&product).Error
+	if err != nil {
+		return nil, err
+	}
+	return &product, nil
+}
+
+// FindProductByNameValueAndISP 根据产品名称数字部分、ISP和状态获取产品
+func (r *OrderRepositoryImpl) FindProductByNameValueAndISP(nameValue int, isp int, status int) (*model.Product, error) {
+	var product model.Product
+	// ISP字段存储为字符串，直接进行字符串相等比较
+	ispStr := fmt.Sprintf("%d", isp)
+	
+	// 使用更灵活的正则表达式，支持中文前缀（如"中国移动"、"移动"等）
+	// 匹配：中文字符后跟数字，或者数字在字符串末尾
+	err := r.db.Where("name REGEXP ? AND isp = ? AND status = ?",
+		fmt.Sprintf("[\\u4e00-\\u9fff]+%d($|[^0-9])", nameValue), ispStr, status).First(&product).Error
+	
 	if err != nil {
 		return nil, err
 	}

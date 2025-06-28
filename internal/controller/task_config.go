@@ -12,13 +12,13 @@ import (
 
 type TaskConfigController struct {
 	taskConfigService *service.TaskConfigService
-	taskService       *service.TaskService
+	notifier          *service.TaskConfigNotifier
 }
 
-func NewTaskConfigController(taskConfigService *service.TaskConfigService, taskService *service.TaskService) *TaskConfigController {
+func NewTaskConfigController(taskConfigService *service.TaskConfigService, notifier *service.TaskConfigNotifier) *TaskConfigController {
 	return &TaskConfigController{
 		taskConfigService: taskConfigService,
-		taskService:       taskService,
+		notifier:          notifier,
 	}
 }
 
@@ -41,6 +41,15 @@ func (c *TaskConfigController) Create(ctx *gin.Context) {
 		return
 	}
 
+	// 通知任务配置变更（批量创建时通知每个配置）
+	for _, config := range configPtrs {
+		if err := c.notifier.NotifyConfigCreate(config.ID); err != nil {
+			// 记录错误但不影响响应，因为配置已经创建成功
+			utils.Error(ctx, http.StatusInternalServerError, "配置创建成功但通知失败")
+			return
+		}
+	}
+
 	utils.Success(ctx, nil)
 }
 
@@ -57,10 +66,10 @@ func (c *TaskConfigController) Update(ctx *gin.Context) {
 		return
 	}
 
-	// 触发任务配置热更新
-	if err := c.taskService.ReloadTaskConfig(); err != nil {
+	// 通知任务配置变更
+	if err := c.notifier.NotifyConfigUpdate(*req.ID); err != nil {
 		// 记录错误但不影响响应，因为配置已经更新成功
-		utils.Error(ctx, http.StatusInternalServerError, "配置更新成功但热更新失败")
+		utils.Error(ctx, http.StatusInternalServerError, "配置更新成功但通知失败")
 		return
 	}
 
@@ -87,10 +96,10 @@ func (c *TaskConfigController) Delete(ctx *gin.Context) {
 		return
 	}
 
-	// 触发任务配置热更新
-	if err := c.taskService.ReloadTaskConfig(); err != nil {
+	// 通知任务配置变更
+	if err := c.notifier.NotifyConfigDelete(id); err != nil {
 		// 记录错误但不影响响应，因为配置已经删除成功
-		utils.Error(ctx, http.StatusInternalServerError, "配置删除成功但热更新失败")
+		utils.Error(ctx, http.StatusInternalServerError, "配置删除成功但通知失败")
 		return
 	}
 

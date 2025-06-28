@@ -110,6 +110,11 @@ func (s *PlatformService) GetPlatformAccount(id int64) (*model.PlatformAccount, 
 	return s.platformRepo.GetPlatformAccountByID(id)
 }
 
+// GetPlatformAccountByID 根据ID获取平台账号
+func (s *PlatformService) GetPlatformAccountByID(id int64) (*model.PlatformAccount, error) {
+	return s.platformRepo.GetPlatformAccountByID(id)
+}
+
 // UpdatePlatformAccount 更新平台账号
 func (s *PlatformService) UpdatePlatformAccount(ctx context.Context, id int64, req *model.PlatformAccountUpdateRequest) error {
 	updateMap := map[string]interface{}{}

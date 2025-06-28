@@ -99,7 +99,7 @@ func (s *BalanceService) Refund(ctx context.Context, userID int64, amount float6
 		UserID:        userID,
 		Amount:        amount,
 		Type:          1, // 收入
-		Style:         4, // 充值
+		Style:         2, // 退款
 		Balance:       before + amount,
 		BalanceBefore: before,
 		Remark:        remark,

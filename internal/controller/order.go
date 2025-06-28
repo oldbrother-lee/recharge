@@ -386,6 +386,134 @@ func (c *OrderController) DeleteOrder(ctx *gin.Context) {
 	utils.Success(ctx, "删除订单成功")
 }
 
+// BatchDeleteOrders 批量删除订单
+func (c *OrderController) BatchDeleteOrders(ctx *gin.Context) {
+	var req struct {
+		OrderIDs []int64 `json:"order_ids" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if len(req.OrderIDs) == 0 {
+		utils.Error(ctx, http.StatusBadRequest, "订单ID列表不能为空")
+		return
+	}
+
+	successCount := 0
+	failedCount := 0
+	var errors []string
+
+	for _, orderID := range req.OrderIDs {
+		orderIDStr := strconv.FormatInt(orderID, 10)
+		if err := c.orderService.DeleteOrder(ctx, orderIDStr); err != nil {
+			failedCount++
+			errors = append(errors, "订单"+orderIDStr+"删除失败: "+err.Error())
+			logger.Error("批量删除订单失败", "order_id", orderID, "error", err)
+		} else {
+			successCount++
+		}
+	}
+
+	result := gin.H{
+		"success_count": successCount,
+		"failed_count":  failedCount,
+		"total_count":   len(req.OrderIDs),
+	}
+
+	if len(errors) > 0 {
+		result["errors"] = errors
+	}
+
+	utils.Success(ctx, result)
+}
+
+// BatchProcessOrderSuccess 批量设置订单成功
+func (c *OrderController) BatchProcessOrderSuccess(ctx *gin.Context) {
+	var req struct {
+		OrderIDs []int64 `json:"order_ids" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if len(req.OrderIDs) == 0 {
+		utils.Error(ctx, http.StatusBadRequest, "订单ID列表不能为空")
+		return
+	}
+
+	successCount := 0
+	failedCount := 0
+	var errors []string
+
+	for _, orderID := range req.OrderIDs {
+		if err := c.orderService.ProcessOrderSuccess(ctx, orderID); err != nil {
+			failedCount++
+			errors = append(errors, "订单"+strconv.FormatInt(orderID, 10)+"设置成功失败: "+err.Error())
+			logger.Error("批量设置订单成功失败", "order_id", orderID, "error", err)
+		} else {
+			successCount++
+		}
+	}
+
+	result := gin.H{
+		"success_count": successCount,
+		"failed_count":  failedCount,
+		"total_count":   len(req.OrderIDs),
+	}
+
+	if len(errors) > 0 {
+		result["errors"] = errors
+	}
+
+	utils.Success(ctx, result)
+}
+
+// BatchProcessOrderFail 批量设置订单失败
+func (c *OrderController) BatchProcessOrderFail(ctx *gin.Context) {
+	var req struct {
+		OrderIDs []int64 `json:"order_ids" binding:"required"`
+		Remark   string  `json:"remark" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if len(req.OrderIDs) == 0 {
+		utils.Error(ctx, http.StatusBadRequest, "订单ID列表不能为空")
+		return
+	}
+
+	successCount := 0
+	failedCount := 0
+	var errors []string
+
+	for _, orderID := range req.OrderIDs {
+		if err := c.orderService.ProcessOrderFail(ctx, orderID, req.Remark); err != nil {
+			failedCount++
+			errors = append(errors, "订单"+strconv.FormatInt(orderID, 10)+"设置失败失败: "+err.Error())
+			logger.Error("批量设置订单失败失败", "order_id", orderID, "error", err)
+		} else {
+			successCount++
+		}
+	}
+
+	result := gin.H{
+		"success_count": successCount,
+		"failed_count":  failedCount,
+		"total_count":   len(req.OrderIDs),
+	}
+
+	if len(errors) > 0 {
+		result["errors"] = errors
+	}
+
+	utils.Success(ctx, result)
+}
+
 // CleanupOrders 清理指定时间范围的订单及相关日志
 func (c *OrderController) CleanupOrders(ctx *gin.Context) {
 	start := ctx.Query("start")

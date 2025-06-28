@@ -37,6 +37,14 @@ const showCleanupModal = ref(false);
 const cleanupRange = ref<{ startTime: number | null; endTime: number | null }>({ startTime: null, endTime: null });
 const cleanupLoading = ref(false);
 
+// 多选相关状态
+const selectedRowKeys = ref<string[]>([]);
+const showBatchDeleteModal = ref(false);
+const showBatchSuccessModal = ref(false);
+const showBatchFailModal = ref(false);
+const batchFailRemark = ref('');
+const batchLoading = ref(false);
+
 const statusMap: Record<string, { type: 'success' | 'warning' | 'error' | 'info' | 'default', text: string }> = {
   '1': { type: 'warning', text: '待支付' },
   '2': { type: 'warning', text: '待充值' },
@@ -163,7 +171,100 @@ const handleCleanup = async () => {
   }
 };
 
+// 批量操作函数
+const handleBatchDelete = () => {
+  if (selectedRowKeys.value.length === 0) {
+    message.warning('请选择要删除的订单');
+    return;
+  }
+  showBatchDeleteModal.value = true;
+};
+
+const handleBatchSuccess = () => {
+  if (selectedRowKeys.value.length === 0) {
+    message.warning('请选择要设置为成功的订单');
+    return;
+  }
+  showBatchSuccessModal.value = true;
+};
+
+const handleBatchFail = () => {
+  if (selectedRowKeys.value.length === 0) {
+    message.warning('请选择要设置为失败的订单');
+    return;
+  }
+  batchFailRemark.value = '';
+  showBatchFailModal.value = true;
+};
+
+const confirmBatchDelete = async () => {
+  batchLoading.value = true;
+  try {
+    await request({
+      url: '/order/batch-delete',
+      method: 'POST',
+      data: { order_ids: selectedRowKeys.value.map(id => Number(id)) }
+    });
+    message.success(`成功删除 ${selectedRowKeys.value.length} 个订单`);
+    selectedRowKeys.value = [];
+    showBatchDeleteModal.value = false;
+    fetchOrders();
+  } catch (error) {
+    message.error('批量删除失败');
+  } finally {
+    batchLoading.value = false;
+  }
+};
+
+const confirmBatchSuccess = async () => {
+  batchLoading.value = true;
+  try {
+    await request({
+      url: '/order/batch-success',
+      method: 'POST',
+      data: { order_ids: selectedRowKeys.value.map(id => Number(id)) }
+    });
+    message.success(`成功设置 ${selectedRowKeys.value.length} 个订单为成功`);
+    selectedRowKeys.value = [];
+    showBatchSuccessModal.value = false;
+    fetchOrders();
+  } catch (error) {
+    message.error('批量设置成功失败');
+  } finally {
+    batchLoading.value = false;
+  }
+};
+
+const confirmBatchFail = async () => {
+  if (!batchFailRemark.value.trim()) {
+    message.error('请填写失败原因');
+    return;
+  }
+  batchLoading.value = true;
+  try {
+    await request({
+      url: '/order/batch-fail',
+      method: 'POST',
+      data: { 
+        order_ids: selectedRowKeys.value.map(id => Number(id)),
+        remark: batchFailRemark.value 
+      }
+    });
+    message.success(`成功设置 ${selectedRowKeys.value.length} 个订单为失败`);
+    selectedRowKeys.value = [];
+    showBatchFailModal.value = false;
+    fetchOrders();
+  } catch (error) {
+    message.error('批量设置失败失败');
+  } finally {
+    batchLoading.value = false;
+  }
+};
+
 const columns: DataTableColumns<Order> = [
+  {
+    type: 'selection'
+  },
   { key: 'order_number', title: '订单号', align: 'center', minWidth: 180 },
   { key: 'out_trade_num', title: '外部订单号', align: 'center', minWidth: 180 },
   { key: 'mobile', title: '手机号', align: 'center', width: 120 },
@@ -176,6 +277,7 @@ const columns: DataTableColumns<Order> = [
       return formatISP(row.isp);
     }
   },
+  { key: 'account_location', title: '归属地', align: 'center', width: 100 },
   { key: 'denom', title: '订单金额', align: 'center', width: 100 },
   {
     key: 'status',
@@ -292,12 +394,37 @@ function formatLocalDatetime(ts: number | null) {
     <template #header>
       <div style="display: flex; align-items: center; gap: 12px;">
         <span>订单列表</span>
-        <NButton
-          v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
-          type="error"
-          @click="showCleanupModal = true"
-          style="margin-left: auto"
-        >清理订单</NButton>
+        <div style="display: flex; gap: 8px; margin-left: auto;">
+          <NButton
+            v-if="selectedRowKeys.length > 0"
+            type="success"
+            size="small"
+            @click="handleBatchSuccess"
+          >
+            批量设置成功 ({{ selectedRowKeys.length }})
+          </NButton>
+          <NButton
+            v-if="selectedRowKeys.length > 0"
+            type="error"
+            size="small"
+            @click="handleBatchFail"
+          >
+            批量设置失败 ({{ selectedRowKeys.length }})
+          </NButton>
+          <NButton
+            v-if="selectedRowKeys.length > 0"
+            type="warning"
+            size="small"
+            @click="handleBatchDelete"
+          >
+            批量删除 ({{ selectedRowKeys.length }})
+          </NButton>
+          <NButton
+            v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
+            type="error"
+            @click="showCleanupModal = true"
+          >清理订单</NButton>
+        </div>
       </div>
     </template>
     <OrderSearchForm @search="handleSearch" />
@@ -307,7 +434,10 @@ function formatLocalDatetime(ts: number | null) {
       :loading="loading"
       :pagination="pagination"
       remote
-      :row-key="row => row.id"
+      checkable
+      :row-key="row => String(row.id)"
+      :checked-row-keys="selectedRowKeys"
+      @update:checked-row-keys="selectedRowKeys = $event"
       @update:page="handlePageChange"
       @update:page-size="handlePageSizeChange"
       class="sm:h-full"
@@ -361,6 +491,36 @@ function formatLocalDatetime(ts: number | null) {
       <template #action>
         <NButton @click="() => (showCleanupModal = false)">取消</NButton>
         <NButton type="error" :loading="cleanupLoading" @click="handleCleanup" style="margin-left: 12px">确认清理</NButton>
+      </template>
+    </NModal>
+    
+    <!-- 批量操作模态框 -->
+    <NModal v-model:show="showBatchDeleteModal" title="批量删除订单" preset="dialog">
+      <div>确认要删除选中的 {{ selectedRowKeys.length }} 个订单吗？</div>
+      <template #action>
+        <NButton @click="() => (showBatchDeleteModal = false)">取消</NButton>
+        <NButton type="error" :loading="batchLoading" @click="confirmBatchDelete">确定删除</NButton>
+      </template>
+    </NModal>
+    
+    <NModal v-model:show="showBatchSuccessModal" title="批量设置成功" preset="dialog">
+      <div>确认将选中的 {{ selectedRowKeys.length }} 个订单设置为成功吗？</div>
+      <template #action>
+        <NButton @click="() => (showBatchSuccessModal = false)">取消</NButton>
+        <NButton type="success" :loading="batchLoading" @click="confirmBatchSuccess">确定</NButton>
+      </template>
+    </NModal>
+    
+    <NModal v-model:show="showBatchFailModal" title="批量设置失败" preset="dialog">
+      <NForm>
+        <NFormItem label="失败原因" required>
+          <NInput v-model:value="batchFailRemark" type="textarea" placeholder="请输入失败原因" />
+        </NFormItem>
+        <div style="margin-bottom: 12px; color: #666;">将对选中的 {{ selectedRowKeys.length }} 个订单进行操作</div>
+      </NForm>
+      <template #action>
+        <NButton @click="() => (showBatchFailModal = false)">取消</NButton>
+        <NButton type="error" :loading="batchLoading" @click="confirmBatchFail">确定</NButton>
       </template>
     </NModal>
   </NCard>

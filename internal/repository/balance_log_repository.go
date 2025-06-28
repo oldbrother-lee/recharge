@@ -18,6 +18,11 @@ func NewBalanceLogRepository(db *gorm.DB) *BalanceLogRepository {
 	return &BalanceLogRepository{db: db}
 }
 
+// GetDB 获取数据库连接
+func (r *BalanceLogRepository) GetDB() *gorm.DB {
+	return r.db
+}
+
 // CreateLog 新增一条余额流水
 func (r *BalanceLogRepository) CreateLog(ctx context.Context, log *model.BalanceLog) error {
 	return r.db.WithContext(ctx).Create(log).Error

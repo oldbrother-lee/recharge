@@ -97,6 +97,11 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		// order.POST("/:id/partial", orderController.ProcessOrderPartial)
 		order.POST("/:id/delete", orderController.DeleteOrder)
 
+		// 批量操作接口
+		order.POST("/batch-delete", orderController.BatchDeleteOrders)
+		order.POST("/batch-success", orderController.BatchProcessOrderSuccess)
+		order.POST("/batch-fail", orderController.BatchProcessOrderFail)
+
 		// 只允许管理员访问的订单清理接口
 		order.DELETE("/cleanup", middleware.CheckSuperAdmin(userService), orderController.CleanupOrders)
 	}

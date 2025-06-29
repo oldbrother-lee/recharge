@@ -289,6 +289,41 @@ const columns: DataTableColumns<Order> = [
       return <NTag type={status.type}>{status.text}</NTag>;
     }
   },
+
+  {
+    key: 'notification_time',
+    title: '通知时间',
+    align: 'center',
+    width: 180,
+    render(row) {
+      if (!(row as any).notification_time) {
+        return '-';
+      }
+      const d = new Date((row as any).notification_time);
+      const pad = (n: number) => n.toString().padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    }
+  },
+    {
+    key: 'notification_status',
+    title: '通知状态',
+    align: 'center',
+    width: 100,
+    render(row) {
+      const status = (row as any).notification_status;
+      if (!status) {
+        return '-';
+      }
+      const statusMap: { [key: string]: { type: string; text: string } } = {
+        '1': { type: 'warning', text: '待通知' },
+        '2': { type: 'info', text: '通知中' },
+        '3': { type: 'success', text: '成功' },
+        '4': { type: 'error', text: '失败' }
+      };
+      const statusInfo = statusMap[String(status)] || { type: 'default', text: String(status) };
+      return <NTag type={statusInfo.type}>{statusInfo.text}</NTag>;
+    }
+  },
   {
     key: 'platform_name',
     title: '来源',

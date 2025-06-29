@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"recharge-go/internal/model"
+	"recharge-go/internal/model/notification"
 	"recharge-go/pkg/logger"
 	"strconv"
 	"time"
@@ -44,6 +45,8 @@ type OrderRepository interface {
 	GetByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error)
 	// GetOrders 获取订单列表
 	GetOrders(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error)
+	// GetOrdersWithNotification 获取包含通知信息的订单列表
+	GetOrdersWithNotification(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.OrderWithNotification, int64, error)
 	// GetByStatus 根据状态获取订单列表
 	GetByStatus(ctx context.Context, status model.OrderStatus) ([]*model.Order, error)
 	// GetByOrderID 根据订单号获取订单
@@ -264,6 +267,45 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 	}
 
 	return orders, total, nil
+}
+
+// GetOrdersWithNotification 获取包含通知信息的订单列表
+func (r *OrderRepositoryImpl) GetOrdersWithNotification(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.OrderWithNotification, int64, error) {
+	var results []*model.OrderWithNotification
+	var total int64
+
+	// 先查询订单列表
+	orders, total, err := r.GetOrders(ctx, params, page, pageSize)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// 为每个订单查询最新的通知记录
+	for _, order := range orders {
+		orderWithNotification := &model.OrderWithNotification{
+			Order: order,
+		}
+
+		// 查询该订单的最新通知记录
+		var notificationRecord notification.NotificationRecord
+		err := r.db.Where("order_id = ?", order.ID).
+			Order("created_at DESC").
+			First(&notificationRecord).Error
+
+		if err == nil {
+			// 找到通知记录
+			orderWithNotification.NotificationTime = &notificationRecord.CreatedAt
+			orderWithNotification.NotificationStatus = &notificationRecord.Status
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			// 如果是其他错误（非记录不存在），记录日志但不中断处理
+			logger.Error("查询通知记录失败: %v", err)
+		}
+		// 如果是记录不存在，NotificationTime 和 NotificationStatus 保持为 nil
+
+		results = append(results, orderWithNotification)
+	}
+
+	return results, total, nil
 }
 
 // GetByOrderID 根据订单号获取订单

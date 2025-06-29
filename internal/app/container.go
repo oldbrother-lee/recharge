@@ -307,12 +307,10 @@ func (c *Container) initServices() error {
 	// 创建订单服务
 	c.services.Order = service.NewOrderService(
 		c.repositories.Order,
-		c.services.Recharge,
-		c.repositories.Notification,
-		queueInstance,
 		c.repositories.BalanceLog,
 		c.repositories.User,
-		c.repositories.Product,
+		c.services.Recharge,
+		c.db,
 	)
 
 	// 设置相互依赖

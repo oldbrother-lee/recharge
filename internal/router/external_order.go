@@ -61,12 +61,10 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
-		rechargeService,
-		notificationRepo,
-		queueInstance,
 		balanceLogRepo,
 		userRepo,
-		productRepo,
+		rechargeService,
+		db,
 	)
 
 	// 创建认证中间件

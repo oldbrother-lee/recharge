@@ -86,7 +86,7 @@ func (s *BalanceService) Deduct(ctx context.Context, userID int64, amount float6
 	return s.repo.CreateLog(ctx, log)
 }
 
-// Refund 退款到用户余额（带订单ID）
+// Refund 余额退款
 func (s *BalanceService) Refund(ctx context.Context, userID int64, amount float64, orderID int64, remark, operator string) error {
 	if amount <= 0 {
 		return errors.New("退款金额必须大于0")
@@ -94,45 +94,54 @@ func (s *BalanceService) Refund(ctx context.Context, userID int64, amount float6
 	
 	// 使用事务确保余额更新和日志记录的原子性
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 幂等性校验：检查是否已存在该订单的退款记录
-		var existCount int64
-		if err := tx.Model(&model.BalanceLog{}).Where("order_id = ? AND user_id = ? AND style = ?", orderID, userID, 2).Count(&existCount).Error; err != nil {
-			return err
-		}
-		if existCount > 0 {
-			// 已存在退款记录，跳过重复退款
-			return nil
-		}
-		
-		// 使用FOR UPDATE行锁获取用户信息，防止并发问题
-		var user model.User
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
-			return err
-		}
-		
-		before := user.Balance
-		
-		// 更新余额
-		user.Balance += amount
-		if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error; err != nil {
-			return err
-		}
-		
-		// 写入流水
-		log := &model.BalanceLog{
-			UserID:        userID,
-			Amount:        amount,
-			Type:          1, // 收入
-			Style:         2, // 退款
-			Balance:       user.Balance,
-			BalanceBefore: before,
-			Remark:        remark,
-			Operator:      operator,
-			OrderID:       orderID,
-			CreatedAt:     time.Now(),
-		}
-		return tx.Create(log).Error
+		return s.RefundWithTx(ctx, tx, userID, amount, orderID, remark, operator)
 	})
+}
+
+// RefundWithTx 在指定事务中进行余额退款
+func (s *BalanceService) RefundWithTx(ctx context.Context, tx *gorm.DB, userID int64, amount float64, orderID int64, remark, operator string) error {
+	if amount <= 0 {
+		return errors.New("退款金额必须大于0")
+	}
+	
+	// 幂等性校验：检查是否已存在该订单的退款记录
+	var existCount int64
+	if err := tx.Model(&model.BalanceLog{}).Where("order_id = ? AND user_id = ? AND style = ?", orderID, userID, 2).Count(&existCount).Error; err != nil {
+		return err
+	}
+	if existCount > 0 {
+		// 已存在退款记录，跳过重复退款
+		return nil
+	}
+	
+	// 使用FOR UPDATE行锁获取用户信息，防止并发问题
+	var user model.User
+	if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
+		return err
+	}
+	
+	before := user.Balance
+	
+	// 更新余额
+	user.Balance += amount
+	if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error; err != nil {
+		return err
+	}
+	
+	// 写入流水
+	log := &model.BalanceLog{
+		UserID:        userID,
+		Amount:        amount,
+		Type:          1, // 收入
+		Style:         2, // 退款
+		Balance:       user.Balance,
+		BalanceBefore: before,
+		Remark:        remark,
+		Operator:      operator,
+		OrderID:       orderID,
+		CreatedAt:     time.Now(),
+	}
+	return tx.Create(log).Error
 }
 
 // ListLogs 查询余额流水

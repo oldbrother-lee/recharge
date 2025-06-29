@@ -358,7 +358,8 @@ func (c *OrderController) GetOrders(ctx *gin.Context) {
 		return
 	}
 
-	orders, total, err := c.orderService.GetOrders(ctx, params, pageInt, pageSizeInt)
+	// 使用包含通知信息的查询方法
+	orders, total, err := c.orderService.GetOrdersWithNotification(ctx, params, pageInt, pageSizeInt)
 	if err != nil {
 		logger.Error("获取订单列表失败: %v", err)
 		utils.Error(ctx, http.StatusInternalServerError, "获取订单列表失败")

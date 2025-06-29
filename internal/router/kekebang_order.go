@@ -33,12 +33,10 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
-		nil, // 先传入 nil，后面再设置
-		notificationRepo,
-		queueInstance,
 		balanceLogRepo,
 		userRepo,
-		productRepo,
+		nil, // 先传入 nil，后面再设置
+		database.DB,
 	)
 
 	// 初始化充值服务

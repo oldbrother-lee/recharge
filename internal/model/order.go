@@ -118,6 +118,13 @@ type StatisticsQuery struct {
 	// 可根据需要添加更多字段
 }
 
+// OrderWithNotification 订单与通知信息的响应结构体
+type OrderWithNotification struct {
+	*Order
+	NotificationTime   *time.Time `json:"notification_time"`   // 通知时间
+	NotificationStatus *int       `json:"notification_status"` // 通知状态 1:待处理 2:处理中 3:成功 4:失败
+}
+
 // TableName 表名
 func (Order) TableName() string {
 	return "orders"

@@ -12,6 +12,7 @@ import (
 	"recharge-go/pkg/queue"
 	"strconv"
 	"time"
+	"gorm.io/gorm"
 )
 
 // OrderService 订单服务接口
@@ -50,6 +51,8 @@ type OrderService interface {
 	ProcessOrderPartial(ctx context.Context, orderID int64, remark string) error
 	// GetOrders 获取订单列表
 	GetOrders(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error)
+	// GetOrdersWithNotification 获取包含通知信息的订单列表
+	GetOrdersWithNotification(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.OrderWithNotification, int64, error)
 	// SetRechargeService 设置充值服务
 	SetRechargeService(rechargeService RechargeService)
 	// DeleteOrder 删除订单（软删除）
@@ -83,26 +86,23 @@ type orderService struct {
 	balanceLogRepo   *repository.BalanceLogRepository
 	userRepo         *repository.UserRepository
 	productRepo      repository.ProductRepository
+	db               *gorm.DB
 }
 
 // NewOrderService 创建订单服务实例
 func NewOrderService(
 	orderRepo repository.OrderRepository,
-	rechargeService RechargeService,
-	notificationRepo notificationRepo.Repository,
-	queue queue.Queue,
 	balanceLogRepo *repository.BalanceLogRepository,
 	userRepo *repository.UserRepository,
-	productRepo repository.ProductRepository,
+	rechargeService RechargeService,
+	db *gorm.DB,
 ) OrderService {
 	return &orderService{
 		orderRepo:        orderRepo,
 		rechargeService:  rechargeService,
-		notificationRepo: notificationRepo,
-		queue:            queue,
 		balanceLogRepo:   balanceLogRepo,
 		userRepo:         userRepo,
-		productRepo:      productRepo,
+		db:               db,
 	}
 }
 
@@ -322,110 +322,135 @@ func (s *orderService) ProcessOrderSuccess(ctx context.Context, orderID int64) e
 
 // ProcessOrderFail 处理订单失败
 func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, remark string) error {
-	// 获取订单信息
-	order, err := s.orderRepo.GetByID(ctx, orderID)
-	if err != nil {
-		return err
-	}
-
-	// 如果订单已经支付，需要退还余额
-	if order.Status == model.OrderStatusPendingRecharge || order.Status == model.OrderStatusRecharging || order.Status == model.OrderStatusProcessing {
-		// 检查是否为外部订单
-		if order.Client == 2 {
-			// 外部订单直接退款到用户余额
-			logger.Info("外部订单失败，退款到用户余额",
-				"order_id", orderID,
-				"customer_id", order.CustomerID,
-				"amount", order.Price)
-
-			// 使用用户余额服务进行退款
-			balanceService := s.rechargeService.GetUserBalanceService()
-			if err := balanceService.Refund(ctx, order.CustomerID, order.Price, orderID, "外部订单失败退款", "system"); err != nil {
-				logger.Error("外部订单退款失败",
-					"error", err,
-					"order_id", orderID,
-					"customer_id", order.CustomerID,
-					"amount", order.Price)
-				return fmt.Errorf("外部订单退款失败: %v", err)
-			}
-			logger.Info("外部订单退款成功",
-				"order_id", orderID,
-				"customer_id", order.CustomerID,
-				"amount", order.Price)
-		} else {
-			// 平台订单使用原有的退款方法
-			if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, orderID, "订单失败退还余额"); err != nil {
-				logger.Error("退还余额失败",
-					"error", err,
-					"order_id", orderID,
-					"amount", order.Price)
-				return fmt.Errorf("refund balance failed: %v", err)
-			}
-			logger.Info("退还余额成功",
-				"order_id", orderID,
-				"amount", order.Price)
+	// 使用事务确保订单状态更新和退款操作的原子性
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 使用行锁防止同一订单的并发处理
+		var lockedOrder model.Order
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", orderID).First(&lockedOrder).Error; err != nil {
+			return err
 		}
-	}
 
-	// 更新备注
-	if err := s.orderRepo.UpdateRemark(ctx, orderID, remark); err != nil {
-		return err
-	}
+		// 检查订单状态，防止重复处理
+		if lockedOrder.Status == model.OrderStatusFailed {
+			// 订单已经是失败状态，跳过处理
+			logger.Info("订单已经是失败状态，跳过重复处理", "order_id", orderID)
+			return nil
+		}
 
-	// 更新订单状态为失败
-	return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusFailed)
+		// 如果订单已经支付，需要退还余额
+		if lockedOrder.Status == model.OrderStatusPendingRecharge || lockedOrder.Status == model.OrderStatusRecharging || lockedOrder.Status == model.OrderStatusProcessing {
+			// 检查是否为外部订单
+			if lockedOrder.Client == 2 {
+				// 外部订单直接退款到用户余额
+				logger.Info("外部订单失败，退款到用户余额",
+					"order_id", orderID,
+					"customer_id", lockedOrder.CustomerID,
+					"amount", lockedOrder.Price)
+
+				// 使用用户余额服务进行退款（使用当前事务）
+				balanceService := s.rechargeService.GetUserBalanceService()
+				if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, orderID, "外部订单失败退款", "system"); err != nil {
+					logger.Error("外部订单退款失败",
+						"error", err,
+						"order_id", orderID,
+						"customer_id", lockedOrder.CustomerID,
+						"amount", lockedOrder.Price)
+					return fmt.Errorf("外部订单退款失败: %v", err)
+				}
+				logger.Info("外部订单退款成功",
+					"order_id", orderID,
+					"customer_id", lockedOrder.CustomerID,
+					"amount", lockedOrder.Price)
+			} else {
+				// 平台订单使用原有的退款方法，传入事务
+				if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, tx, lockedOrder.PlatformAccountID, lockedOrder.Price, orderID, "订单失败退还余额"); err != nil {
+					logger.Error("退还余额失败",
+						"error", err,
+						"order_id", orderID,
+						"amount", lockedOrder.Price)
+					return fmt.Errorf("refund balance failed: %v", err)
+				}
+				logger.Info("退还余额成功",
+					"order_id", orderID,
+					"amount", lockedOrder.Price)
+			}
+		}
+
+		// 更新备注
+		if err := tx.Model(&model.Order{}).Where("id = ?", orderID).Update("remark", remark).Error; err != nil {
+			return err
+		}
+
+		// 更新订单状态为失败
+		if err := tx.Model(&model.Order{}).Where("id = ?", orderID).Update("status", model.OrderStatusFailed).Error; err != nil {
+			return err
+		}
+
+		logger.Info("订单失败处理完成",
+			"order_id", orderID,
+			"status", model.OrderStatusFailed)
+		return nil
+	})
 }
 
 // ProcessOrderRefund 处理订单退款
 func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, remark string) error {
-
-
-	// 1. 获取订单信息
-	order, err := s.orderRepo.GetByID(ctx, orderID)
-	if err != nil {
-		logger.Error("获取订单失败", "error", err, "order_id", orderID)
-		return fmt.Errorf("订单不存在")
-	}
-
-	// 2. 检查订单状态是否允许退款
-	if order.Status == model.OrderStatusRefunded {
-		logger.Info("订单已退款，跳过处理", "order_id", orderID)
-		return fmt.Errorf("订单已退款")
-	}
-
-	// 只有成功、失败、待充值状态的订单可以退款
-	if order.Status != model.OrderStatusSuccess &&
-		order.Status != model.OrderStatusFailed &&
-		order.Status != model.OrderStatusPendingRecharge {
-		logger.Error("订单状态不允许退款", "order_id", orderID, "status", order.Status)
-		return fmt.Errorf("订单状态不允许退款")
-	}
-
-	// 3. 执行退款逻辑
-	if order.Client == 2 {
-		// 外部订单退款到用户余额
-		balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
-		if err := balanceService.Refund(ctx, order.CustomerID, order.Price, orderID, fmt.Sprintf("订单退款: %s", remark), "admin"); err != nil {
-			logger.Error("外部订单退款失败", "error", err, "order_id", orderID)
-			return fmt.Errorf("退款失败: %v", err)
+	// 使用事务确保订单状态更新和退款操作的原子性
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 使用行锁防止同一订单的并发处理
+		var lockedOrder model.Order
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", orderID).First(&lockedOrder).Error; err != nil {
+			logger.Error("获取订单失败", "error", err, "order_id", orderID)
+			return fmt.Errorf("订单不存在")
 		}
-		logger.Info("外部订单退款成功", "order_id", orderID, "amount", order.Price)
-	} else {
-		// 平台订单退款到平台账户
-		if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, orderID, fmt.Sprintf("订单退款: %s", remark)); err != nil {
-			logger.Error("平台订单退款失败", "error", err, "order_id", orderID)
-			return fmt.Errorf("退款失败: %v", err)
+
+		// 2. 检查订单状态是否允许退款
+		if lockedOrder.Status == model.OrderStatusRefunded {
+			logger.Info("订单已退款，跳过处理", "order_id", orderID)
+			return fmt.Errorf("订单已退款")
 		}
-		logger.Info("平台订单退款成功", "order_id", orderID, "amount", order.Price)
-	}
 
-	// 4. 更新备注
-	if err := s.orderRepo.UpdateRemark(ctx, orderID, remark); err != nil {
-		return err
-	}
+		// 只有成功、失败、待充值状态的订单可以退款
+		if lockedOrder.Status != model.OrderStatusSuccess &&
+			lockedOrder.Status != model.OrderStatusFailed &&
+			lockedOrder.Status != model.OrderStatusPendingRecharge {
+			logger.Error("订单状态不允许退款", "order_id", orderID, "status", lockedOrder.Status)
+			return fmt.Errorf("订单状态不允许退款")
+		}
 
-	// 5. 更新订单状态为已退款
-	return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusRefunded)
+		// 3. 执行退款逻辑
+		if lockedOrder.Client == 2 {
+			// 外部订单退款到用户余额（使用当前事务）
+			balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
+			if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, orderID, fmt.Sprintf("订单退款: %s", remark), "admin"); err != nil {
+				logger.Error("外部订单退款失败", "error", err, "order_id", orderID)
+				return fmt.Errorf("退款失败: %v", err)
+			}
+			logger.Info("外部订单退款成功", "order_id", orderID, "amount", lockedOrder.Price)
+		} else {
+			// 平台订单退款到平台账户，传入事务
+			if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, tx, lockedOrder.PlatformAccountID, lockedOrder.Price, orderID, fmt.Sprintf("订单退款: %s", remark)); err != nil {
+				logger.Error("平台订单退款失败", "error", err, "order_id", orderID)
+				return fmt.Errorf("退款失败: %v", err)
+			}
+			logger.Info("平台订单退款成功", "order_id", orderID, "amount", lockedOrder.Price)
+		}
+
+		// 4. 更新备注
+		if err := tx.Model(&model.Order{}).Where("id = ?", orderID).Update("remark", remark).Error; err != nil {
+			return err
+		}
+
+		// 5. 更新订单状态为已退款
+		if err := tx.Model(&model.Order{}).Where("id = ?", orderID).Update("status", model.OrderStatusRefunded).Error; err != nil {
+			return err
+		}
+
+		logger.Info("订单退款处理完成",
+			"order_id", orderID,
+			"status", model.OrderStatusRefunded)
+		return nil
+	})
 }
 
 // ProcessExternalRefund 处理外部订单退款
@@ -434,101 +459,87 @@ func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum st
 		"out_trade_num", outTradeNum,
 		"reason", reason)
 
-	// 1. 根据外部交易号获取订单
-	order, err := s.GetOrderByOutTradeNum(ctx, outTradeNum)
-	if err != nil {
-		logger.Error("获取订单失败",
-			"error", err,
-			"out_trade_num", outTradeNum)
-		return fmt.Errorf("订单不存在")
-	}
-
-	// 2. 检查订单状态是否允许退款
-	if order.Status == model.OrderStatusRefunded {
-		logger.Info("订单已退款，跳过处理",
-			"order_id", order.ID,
-			"out_trade_num", outTradeNum)
-		return fmt.Errorf("订单已退款")
-	}
-
-	// 只有成功、失败、待充值状态的订单可以退款
-	if order.Status != model.OrderStatusSuccess &&
-		order.Status != model.OrderStatusFailed &&
-		order.Status != model.OrderStatusPendingRecharge {
-		logger.Error("订单状态不允许退款",
-			"order_id", order.ID,
-			"status", order.Status,
-			"out_trade_num", outTradeNum)
-		return fmt.Errorf("订单状态不允许退款")
-	}
-
-	// 3. 检查是否为外部订单
-	if order.Client != 2 {
-		logger.Error("非外部订单，不能使用此退款方法",
-			"order_id", order.ID,
-			"client", order.Client,
-			"out_trade_num", outTradeNum)
-		return fmt.Errorf("非外部订单")
-	}
-
-	// 开启事务
-	tx := s.orderRepo.(*repository.OrderRepositoryImpl).DB().Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			logger.Error("外部订单退款发生panic，事务回滚", "panic", r)
+	// 使用事务确保订单状态更新和退款操作的原子性
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. 根据外部交易号获取订单
+		order, err := s.GetOrderByOutTradeNum(ctx, outTradeNum)
+		if err != nil {
+			logger.Error("获取订单失败",
+				"error", err,
+				"out_trade_num", outTradeNum)
+			return fmt.Errorf("订单不存在")
 		}
-	}()
 
-	if tx.Error != nil {
-		logger.Error("开启事务失败", "error", tx.Error)
-		return fmt.Errorf("开启事务失败: %v", tx.Error)
-	}
+		// 使用行锁防止同一订单的并发处理
+		var lockedOrder model.Order
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", order.ID).First(&lockedOrder).Error; err != nil {
+			return err
+		}
 
-	// 4. 直接退款到用户余额（外部订单使用用户余额系统）
-	balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
-	if err := balanceService.Refund(ctx, order.CustomerID, order.Price, order.ID, fmt.Sprintf("外部订单退款: %s", reason), "system"); err != nil {
-		tx.Rollback()
-		logger.Error("退款到用户余额失败",
-			"error", err,
-			"order_id", order.ID,
-			"customer_id", order.CustomerID,
-			"amount", order.Price)
-		return fmt.Errorf("退款失败: %v", err)
-	}
+		// 2. 检查订单状态是否允许退款
+		if lockedOrder.Status == model.OrderStatusRefunded {
+			logger.Info("订单已退款，跳过处理",
+				"order_id", lockedOrder.ID,
+				"out_trade_num", outTradeNum)
+			return fmt.Errorf("订单已退款")
+		}
 
-	logger.Info("退款到用户余额成功",
-		"order_id", order.ID,
-		"customer_id", order.CustomerID,
-		"amount", order.Price)
+		// 只有成功、失败、待充值状态的订单可以退款
+		if lockedOrder.Status != model.OrderStatusSuccess &&
+			lockedOrder.Status != model.OrderStatusFailed &&
+			lockedOrder.Status != model.OrderStatusPendingRecharge {
+			logger.Error("订单状态不允许退款",
+				"order_id", lockedOrder.ID,
+				"status", lockedOrder.Status,
+				"out_trade_num", outTradeNum)
+			return fmt.Errorf("订单状态不允许退款")
+		}
 
-	// 5. 更新订单备注
-	if err := s.orderRepo.UpdateRemark(ctx, order.ID, fmt.Sprintf("外部订单退款: %s", reason)); err != nil {
-		tx.Rollback()
-		logger.Error("更新订单备注失败", "error", err, "order_id", order.ID)
-		return fmt.Errorf("更新订单备注失败: %v", err)
-	}
+		// 3. 检查是否为外部订单
+		if lockedOrder.Client != 2 {
+			logger.Error("非外部订单，不能使用此退款方法",
+				"order_id", lockedOrder.ID,
+				"client", lockedOrder.Client,
+				"out_trade_num", outTradeNum)
+			return fmt.Errorf("非外部订单")
+		}
 
-	// 6. 更新订单状态为已退款
-	if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusRefunded); err != nil {
-		tx.Rollback()
-		logger.Error("更新订单状态失败", "error", err, "order_id", order.ID)
-		return fmt.Errorf("更新订单状态失败: %v", err)
-	}
+		// 4. 直接退款到用户余额（外部订单使用用户余额系统，使用当前事务）
+		balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
+		if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, lockedOrder.ID, fmt.Sprintf("外部订单退款: %s", reason), "system"); err != nil {
+			logger.Error("退款到用户余额失败",
+				"error", err,
+				"order_id", lockedOrder.ID,
+				"customer_id", lockedOrder.CustomerID,
+				"amount", lockedOrder.Price)
+			return fmt.Errorf("退款失败: %v", err)
+		}
 
-	// 提交事务
-	if err := tx.Commit().Error; err != nil {
-		logger.Error("提交事务失败", "error", err)
-		return fmt.Errorf("提交事务失败: %v", err)
-	}
+		logger.Info("退款到用户余额成功",
+			"order_id", lockedOrder.ID,
+			"customer_id", lockedOrder.CustomerID,
+			"amount", lockedOrder.Price)
 
-	logger.Info("外部订单退款完成",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"out_trade_num", outTradeNum,
-		"amount", order.Price)
+		// 5. 更新订单备注
+		if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Update("remark", fmt.Sprintf("外部订单退款: %s", reason)).Error; err != nil {
+			logger.Error("更新订单备注失败", "error", err, "order_id", lockedOrder.ID)
+			return fmt.Errorf("更新订单备注失败: %v", err)
+		}
 
-	return nil
+		// 6. 更新订单状态为已退款
+		if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Update("status", model.OrderStatusRefunded).Error; err != nil {
+			logger.Error("更新订单状态失败", "error", err, "order_id", lockedOrder.ID)
+			return fmt.Errorf("更新订单状态失败: %v", err)
+		}
+
+		logger.Info("外部订单退款完成",
+			"order_id", lockedOrder.ID,
+			"order_number", lockedOrder.OrderNumber,
+			"out_trade_num", outTradeNum,
+			"amount", lockedOrder.Price)
+
+		return nil
+	})
 }
 
 // GetOrderByOutTradeNum 根据外部交易号获取订单
@@ -581,6 +592,12 @@ func (s *orderService) GetOrders(ctx context.Context, params map[string]interfac
 
 	// 否则是管理员查询所有订单
 	return s.orderRepo.GetOrders(ctx, params, page, pageSize)
+}
+
+// GetOrdersWithNotification 获取包含通知信息的订单列表
+func (s *orderService) GetOrdersWithNotification(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.OrderWithNotification, int64, error) {
+	// 调用仓储层的新方法
+	return s.orderRepo.GetOrdersWithNotification(ctx, params, page, pageSize)
 }
 
 // CreateExternalOrder 创建外部订单（事务性处理：先验证商品再扣款创建订单）

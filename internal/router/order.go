@@ -7,29 +7,47 @@ import (
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
 	"recharge-go/pkg/database"
+	"recharge-go/pkg/lock"
 	"recharge-go/pkg/queue"
+	"recharge-go/pkg/redis"
 
 	"github.com/gin-gonic/gin"
 )
 
 // RegisterOrderRoutes 注册订单相关路由
 func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
+	// 获取数据库连接
+	db := database.DB
+	
 	// 创建服务实例
-	orderRepo := repository.NewOrderRepository(database.DB)
-	platformRepo := repository.NewPlatformRepository(database.DB)
-	callbackLogRepo := repository.NewCallbackLogRepository(database.DB)
+	orderRepo := repository.NewOrderRepository(db)
+	platformRepo := repository.NewPlatformRepository(db)
+	callbackLogRepo := repository.NewCallbackLogRepository(db)
 
 	// 创建通知仓库
-	notificationRepo := notificationRepo.NewRepository(database.DB)
+	notificationRepo := notificationRepo.NewRepository(db)
 
 	// 创建队列实例
 	queueInstance := queue.NewRedisQueue()
 
 	// 初始化repository
-	platformAccountRepo := repository.NewPlatformAccountRepository(database.DB)
-	userRepo := repository.NewUserRepository(database.DB)
-	balanceLogRepo := repository.NewBalanceLogRepository(database.DB)
-	productRepo := repository.NewProductRepository(database.DB)
+	platformAccountRepo := repository.NewPlatformAccountRepository(db)
+	userRepo := repository.NewUserRepository(db)
+	balanceLogRepo := repository.NewBalanceLogRepository(db)
+	productRepo := repository.NewProductRepository(db)
+
+	// 创建余额服务
+	balanceService := service.NewBalanceService(balanceLogRepo, userRepo)
+
+	// 创建平台账户余额服务
+	platformAccountBalanceService := service.NewPlatformAccountBalanceService(db, platformAccountRepo, userRepo, balanceLogRepo)
+
+	// 创建分布式锁管理器
+	distributedLock := lock.NewRedisDistributedLock(redis.GetClient())
+	refundLockManager := lock.NewRefundLockManager(distributedLock)
+
+	// 创建统一退款服务
+	unifiedRefundService := service.NewUnifiedRefundService(db, userRepo, orderRepo, balanceLogRepo, refundLockManager, balanceService, platformAccountBalanceService)
 
 	// 创建订单服务
 	orderService := service.NewOrderService(
@@ -37,15 +55,11 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		balanceLogRepo,
 		userRepo,
 		nil, // 先传入 nil，后面再设置
+		unifiedRefundService,
+		refundLockManager,
+		notificationRepo,
+		queueInstance,
 		database.DB,
-	)
-
-	// 创建充值服务
-	balanceService := service.NewPlatformAccountBalanceService(
-		database.DB,
-		platformAccountRepo,
-		userRepo,
-		balanceLogRepo,
 	)
 
 	userBalanceService := service.NewBalanceService(balanceLogRepo, userRepo)
@@ -65,7 +79,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		productAPIRelationRepo,
 		productRepo,
 		platformAPIParamRepo,
-		balanceService,
+		platformAccountBalanceService,
 		userBalanceService,
 		notificationRepo,
 		queueInstance,
@@ -99,6 +113,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		order.POST("/batch-delete", orderController.BatchDeleteOrders)
 		order.POST("/batch-success", orderController.BatchProcessOrderSuccess)
 		order.POST("/batch-fail", orderController.BatchProcessOrderFail)
+		order.POST("/batch-notification", orderController.BatchSendNotification)
 
 		// 只允许管理员访问的订单清理接口
 		order.DELETE("/cleanup", middleware.CheckSuperAdmin(userService), orderController.CleanupOrders)

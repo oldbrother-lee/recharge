@@ -42,6 +42,7 @@ const selectedRowKeys = ref<string[]>([]);
 const showBatchDeleteModal = ref(false);
 const showBatchSuccessModal = ref(false);
 const showBatchFailModal = ref(false);
+const showBatchNotificationModal = ref(false);
 const batchFailRemark = ref('');
 const batchLoading = ref(false);
 
@@ -195,6 +196,33 @@ const handleBatchFail = () => {
   }
   batchFailRemark.value = '';
   showBatchFailModal.value = true;
+};
+
+const handleBatchNotification = () => {
+  if (selectedRowKeys.value.length === 0) {
+    message.warning('请选择要发送回调通知的订单');
+    return;
+  }
+  showBatchNotificationModal.value = true;
+};
+
+const confirmBatchNotification = async () => {
+  batchLoading.value = true;
+  try {
+    await request({
+      url: '/order/batch-notification',
+      method: 'POST',
+      data: { order_ids: selectedRowKeys.value.map(id => Number(id)) }
+    });
+    message.success(`成功推送 ${selectedRowKeys.value.length} 个订单到通知队列`);
+    selectedRowKeys.value = [];
+    showBatchNotificationModal.value = false;
+    fetchOrders();
+  } catch (error) {
+    message.error('批量发送回调通知失败');
+  } finally {
+    batchLoading.value = false;
+  }
 };
 
 const confirmBatchDelete = async () => {
@@ -455,6 +483,14 @@ function formatLocalDatetime(ts: number | null) {
             批量删除 ({{ selectedRowKeys.length }})
           </NButton>
           <NButton
+            v-if="selectedRowKeys.length > 0"
+            type="info"
+            size="small"
+            @click="handleBatchNotification"
+          >
+            批量发送回调 ({{ selectedRowKeys.length }})
+          </NButton>
+          <NButton
             v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
             type="error"
             @click="showCleanupModal = true"
@@ -556,6 +592,14 @@ function formatLocalDatetime(ts: number | null) {
       <template #action>
         <NButton @click="() => (showBatchFailModal = false)">取消</NButton>
         <NButton type="error" :loading="batchLoading" @click="confirmBatchFail">确定</NButton>
+      </template>
+    </NModal>
+    
+    <NModal v-model:show="showBatchNotificationModal" title="批量发送回调通知" preset="dialog">
+      <div>确认将选中的 {{ selectedRowKeys.length }} 个订单推送到通知队列进行回调通知吗？</div>
+      <template #action>
+        <NButton @click="() => (showBatchNotificationModal = false)">取消</NButton>
+        <NButton type="info" :loading="batchLoading" @click="confirmBatchNotification">确定发送</NButton>
       </template>
     </NModal>
   </NCard>

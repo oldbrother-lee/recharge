@@ -8,6 +8,7 @@ import (
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/utils"
+	"recharge-go/pkg/lock"
 	"recharge-go/pkg/logger"
 	"recharge-go/pkg/queue"
 	"strconv"
@@ -67,6 +68,8 @@ type OrderService interface {
 	GetOrderStatistics(ctx context.Context, customerID int64) (*OrderStatistics, error)
 	// GetOrdersByUserID 根据用户ID获取订单列表
 	GetOrdersByUserID(ctx context.Context, userID int64, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error)
+	// SendNotification 发送订单回调通知
+	SendNotification(ctx context.Context, orderID int64) error
 }
 
 type OrderStatistics struct {
@@ -86,6 +89,8 @@ type orderService struct {
 	balanceLogRepo   *repository.BalanceLogRepository
 	userRepo         *repository.UserRepository
 	productRepo      repository.ProductRepository
+	unifiedRefundService *UnifiedRefundService
+	lockManager      *lock.RefundLockManager
 	db               *gorm.DB
 }
 
@@ -95,13 +100,21 @@ func NewOrderService(
 	balanceLogRepo *repository.BalanceLogRepository,
 	userRepo *repository.UserRepository,
 	rechargeService RechargeService,
+	unifiedRefundService *UnifiedRefundService,
+	lockManager *lock.RefundLockManager,
+	notificationRepo notificationRepo.Repository,
+	queue queue.Queue,
 	db *gorm.DB,
 ) OrderService {
 	return &orderService{
 		orderRepo:        orderRepo,
 		rechargeService:  rechargeService,
+		notificationRepo: notificationRepo,
+		queue:            queue,
 		balanceLogRepo:   balanceLogRepo,
 		userRepo:         userRepo,
+		unifiedRefundService: unifiedRefundService,
+		lockManager:      lockManager,
 		db:               db,
 	}
 }
@@ -322,7 +335,25 @@ func (s *orderService) ProcessOrderSuccess(ctx context.Context, orderID int64) e
 
 // ProcessOrderFail 处理订单失败
 func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, remark string) error {
-	// 使用事务确保订单状态更新和退款操作的原子性
+	// 1. 先获取订单信息以确定用户ID
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("获取订单信息失败: %v", err)
+	}
+
+	// 2. 获取用户级别的分布式锁
+	lockValue, err := s.lockManager.LockUserRefund(ctx, order.CustomerID)
+	if err != nil {
+		logger.Error("获取用户退款锁失败", "user_id", order.CustomerID, "order_id", orderID, "error", err)
+		return fmt.Errorf("获取退款锁失败: %v", err)
+	}
+	defer func() {
+		if unlockErr := s.lockManager.UnlockUserRefund(ctx, order.CustomerID, lockValue); unlockErr != nil {
+			logger.Error("释放用户退款锁失败", "user_id", order.CustomerID, "order_id", orderID, "error", unlockErr)
+		}
+	}()
+
+	// 3. 在锁保护下执行事务
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 使用行锁防止同一订单的并发处理
 		var lockedOrder model.Order
@@ -339,41 +370,65 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 
 		// 如果订单已经支付，需要退还余额
 		if lockedOrder.Status == model.OrderStatusPendingRecharge || lockedOrder.Status == model.OrderStatusRecharging || lockedOrder.Status == model.OrderStatusProcessing {
-			// 检查是否为外部订单
+			// 使用统一退款服务处理退款
+			var refundReq *RefundRequest
 			if lockedOrder.Client == 2 {
 				// 外部订单直接退款到用户余额
-				logger.Info("外部订单失败，退款到用户余额",
+				logger.Info("外部订单失败，使用统一退款服务退款到用户余额",
 					"order_id", orderID,
 					"customer_id", lockedOrder.CustomerID,
 					"amount", lockedOrder.Price)
 
-				// 使用用户余额服务进行退款（使用当前事务）
-				balanceService := s.rechargeService.GetUserBalanceService()
-				if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, orderID, "外部订单失败退款", "system"); err != nil {
-					logger.Error("外部订单退款失败",
-						"error", err,
-						"order_id", orderID,
-						"customer_id", lockedOrder.CustomerID,
-						"amount", lockedOrder.Price)
-					return fmt.Errorf("外部订单退款失败: %v", err)
+				refundReq = &RefundRequest{
+					UserID:   lockedOrder.CustomerID,
+					OrderID:  orderID,
+					Amount:   lockedOrder.Price,
+					Remark:   "外部订单失败退款",
+					Operator: "system",
+					Type:     RefundTypeUser,
+					Tx:       tx,
 				}
-				logger.Info("外部订单退款成功",
+			} else {
+				// 平台订单退款
+				logger.Info("平台订单失败，使用统一退款服务退款",
 					"order_id", orderID,
 					"customer_id", lockedOrder.CustomerID,
+					"platform_account_id", lockedOrder.PlatformAccountID,
 					"amount", lockedOrder.Price)
-			} else {
-				// 平台订单使用原有的退款方法，传入事务
-				if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, tx, lockedOrder.PlatformAccountID, lockedOrder.Price, orderID, "订单失败退还余额"); err != nil {
-					logger.Error("退还余额失败",
-						"error", err,
-						"order_id", orderID,
-						"amount", lockedOrder.Price)
-					return fmt.Errorf("refund balance failed: %v", err)
+
+				refundReq = &RefundRequest{
+					UserID:    lockedOrder.CustomerID,
+					OrderID:   orderID,
+					Amount:    lockedOrder.Price,
+					Remark:    "订单失败退还余额",
+					Operator:  "system",
+					Type:      RefundTypePlatform,
+					AccountID: &lockedOrder.PlatformAccountID,
+					Tx:        tx,
 				}
-				logger.Info("退还余额成功",
-					"order_id", orderID,
-					"amount", lockedOrder.Price)
 			}
+
+			// 执行统一退款
+			refundResp, err := s.unifiedRefundService.ProcessRefund(ctx, refundReq)
+			if err != nil || !refundResp.Success {
+				logger.Error("统一退款服务退款失败",
+					"error", err,
+					"order_id", orderID,
+					"customer_id", lockedOrder.CustomerID,
+					"amount", lockedOrder.Price,
+					"response", refundResp)
+				if err != nil {
+					return fmt.Errorf("统一退款失败: %v", err)
+				}
+				return fmt.Errorf("统一退款失败: %s", refundResp.Message)
+			}
+
+			logger.Info("统一退款服务退款成功",
+				"order_id", orderID,
+				"customer_id", lockedOrder.CustomerID,
+				"amount", refundResp.RefundAmount,
+				"balance_after", refundResp.BalanceAfter,
+				"already_refund", refundResp.AlreadyRefund)
 		}
 
 		// 更新备注
@@ -389,6 +444,36 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 		logger.Info("订单失败处理完成",
 			"order_id", orderID,
 			"status", model.OrderStatusFailed)
+
+		// 创建通知记录
+		notification := &notificationModel.NotificationRecord{
+			OrderID:          orderID,
+			PlatformCode:     lockedOrder.PlatformCode,
+			NotificationType: "order_status_changed",
+			Content:          fmt.Sprintf("订单失败: %s", remark),
+			Status:           1, // 待处理
+		}
+
+		// 保存通知记录到数据库
+		if err := s.notificationRepo.Create(ctx, notification); err != nil {
+			logger.Error("创建通知记录失败",
+				"error", err,
+				"order_id", orderID,
+				"platform_code", lockedOrder.PlatformCode,
+				"notification_type", notification.NotificationType)
+			return fmt.Errorf("create notification record failed: %v", err)
+		}
+
+		// 推送通知到队列（在事务外执行）
+		go func() {
+			logger.Info("准备推送订单失败通知到队列", "order_id", orderID, "remark", remark)
+			if err := s.queue.Push(context.Background(), "notification_queue", notification); err != nil {
+				logger.Error("推送订单失败通知到队列失败", "order_id", orderID, "error", err)
+			} else {
+				logger.Info("推送订单失败通知到队列成功", "order_id", orderID)
+			}
+		}()
+
 		return nil
 	})
 }
@@ -919,6 +1004,41 @@ func (s *orderService) GetOrderStatistics(ctx context.Context, customerID int64)
 		ProcessingCount: processingCount,
 		SuccessAmount:   successAmount,
 	}, nil
+}
+
+// SendNotification 发送订单回调通知
+func (s *orderService) SendNotification(ctx context.Context, orderID int64) error {
+	// 获取订单信息
+	order, err := s.GetOrderByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("获取订单失败: %w", err)
+	}
+
+	// 创建通知任务
+	notification := &notificationModel.NotificationRecord{
+		OrderID:          orderID,
+		PlatformCode:     "system",
+		NotificationType: "order_callback",
+		Content:          fmt.Sprintf("订单 %s 回调通知", order.OrderNumber),
+		Status:           1, // 待处理
+		RetryCount:       0,
+		NextRetryTime:    time.Now().Add(5 * time.Minute),
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+	}
+
+	// 保存通知记录
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		return fmt.Errorf("创建通知记录失败: %w", err)
+	}
+
+	// 推送到通知队列
+	if err := s.queue.Push(ctx, "notification_queue", notification); err != nil {
+		return fmt.Errorf("推送到通知队列失败: %w", err)
+	}
+
+	logger.Info("订单回调通知已推送到队列", "order_id", orderID, "order_number", order.OrderNumber)
+	return nil
 }
 
 // GetOrdersByUserID 根据用户ID获取订单列表

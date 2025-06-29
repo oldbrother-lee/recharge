@@ -7,10 +7,12 @@ import (
 	"os/signal"
 	"recharge-go/internal/config"
 	"recharge-go/internal/repository"
+	"recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
 	"recharge-go/internal/service/recharge"
 	"recharge-go/internal/task"
 	"recharge-go/pkg/database"
+	"recharge-go/pkg/lock"
 	"recharge-go/pkg/logger"
 	"recharge-go/pkg/queue"
 	"recharge-go/pkg/redis"
@@ -44,7 +46,7 @@ func main() {
 	callbackLogRepo := repository.NewCallbackLogRepository(db)
 	retryRepo := repository.NewRetryRepository(db)
 	platformAPIParamRepo := repository.NewPlatformAPIParamRepository(db)
-	notificationRepo := repository.NewNotificationRepository(db)
+
 	platformAccountRepo := repository.NewPlatformAccountRepository(db)
 	userRepo := repository.NewUserRepository(db)
 	balanceLogRepo := repository.NewBalanceLogRepository(db)
@@ -73,8 +75,21 @@ func main() {
 	// 初始化平台API仓库
 	platformAPIRepo := repository.NewPlatformAPIRepository(db)
 
+	// 初始化通知仓库
+	notificationRepoInstance := notification.NewRepository(db)
+
+	// 初始化分布式锁管理器
+	distributedLock := lock.NewRedisDistributedLock(redis.GetClient())
+	refundLockManager := lock.NewRefundLockManager(distributedLock)
+
+	// 初始化平台账户余额服务
+	platformAccountBalanceService := service.NewPlatformAccountBalanceService(db, platformAccountRepo, userRepo, balanceLogRepo)
+
+	// 初始化统一退款服务
+	unifiedRefundService := service.NewUnifiedRefundService(db, userRepo, orderRepo, balanceLogRepo, refundLockManager, userBalanceService, platformAccountBalanceService)
+
 	// 初始化服务
-	orderService := service.NewOrderService(orderRepo, nil, notificationRepo, queue, balanceLogRepo, userRepo, productRepo)
+	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, nil, unifiedRefundService, refundLockManager, notificationRepoInstance, queue, db)
 	rechargeService := service.NewRechargeService(
 		db,
 		orderRepo,
@@ -87,7 +102,7 @@ func main() {
 		platformAPIParamRepo,
 		balanceService,
 		userBalanceService,
-		notificationRepo,
+		notificationRepoInstance,
 		queue,
 	)
 	retryService := service.NewRetryService(retryRepo, orderRepo, platformRepo, productRepo, productAPIRelationRepo, rechargeService, orderService)

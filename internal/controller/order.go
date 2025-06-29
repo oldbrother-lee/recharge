@@ -343,7 +343,7 @@ func (c *OrderController) GetOrders(ctx *gin.Context) {
 
 	// 获取查询参数
 	params := make(map[string]interface{})
-	queryParams := []string{"order_number", "mobile", "status", "client", "platform_code", "start_time", "end_time"}
+	queryParams := []string{"order_number", "mobile", "status", "client", "platform_code", "start_time", "end_time", "isp", "out_trade_num"}
 	for _, param := range queryParams {
 		if value := ctx.Query(param); value != "" {
 			params[param] = value
@@ -497,6 +497,48 @@ func (c *OrderController) BatchProcessOrderFail(ctx *gin.Context) {
 			failedCount++
 			errors = append(errors, "订单"+strconv.FormatInt(orderID, 10)+"设置失败失败: "+err.Error())
 			logger.Error("批量设置订单失败失败", "order_id", orderID, "error", err)
+		} else {
+			successCount++
+		}
+	}
+
+	result := gin.H{
+		"success_count": successCount,
+		"failed_count":  failedCount,
+		"total_count":   len(req.OrderIDs),
+	}
+
+	if len(errors) > 0 {
+		result["errors"] = errors
+	}
+
+	utils.Success(ctx, result)
+}
+
+// BatchSendNotification 批量发送回调通知
+func (c *OrderController) BatchSendNotification(ctx *gin.Context) {
+	var req struct {
+		OrderIDs []int64 `json:"order_ids" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if len(req.OrderIDs) == 0 {
+		utils.Error(ctx, http.StatusBadRequest, "订单ID列表不能为空")
+		return
+	}
+
+	successCount := 0
+	failedCount := 0
+	var errors []string
+
+	for _, orderID := range req.OrderIDs {
+		if err := c.orderService.SendNotification(ctx, orderID); err != nil {
+			failedCount++
+			errors = append(errors, "订单"+strconv.FormatInt(orderID, 10)+"发送通知失败: "+err.Error())
+			logger.Error("批量发送回调通知失败", "order_id", orderID, "error", err)
 		} else {
 			successCount++
 		}

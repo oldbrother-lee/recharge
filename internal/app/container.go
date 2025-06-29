@@ -13,6 +13,7 @@ import (
 	notificationService "recharge-go/internal/service/notification"
 	"recharge-go/internal/service/platform"
 	"recharge-go/pkg/database"
+	"recharge-go/pkg/lock"
 	loggerV2 "recharge-go/pkg/logger"
 	"recharge-go/pkg/metrics"
 	pkgMiddleware "recharge-go/pkg/middleware"
@@ -87,6 +88,7 @@ type Services struct {
 	StatisticsTask         *service.StatisticsTask // 添加StatisticsTask服务
 	Balance                *service.BalanceService // 添加Balance服务
 	PlatformAccountBalance *service.PlatformAccountBalanceService
+	UnifiedRefund          *service.UnifiedRefundService // 添加统一退款服务
 	Task                   *service.TaskService
 	TaskConfigNotifier     *service.TaskConfigNotifier       // 添加任务配置通知器
 	PhoneLocation          *service.PhoneLocationService     // 添加PhoneLocation服务
@@ -262,6 +264,21 @@ func (c *Container) initServices() error {
 		c.repositories.User,
 	)
 
+	// 创建分布式锁管理器
+	distributedLock := lock.NewRedisDistributedLock(c.redisClient)
+	refundLockManager := lock.NewRefundLockManager(distributedLock)
+
+	// 初始化统一退款服务
+	c.services.UnifiedRefund = service.NewUnifiedRefundService(
+		c.db,
+		c.repositories.User,
+		c.repositories.Order,
+		c.repositories.BalanceLog,
+		refundLockManager,
+		c.services.Balance,
+		c.services.PlatformAccountBalance,
+	)
+
 	// 创建其他服务
 	c.services.User = service.NewUserService(
 		c.repositories.User,
@@ -310,6 +327,10 @@ func (c *Container) initServices() error {
 		c.repositories.BalanceLog,
 		c.repositories.User,
 		c.services.Recharge,
+		c.services.UnifiedRefund,
+		refundLockManager,
+		c.repositories.Notification,
+		queueInstance,
 		c.db,
 	)
 

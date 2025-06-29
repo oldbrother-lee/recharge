@@ -108,9 +108,7 @@ build-all-linux:
 	make build-server-linux
 	make build-notification-linux
 	make build-recharge-linux
-	make build-worker-linux
 	make build-task-linux
-	make build-migrate-linux
 
 build-all-windows:
 	make build-server-windows

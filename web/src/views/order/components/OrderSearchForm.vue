@@ -37,6 +37,18 @@ const handleReset = () => {
       <n-form-item-gi span="24 s:12 m:6" label="手机号" path="mobile" class="pr-24px">
         <n-input v-model:value="searchForm.mobile" placeholder="请输入手机号" />
       </n-form-item-gi>
+      <n-form-item-gi span="24 s:12 m:6" label="运营商" path="isp" class="pr-24px">
+        <n-select
+          v-model:value="searchForm.isp"
+          :options="[
+            { label: '移动', value: 1 },
+            { label: '联通', value: 3 },
+            { label: '电信', value: 2 },
+          ]"
+          placeholder="请选择运营商"
+          clearable
+        />
+      </n-form-item-gi>
       <n-form-item-gi span="24 s:12 m:6" label="订单状态" path="status" class="pr-24px">
         <n-select
           v-model:value="searchForm.status"

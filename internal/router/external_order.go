@@ -6,7 +6,9 @@ import (
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
+	"recharge-go/pkg/lock"
 	"recharge-go/pkg/queue"
+	"recharge-go/pkg/redis"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -32,14 +34,14 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	apiKeyRepo := repository.NewExternalAPIKeyRepository(db)
 
 	// 创建余额服务
-	balanceService := service.NewPlatformAccountBalanceService(
+	platformAccountBalanceService := service.NewPlatformAccountBalanceService(
 		db,
 		platformAccountRepo,
 		userRepo,
 		balanceLogRepo,
 	)
 
-	userBalanceService := service.NewBalanceService(balanceLogRepo, userRepo)
+	balanceService := service.NewBalanceService(balanceLogRepo, userRepo)
 
 	// 先创建充值服务（因为订单服务需要它）
 	rechargeService := service.NewRechargeService(
@@ -52,10 +54,25 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		productAPIRelationRepo,
 		productRepo,
 		platformAPIParamRepo,
+		platformAccountBalanceService,
 		balanceService,
-		userBalanceService,
 		notificationRepo,
 		queueInstance,
+	)
+
+	// 创建分布式锁管理器
+	distributedLock := lock.NewRedisDistributedLock(redis.GetClient())
+	refundLockManager := lock.NewRefundLockManager(distributedLock)
+
+	// 创建统一退款服务
+	unifiedRefundService := service.NewUnifiedRefundService(
+		db,
+		userRepo,
+		orderRepo,
+		balanceLogRepo,
+		refundLockManager,
+		balanceService,
+		platformAccountBalanceService,
 	)
 
 	// 创建订单服务
@@ -64,6 +81,10 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		balanceLogRepo,
 		userRepo,
 		rechargeService,
+		unifiedRefundService,
+		refundLockManager,
+		notificationRepo,
+		queueInstance,
 		db,
 	)
 

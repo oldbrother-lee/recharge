@@ -220,6 +220,7 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 		if !ok || strValue == "" {
 			continue
 		}
+		fmt.Printf("key: %s, value: %s", key, strValue)
 		switch key {
 		case "client":
 			// 将字符串转换为整数
@@ -251,6 +252,10 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 			query = query.Where("create_time <= ?", strValue)
 		case "platform_code":
 			query = query.Where("platform_code = ?", strValue)
+		case "isp":
+			query = query.Where("isp = ?", strValue)
+		case "out_trade_no":
+			query = query.Where("out_trade_num = ?", strValue)
 		default:
 			// 对于其他字段，使用精确匹配
 			query = query.Where(key+" = ?", strValue)
@@ -372,12 +377,12 @@ func (r *OrderRepositoryImpl) FindProductByNameValueAndISP(nameValue int, isp in
 	var product model.Product
 	// ISP字段存储为字符串，直接进行字符串相等比较
 	ispStr := fmt.Sprintf("%d", isp)
-	
+
 	// 使用更灵活的正则表达式，支持中文前缀（如"中国移动"、"移动"等）
 	// 匹配：中文字符后跟数字，或者数字在字符串末尾
 	err := r.db.Where("name REGEXP ? AND isp = ? AND status = ?",
 		fmt.Sprintf("[\\u4e00-\\u9fff]+%d($|[^0-9])", nameValue), ispStr, status).First(&product).Error
-	
+
 	if err != nil {
 		return nil, err
 	}

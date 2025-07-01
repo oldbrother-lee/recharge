@@ -112,10 +112,8 @@ func TestSameOrderConcurrentRefund(t *testing.T) {
 			defer wg.Done()
 			
 			// 交替使用两个平台账号
-			accountID := account1.ID
 			accountName := "平台1"
 			if goroutineID%2 == 1 {
-				accountID = account2.ID
 				accountName = "平台2"
 			}
 			
@@ -124,7 +122,7 @@ func TestSameOrderConcurrentRefund(t *testing.T) {
 			db.Where("id = ?", user.ID).First(&beforeUser)
 			beforeBalance := beforeUser.Balance
 			
-			err := balanceService.RefundBalance(ctx, nil, accountID, refundAmount, orderID, fmt.Sprintf("测试退款-%s-%d", accountName, goroutineID))
+			err := balanceService.RefundBalance(ctx, user.ID, refundAmount, orderID, fmt.Sprintf("测试退款-%s-%d", accountName, goroutineID))
 			if err != nil {
 				t.Logf("Goroutine %d (%s) 退款失败: %v", goroutineID, accountName, err)
 			} else {

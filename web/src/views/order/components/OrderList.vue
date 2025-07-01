@@ -376,7 +376,7 @@ const columns: DataTableColumns<Order> = [
     key: 'operate',
     title: '操作',
     align: 'center',
-    width: 300,
+    width: 400,
     render(row) {
       return (
         <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
@@ -453,66 +453,87 @@ function formatLocalDatetime(ts: number | null) {
 </script>
 
 <template>
-  <NCard size="small" class="card-wrapper">
-    <template #header>
-      <div style="display: flex; align-items: center; gap: 12px;">
-        <span>订单列表</span>
-        <div style="display: flex; gap: 8px; margin-left: auto;">
-          <NButton
-            v-if="selectedRowKeys.length > 0"
-            type="success"
-            size="small"
-            @click="handleBatchSuccess"
-          >
-            批量设置成功 ({{ selectedRowKeys.length }})
-          </NButton>
-          <NButton
-            v-if="selectedRowKeys.length > 0"
-            type="error"
-            size="small"
-            @click="handleBatchFail"
-          >
-            批量设置失败 ({{ selectedRowKeys.length }})
-          </NButton>
-          <NButton
-            v-if="selectedRowKeys.length > 0"
-            type="warning"
-            size="small"
-            @click="handleBatchDelete"
-          >
-            批量删除 ({{ selectedRowKeys.length }})
-          </NButton>
-          <NButton
-            v-if="selectedRowKeys.length > 0"
-            type="info"
-            size="small"
-            @click="handleBatchNotification"
-          >
-            批量发送回调 ({{ selectedRowKeys.length }})
-          </NButton>
-          <NButton
-            v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
-            type="error"
-            @click="showCleanupModal = true"
-          >清理订单</NButton>
-        </div>
-      </div>
-    </template>
+  <div class="min-h-1200px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
+    <!-- 搜索表单 -->
     <OrderSearchForm @search="handleSearch" />
-    <NDataTable
-      :columns="columns"
-      :data="data"
-      :loading="loading"
-      :pagination="pagination"
-      remote
-      checkable
-      :row-key="row => String(row.id)"
-      :checked-row-keys="selectedRowKeys"
-      @update:checked-row-keys="selectedRowKeys = $event"
-      @update:page="handlePageChange"
-      @update:page-size="handlePageSizeChange"
-      class="sm:h-full"
-    />
+    
+    <!-- 数据表格 -->
+    <NCard size="small" class="sm:flex-1-hidden card-wrapper">
+      <template #header>
+        <div class="header-wrapper">
+          <span>订单列表</span>
+          <div class="button-group">
+            <NButton
+              v-if="selectedRowKeys.length > 0"
+              type="success"
+              size="small"
+              @click="handleBatchSuccess"
+              class="batch-btn"
+            >
+              <span class="btn-text-full">批量设置成功 ({{ selectedRowKeys.length }})</span>
+              <span class="btn-text-short">成功 ({{ selectedRowKeys.length }})</span>
+            </NButton>
+            <NButton
+              v-if="selectedRowKeys.length > 0"
+              type="error"
+              size="small"
+              @click="handleBatchFail"
+              class="batch-btn"
+            >
+              <span class="btn-text-full">批量设置失败 ({{ selectedRowKeys.length }})</span>
+              <span class="btn-text-short">失败 ({{ selectedRowKeys.length }})</span>
+            </NButton>
+            <NButton
+              v-if="selectedRowKeys.length > 0"
+              type="warning"
+              size="small"
+              @click="handleBatchDelete"
+              class="batch-btn"
+            >
+              <span class="btn-text-full">批量删除 ({{ selectedRowKeys.length }})</span>
+              <span class="btn-text-short">删除 ({{ selectedRowKeys.length }})</span>
+            </NButton>
+            <NButton
+              v-if="selectedRowKeys.length > 0"
+              type="info"
+              size="small"
+              @click="handleBatchNotification"
+              class="batch-btn"
+            >
+              <span class="btn-text-full">批量发送回调 ({{ selectedRowKeys.length }})</span>
+              <span class="btn-text-short">回调 ({{ selectedRowKeys.length }})</span>
+            </NButton>
+            <NButton
+              v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
+              type="error"
+              size="small"
+              @click="showCleanupModal = true"
+              class="batch-btn"
+            >
+              <span class="btn-text-full">清理订单</span>
+              <span class="btn-text-short">清理</span>
+            </NButton>
+          </div>
+        </div>
+      </template>
+      <NDataTable
+        :columns="columns"
+        :data="data"
+        :loading="loading"
+        :pagination="pagination"
+        :flex-height="true"
+        :scroll-x="1800"
+        remote
+        checkable
+        :row-key="row => String(row.id)"
+        :checked-row-keys="selectedRowKeys"
+        @update:checked-row-keys="selectedRowKeys = $event"
+        @update:page="handlePageChange"
+        @update:page-size="handlePageSizeChange"
+        class="h-full"
+        size="small"
+      />
+    </NCard>
     <NModal v-model:show="showFailModal" title="标记为失败" preset="dialog">
       <NForm>
         <NFormItem label="失败原因" required>
@@ -602,5 +623,208 @@ function formatLocalDatetime(ts: number | null) {
         <NButton type="info" :loading="batchLoading" @click="confirmBatchNotification">确定发送</NButton>
       </template>
     </NModal>
-  </NCard>
+  </div>
 </template>
+
+<style scoped>
+.min-h-500px {
+  min-height: 500px;
+}
+.flex-col-stretch {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.gap-16px {
+  gap: 16px;
+}
+.lt-sm\:overflow-auto {
+  @media (max-width: 640px) {
+    overflow: auto;
+  }
+}
+.overflow-hidden {
+  overflow: hidden;
+}
+.sm\:flex-1-hidden {
+  @media (min-width: 640px) {
+    flex: 1;
+    overflow: hidden;
+  }
+}
+.card-wrapper {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.h-full {
+  height: 100%;
+}
+.flex-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gap-8px {
+  gap: 8px;
+}
+
+/* 头部样式 */
+.header-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.button-group {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.batch-btn .btn-text-short {
+  display: none;
+}
+
+.batch-btn .btn-text-full {
+  display: inline;
+}
+
+/* 操作按钮样式 */
+.operation-buttons {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.op-btn .op-btn-text-short {
+  display: none;
+}
+
+.op-btn .op-btn-text-full {
+  display: inline;
+}
+
+/* 移动端样式 */
+@media (max-width: 640px) {
+  .header-wrapper {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .button-group {
+    margin-left: 0;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  
+  .batch-btn .btn-text-full {
+    display: none;
+  }
+  
+  .batch-btn .btn-text-short {
+    display: inline;
+  }
+  
+  .operation-buttons {
+    gap: 4px;
+  }
+  
+  .op-btn .op-btn-text-full {
+    display: none;
+  }
+  
+  .op-btn .op-btn-text-short {
+    display: inline;
+  }
+  
+  /* 表格移动端优化 */
+  .n-data-table {
+    font-size: 12px !important;
+  }
+  
+  .n-data-table .n-data-table-td,
+  .n-data-table .n-data-table-th {
+    white-space: nowrap !important;
+    padding: 6px 4px !important;
+    font-size: 12px !important;
+    line-height: 1.2 !important;
+  }
+  
+  .n-data-table .n-data-table-td {
+    min-height: 32px !important;
+  }
+  
+  /* 表格内容优化 */
+  .n-data-table .n-tag {
+    font-size: 11px !important;
+    padding: 2px 6px !important;
+    line-height: 1.2 !important;
+  }
+  
+  /* 分页器移动端优化 */
+  .n-pagination {
+    justify-content: center !important;
+  }
+  
+  .n-pagination .n-pagination-item {
+    min-width: 28px !important;
+    height: 28px !important;
+    font-size: 12px !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .button-group {
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+  
+  .batch-btn {
+    font-size: 11px !important;
+    padding: 3px 6px !important;
+    min-width: auto !important;
+  }
+  
+  .operation-buttons {
+    gap: 2px;
+    flex-direction: column;
+    align-items: center;
+  }
+  
+  .op-btn {
+    font-size: 10px !important;
+    padding: 2px 4px !important;
+    min-width: 36px !important;
+    line-height: 1.2 !important;
+  }
+  
+  /* 极小屏幕表格优化 */
+  .n-data-table .n-data-table-td,
+  .n-data-table .n-data-table-th {
+    padding: 4px 2px !important;
+    font-size: 11px !important;
+  }
+  
+  .n-data-table .n-tag {
+    font-size: 10px !important;
+    padding: 1px 4px !important;
+  }
+  
+  /* 分页器极小屏幕优化 */
+  .n-pagination .n-pagination-item {
+    min-width: 24px !important;
+    height: 24px !important;
+    font-size: 11px !important;
+  }
+  
+  .n-pagination .n-pagination-prefix,
+  .n-pagination .n-pagination-suffix {
+    font-size: 11px !important;
+  }
+}
+</style>

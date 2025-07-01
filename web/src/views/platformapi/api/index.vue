@@ -1,50 +1,52 @@
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
     <!-- 搜索表单 -->
-    <NCard>
+    <NCard :bordered="false" size="small" class="mb-16px">
       <NForm
         ref="searchFormRef"
         :model="searchForm"
-        inline
         label-placement="left"
-        label-width="auto"
-        class="flex flex-wrap gap-16px"
+        :label-width="80"
       >
-        <NFormItem label="接口名称" path="name">
-          <NInput v-model:value="searchForm.name" placeholder="请输入接口名称" />
-        </NFormItem>
-        <NFormItem label="平台" path="platform_id">
-          <NSelect
-            v-model:value="searchForm.platform_id"
-            :options="platformOptions"
-            placeholder="请选择平台"
-            clearable
-          />
-        </NFormItem>
-        <NFormItem label="状态" path="status">
-          <NSelect
-            v-model:value="searchForm.status"
-            :options="[
-              { label: '启用', value: 1 },
-              { label: '禁用', value: 0 }
-            ]"
-            placeholder="请选择状态"
-            clearable
-          />
-        </NFormItem>
-        <NFormItem>
-          <NSpace>
-            <NButton type="primary" @click="handleSearch(fetchAPIs)">
-              搜索
-            </NButton>
-            <NButton @click="handleReset">重置</NButton>
-          </NSpace>
-        </NFormItem>
+        <NCollapse :default-expanded-names="[]">
+          <NCollapseItem title="搜索条件" name="api-search">
+            <NGrid responsive="screen" item-responsive :x-gap="24">
+              <NFormItemGi span="24 s:12 m:6" label="接口名称" path="name">
+                <NInput v-model:value="searchForm.name" placeholder="请输入接口名称" />
+              </NFormItemGi>
+              <NFormItemGi span="24 s:12 m:6" label="平台" path="platform_id">
+                <NSelect
+                  v-model:value="searchForm.platform_id"
+                  :options="platformOptions"
+                  placeholder="请选择平台"
+                  clearable
+                />
+              </NFormItemGi>
+              <NFormItemGi span="24 s:12 m:6" label="状态" path="status">
+                <NSelect
+                  v-model:value="searchForm.status"
+                  :options="[
+                    { label: '启用', value: 1 },
+                    { label: '禁用', value: 0 }
+                  ]"
+                  placeholder="请选择状态"
+                  clearable
+                />
+              </NFormItemGi>
+              <NFormItemGi span="24" class="pr-24px">
+                <NSpace class="w-full" justify="end">
+                  <NButton @click="handleReset">重置</NButton>
+                  <NButton type="primary" ghost @click="handleSearch(fetchAPIs)">搜索</NButton>
+                </NSpace>
+              </NFormItemGi>
+            </NGrid>
+          </NCollapseItem>
+        </NCollapse>
       </NForm>
     </NCard>
 
     <!-- 数据表格 -->
-    <NCard :title="'接口管理'" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
+    <NCard :title="'接口管理'" :bordered="false" size="small" class="flex-1 card-wrapper">
       <template #header-extra>
         <NSpace>
           <NButton type="primary" @click="handleAdd()">
@@ -57,13 +59,14 @@
         :data="data"
         :loading="loading"
         :pagination="pagination"
-        :flex-height="!appStore.isMobile"
-        :scroll-x="962"
+        :flex-height="true"
+        :scroll-x="1200"
         remote
         :row-key="row => row.id"
         @update:page="onPageChange"
         @update:page-size="onPageSizeChange"
-        class="sm:h-full"
+        class="min-h-400px"
+        size="small"
       />
     </NCard>
 
@@ -182,7 +185,7 @@ import { useForm } from '@/hooks/useForm';
 import { useMessage } from 'naive-ui';
 import { request } from '@/service/request';
 import type { DataTableColumns } from 'naive-ui';
-import { NButton, NPopconfirm, NCard, NForm, NFormItem, NSpace, NInput, NSelect, NSwitch, NModal, NDataTable, NTag } from 'naive-ui';
+import { NButton, NPopconfirm, NCard, NForm, NFormItem, NFormItemGi, NSpace, NInput, NSelect, NSwitch, NModal, NDataTable, NTag, NCollapse, NCollapseItem, NGrid } from 'naive-ui';
 import { useAppStore } from '@/store/modules/app';
 import PlatformAPIParamForm from './components/PlatformAPIParamForm.vue';
 
@@ -290,34 +293,7 @@ const columns: DataTableColumns<PlatformAPI> = [
       );
     }
   },
-  {
-    key: 'operate',
-    title: '操作',
-    align: 'center',
-    width: 200,
-    render(row: PlatformAPI) {
-      return (
-        <div class="flex-center gap-8px">
-          <NButton type="primary" ghost size="small" onClick={() => handleEdit(row)}>
-            编辑
-          </NButton>
-          <NButton type="info" ghost size="small" onClick={() => showParamDialog(row)}>
-            套餐配置
-          </NButton>
-          <NPopconfirm onPositiveClick={() => handleDelete(row)}>
-            {{
-              default: () => '确认删除？',
-              trigger: () => (
-                <NButton type="error" ghost size="small">
-                  删除
-                </NButton>
-              )
-            }}
-          </NPopconfirm>
-        </div>
-      );
-    }
-  }
+  {    key: 'operate',    title: '操作',    align: 'center',    width: 200,    render(row: PlatformAPI) {      return (        <div class="operation-buttons flex-center gap-8px">          <NButton type="primary" ghost size="small" onClick={() => handleEdit(row)} class="op-btn">            <span class="btn-text-full">编辑</span>            <span class="btn-text-short">编辑</span>          </NButton>          <NButton type="info" ghost size="small" onClick={() => showParamDialog(row)} class="op-btn">            <span class="btn-text-full">套餐配置</span>            <span class="btn-text-short">配置</span>          </NButton>          <NPopconfirm onPositiveClick={() => handleDelete(row)}>            {{              default: () => '确认删除？',              trigger: () => (                <NButton type="error" ghost size="small" class="op-btn">                  <span class="btn-text-full">删除</span>                  <span class="btn-text-short">删</span>                </NButton>              )            }}          </NPopconfirm>        </div>      );    }  }
 ];
 
 // 参数表格列定义
@@ -365,31 +341,7 @@ const paramColumns: DataTableColumns<PlatformAPIParam> = [
     align: 'center',
     width: 120,
   },
-  {
-    key: 'operate',
-    title: '操作',
-    align: 'center',
-    width: 120,
-    render(row: PlatformAPIParam) {
-      return (
-        <div class="flex-center gap-8px">
-          <NButton type="primary" ghost size="small" onClick={() => paramFormRef.value?.edit(row)}>
-            编辑
-          </NButton>
-          <NPopconfirm onPositiveClick={() => handleDeleteParam(row)}>
-            {{
-              default: () => '确认删除？',
-              trigger: () => (
-                <NButton type="error" ghost size="small">
-                  删除
-                </NButton>
-              )
-            }}
-          </NPopconfirm>
-        </div>
-      );
-    }
-  }
+  {    key: 'operate',    title: '操作',    align: 'center',    width: 120,    render(row: PlatformAPIParam) {      return (        <div class="param-operation-buttons flex-center gap-8px">          <NButton type="primary" ghost size="small" onClick={() => paramFormRef.value?.edit(row)} class="param-op-btn">            <span class="btn-text-full">编辑</span>            <span class="btn-text-short">编辑</span>          </NButton>          <NPopconfirm onPositiveClick={() => handleDeleteParam(row)}>            {{              default: () => '确认删除？',              trigger: () => (                <NButton type="error" ghost size="small" class="param-op-btn">                  <span class="btn-text-full">删除</span>                  <span class="btn-text-short">删</span>                </NButton>              )            }}          </NPopconfirm>        </div>      );    }  }
 ];
 
 // 搜索表单
@@ -645,6 +597,15 @@ onMounted(() => {
 .gap-16px {
   gap: 16px;
 }
+.mb-16px {
+  margin-bottom: 16px;
+}
+.pr-24px {
+  padding-right: 24px;
+}
+.w-full {
+  width: 100%;
+}
 .lt-sm\:overflow-auto {
   @media (max-width: 640px) {
     overflow: auto;
@@ -671,6 +632,9 @@ onMounted(() => {
     height: 100%;
   }
 }
+.h-full {
+  height: 100%;
+}
 .flex-center {
   display: flex;
   align-items: center;
@@ -678,5 +642,81 @@ onMounted(() => {
 }
 .gap-8px {
   gap: 8px;
+}
+.min-h-400px {
+  min-height: 400px;
+}
+
+/* 移动端操作按钮优化 */
+.operation-buttons {
+  flex-wrap: wrap;
+}
+
+.op-btn {
+  min-width: auto;
+  padding: 0 8px;
+}
+
+.param-operation-buttons {
+  flex-wrap: wrap;
+}
+
+.param-op-btn {
+  min-width: auto;
+  padding: 0 8px;
+}
+
+.btn-text-short {
+  display: none;
+}
+
+.btn-text-full {
+  display: inline;
+}
+
+/* 640px以下屏幕 */
+@media (max-width: 640px) {
+  .operation-buttons {
+    flex-direction: column;
+    gap: 4px;
+    align-items: stretch;
+  }
+  
+  .param-operation-buttons {
+    flex-direction: column;
+    gap: 4px;
+    align-items: stretch;
+  }
+  
+  .op-btn,
+  .param-op-btn {
+    width: 100%;
+    justify-content: center;
+    font-size: 12px;
+    padding: 4px 8px;
+  }
+  
+  .btn-text-full {
+    display: none;
+  }
+  
+  .btn-text-short {
+    display: inline;
+  }
+}
+
+/* 480px以下屏幕 */
+@media (max-width: 480px) {
+  .operation-buttons,
+  .param-operation-buttons {
+    gap: 2px;
+  }
+  
+  .op-btn,
+  .param-op-btn {
+    font-size: 11px;
+    padding: 2px 6px;
+    min-height: 24px;
+  }
 }
 </style>

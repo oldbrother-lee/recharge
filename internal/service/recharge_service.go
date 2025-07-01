@@ -365,7 +365,7 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 			// TODO: 实现外部订单退款逻辑
 		} else {
 			// 平台订单使用原有的退款方法
-			err := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "订单失败退还余额")
+			err := s.balanceService.RefundBalance(ctx, order.CustomerID, order.Price, order.ID, "订单失败退还余额")
 			if err != nil {
 				tx.Rollback()
 				logger.Error("订单失败退款失败: %v", err)

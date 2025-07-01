@@ -513,8 +513,8 @@ func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, re
 			}
 			logger.Info("外部订单退款成功", "order_id", orderID, "amount", lockedOrder.Price)
 		} else {
-			// 平台订单退款到平台账户，传入事务
-			if err := s.rechargeService.GetBalanceService().RefundBalance(ctx, tx, lockedOrder.PlatformAccountID, lockedOrder.Price, orderID, fmt.Sprintf("订单退款: %s", remark)); err != nil {
+			// 平台订单退款到用户余额
+			if err := s.rechargeService.GetUserBalanceService().RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, orderID, fmt.Sprintf("订单退款: %s", remark), "system"); err != nil {
 				logger.Error("平台订单退款失败", "error", err, "order_id", orderID)
 				return fmt.Errorf("退款失败: %v", err)
 			}

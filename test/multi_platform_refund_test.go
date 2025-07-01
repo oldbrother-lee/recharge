@@ -132,14 +132,12 @@ func TestMultiPlatformRefund(t *testing.T) {
 			defer wg.Done()
 
 			// 交替使用两个平台账号
-			accountID := account1.ID
 			platformName := "平台1"
 			if index%2 == 1 {
-				accountID = account2.ID
 				platformName = "平台2"
 			}
 
-			err := service.RefundBalance(ctx, nil, accountID, amount, orderID, fmt.Sprintf("测试退款-%s-%d", platformName, index))
+			err := service.RefundBalance(ctx, user.ID, amount, orderID, fmt.Sprintf("测试退款-%s-%d", platformName, index))
 			mu.Lock()
 			if err != nil {
 				results = append(results, fmt.Sprintf("Goroutine %d (%s) 退款失败: %v", index, platformName, err))

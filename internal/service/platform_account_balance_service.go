@@ -153,164 +153,61 @@ func (s *PlatformAccountBalanceService) DeductBalance(ctx context.Context, accou
 	return nil
 }
 
-// RefundBalance 退还余额，支持外部事务
-func (s *PlatformAccountBalanceService) RefundBalance(ctx context.Context, tx *gorm.DB, accountID int64, amount float64, orderID int64, remark string) error {
-	var err error
-	logger.Info("[RefundBalance] 开始退还余额",
-		"account_id", accountID,
-		"amount", amount,
-		"order_id", orderID,
-		"remark", remark)
-
-	// 如果没有传入事务，则新建事务
-	newTx := false
-	if tx == nil {
-		tx = s.db.Begin()
-		if tx.Error != nil {
-			logger.Error("[RefundBalance] 开启事务失败",
-				"error", tx.Error,
-				"account_id", accountID)
-			return tx.Error
-		}
-		newTx = true
+// RefundBalance 退款到用户余额（使用原子性更新避免竞态条件）
+func (s *PlatformAccountBalanceService) RefundBalance(ctx context.Context, userID int64, amount float64, orderID int64, remark string) error {
+	if amount <= 0 {
+		return errors.New("退款金额必须大于0")
 	}
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			logger.Error("[RefundBalance] panic, 事务回滚", "panic", r)
-		}
-	}()
-
-	// 1. 获取订单信息，通过订单的customer_id作为退款账号
-	var order model.Order
-	err = tx.Where("id = ?", orderID).First(&order).Error
-	if err != nil {
-		if newTx {
-			tx.Rollback()
-		}
-		logger.Error("[RefundBalance] 获取订单信息失败",
-			"error", err,
-			"order_id", orderID)
-		return err
-	}
-	logger.Info("[RefundBalance] 获取订单信息成功", "order_id", orderID, "customer_id", order.CustomerID)
-
-	// 2. 使用订单的customer_id作为退款用户ID
-	userID := order.CustomerID
-	if userID == 0 {
-		if newTx {
-			tx.Rollback()
-		}
-		logger.Error("[RefundBalance] 订单未关联客户", "order_id", orderID)
-		return errors.New("订单未关联客户")
-	}
-
-	// 3. 获取平台账号信息（用于日志记录）
-	var account model.PlatformAccount
-	err = tx.Preload("Platform").Where("id = ?", accountID).First(&account).Error
-	if err != nil {
-		if newTx {
-			tx.Rollback()
-		}
-		logger.Error("[RefundBalance] 获取平台账号信息失败",
-			"error", err,
-			"account_id", accountID)
-		return err
-	}
-	logger.Info("[RefundBalance] 获取平台账号信息成功", "account", account)
-
-	// 4. 幂等性校验：基于用户ID和订单ID，防止同一订单通过不同平台账号重复退款
+	
+	// 基于用户ID和订单ID的幂等性校验，防止重复退款
 	var existCount int64
-	err = tx.Model(&model.BalanceLog{}).
-		Where("order_id = ? AND user_id = ? AND style = ?", orderID, userID, model.BalanceStyleRefund).
-		Count(&existCount).Error
-	if err != nil {
-		if newTx {
-			tx.Rollback()
-		}
-		logger.Error("[RefundBalance] 幂等性校验失败", "error", err, "order_id", orderID, "user_id", userID)
+	if err := s.db.Model(&model.BalanceLog{}).Where("user_id = ? AND order_id = ? AND style = ?", userID, orderID, 2).Count(&existCount).Error; err != nil {
 		return err
 	}
 	if existCount > 0 {
-		if newTx {
-			tx.Commit()
-		}
-		logger.Info("[RefundBalance] 已存在退款日志，跳过重复退款", "order_id", orderID, "user_id", userID, "account_id", accountID)
+		// 已存在退款记录，跳过重复退款
 		return nil
 	}
-
-	// 5. 使用行锁获取用户信息并进行退款操作，防止并发修改
-	var user model.User
-	if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
-		if newTx {
-			tx.Rollback()
+	
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 关键改进：使用原子性更新避免读取-计算-写入的竞态条件
+		// 先原子性更新余额
+		result := tx.Model(&model.User{}).
+			Where("id = ?", userID).
+			Update("balance", gorm.Expr("balance + ?", amount))
+		
+		if result.Error != nil {
+			return result.Error
 		}
-		logger.Error("[RefundBalance] 获取本地用户账号失败", "error", err, "user_id", userID)
-		return err
-	}
-	logger.Info("[RefundBalance] 获取本地用户账号成功", "user_id", userID, "balance_before", user.Balance)
-
-	// 6. 退还余额到本地用户账号
-	before := user.Balance
-	user.Balance += amount
-	if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error; err != nil {
-		if newTx {
-			tx.Rollback()
+		
+		if result.RowsAffected == 0 {
+			return errors.New("用户不存在")
 		}
-		logger.Error("[RefundBalance] 更新本地用户余额失败",
-			"error", err,
-			"user_id", userID,
-			"balance_before", before,
-			"balance_after", user.Balance)
-		return err
-	}
-	logger.Info("[RefundBalance] 更新本地用户余额成功", "user_id", userID, "balance_before", before, "balance_after", user.Balance)
-
-	// 7. 写用户余额变动日志
-	userLog := &model.BalanceLog{
-		UserID:            userID,
-		OrderID:           orderID,
-		PlatformAccountID: accountID,
-		PlatformID:        account.PlatformID,
-		PlatformCode:      account.Platform.Code,
-		PlatformName:      account.Platform.Name,
-		Amount:            amount,
-		Type:              model.BalanceTypeIncome,
-		Style:             model.BalanceStyleRefund,
-		Balance:           user.Balance,
-		BalanceBefore:     before,
-		Remark:            remark,
-		Operator:          "system",
-		CreatedAt:         time.Now(),
-	}
-	if err := tx.Create(userLog).Error; err != nil {
-		if newTx {
-			tx.Rollback()
-		}
-		logger.Error("[RefundBalance] 创建用户余额变动日志失败",
-			"error", err,
-			"user_id", userID)
-		return err
-	}
-	logger.Info("[RefundBalance] 创建用户余额变动日志成功", "user_id", userID, "log_id", userLog.ID)
-
-	// 提交事务（仅当本方法新建事务时）
-	if newTx {
-		if err := tx.Commit().Error; err != nil {
-			logger.Error("[RefundBalance] 提交事务失败",
-				"error", err,
-				"account_id", accountID)
+		
+		// 获取更新后的余额（在同一事务中确保数据一致性）
+		var user model.User
+		if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
 			return err
 		}
-	}
-
-	logger.Info("[RefundBalance] 退还余额成功",
-		"user_id", userID,
-		"order_id", orderID,
-		"amount", amount,
-		"balance_before", before,
-		"balance_after", user.Balance)
-	return nil
+		
+		afterBalance := user.Balance
+		beforeBalance := afterBalance - amount
+		
+		// 记录用户余额变动日志
+		log := &model.BalanceLog{
+			UserID:        userID,
+			Amount:        amount,
+			Type:          1, // 收入
+			Style:         2, // 退款
+			Balance:       afterBalance,
+			BalanceBefore: beforeBalance,
+			Remark:        remark,
+			Operator:      "system",
+			OrderID:       orderID,
+			CreatedAt:     time.Now(),
+		}
+		return tx.Create(log).Error
+	})
 }
 
 // GetBalanceLogs 获取余额变动记录
@@ -387,23 +284,36 @@ func (s *PlatformAccountBalanceService) AdjustBalance(ctx context.Context, accou
 		return errors.New("平台账号未绑定本地用户")
 	}
 	userID := *account.BindUserID
-	user, err := s.userRepo.GetByID(ctx, userID)
-	if err != nil {
-		tx.Rollback()
-		logger.Error("获取本地用户账号失败", "error", err, "user_id", userID)
-		return err
-	}
 
-	// 3. 调整余额
-	before := user.Balance
-	user.Balance += amount
-	if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error; err != nil {
+	// 3. 调整余额（使用原子性更新避免竞态条件）
+	result := tx.Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("balance", gorm.Expr("balance + ?", amount))
+	
+	if result.Error != nil {
 		tx.Rollback()
 		logger.Error("更新本地用户余额失败",
-			"error", err,
+			"error", result.Error,
 			"user_id", userID)
+		return result.Error
+	}
+	
+	if result.RowsAffected == 0 {
+		tx.Rollback()
+		logger.Error("用户不存在", "user_id", userID)
+		return errors.New("用户不存在")
+	}
+	
+	// 获取更新后的余额（在同一事务中确保数据一致性）
+	var updatedUser model.User
+	if err := tx.Where("id = ?", userID).First(&updatedUser).Error; err != nil {
+		tx.Rollback()
+		logger.Error("获取更新后用户信息失败", "error", err, "user_id", userID)
 		return err
 	}
+	
+	afterBalance := updatedUser.Balance
+	beforeBalance := afterBalance - amount
 
 	// 4. 写用户余额变动日志
 	userLog := &model.BalanceLog{
@@ -415,8 +325,8 @@ func (s *PlatformAccountBalanceService) AdjustBalance(ctx context.Context, accou
 		Amount:            amount,
 		Type:              model.BalanceTypeIncome,
 		Style:             style,
-		Balance:           user.Balance,
-		BalanceBefore:     before,
+		Balance:           afterBalance,
+		BalanceBefore:     beforeBalance,
 		Remark:            remark,
 		Operator:          operator,
 		CreatedAt:         time.Now(),
@@ -440,8 +350,8 @@ func (s *PlatformAccountBalanceService) AdjustBalance(ctx context.Context, accou
 	logger.Info("手动调整余额成功",
 		"user_id", userID,
 		"amount", amount,
-		"balance_before", before,
-		"balance_after", user.Balance)
+		"balance_before", beforeBalance,
+		"balance_after", afterBalance)
 	return nil
 }
 

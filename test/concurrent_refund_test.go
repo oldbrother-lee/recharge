@@ -132,7 +132,7 @@ func TestConcurrentRefundBalance(t *testing.T) {
 		go func(goroutineID int) {
 			defer wg.Done()
 			// 使用相同的订单ID进行退款，测试幂等性
-			err := balanceService.RefundBalance(ctx, nil, accountID, refundAmount, orderID, fmt.Sprintf("并发退款测试-%d", goroutineID))
+			err := balanceService.RefundBalance(ctx, user.ID, refundAmount, orderID, fmt.Sprintf("并发退款测试-%d", goroutineID))
 			mu.Lock()
 			if err != nil {
 				failureCount++
@@ -303,7 +303,7 @@ func TestRefundWithoutRowLock(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		err := balanceService.RefundBalance(ctx, nil, accountID, deductAmount, orderID1, "订单201退款")
+		err := balanceService.RefundBalance(ctx, user.ID, deductAmount, orderID1, "订单201退款")
 		mu.Lock()
 		if err != nil {
 			refundResults = append(refundResults, fmt.Sprintf("订单201退款失败: %v", err))
@@ -317,7 +317,7 @@ func TestRefundWithoutRowLock(t *testing.T) {
 		defer wg.Done()
 		// 稍微延迟一下，模拟并发但不完全同时
 		time.Sleep(1 * time.Millisecond)
-		err := balanceService.RefundBalance(ctx, nil, accountID, deductAmount, orderID2, "订单202退款")
+		err := balanceService.RefundBalance(ctx, user.ID, deductAmount, orderID2, "订单202退款")
 		mu.Lock()
 		if err != nil {
 			refundResults = append(refundResults, fmt.Sprintf("订单202退款失败: %v", err))

@@ -98,7 +98,7 @@ func (s *BalanceService) Refund(ctx context.Context, userID int64, amount float6
 	})
 }
 
-// RefundWithTx 在指定事务中进行余额退款
+// RefundWithTx 在指定事务中进行余额退款（使用原子性更新避免竞态条件）
 func (s *BalanceService) RefundWithTx(ctx context.Context, tx *gorm.DB, userID int64, amount float64, orderID int64, remark, operator string) error {
 	if amount <= 0 {
 		return errors.New("退款金额必须大于0")
@@ -114,19 +114,28 @@ func (s *BalanceService) RefundWithTx(ctx context.Context, tx *gorm.DB, userID i
 		return nil
 	}
 	
-	// 使用FOR UPDATE行锁获取用户信息，防止并发问题
+	// 关键改进：使用原子性更新避免读取-计算-写入的竞态条件
+	// 先原子性更新余额
+	result := tx.Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("balance", gorm.Expr("balance + ?", amount))
+	
+	if result.Error != nil {
+		return result.Error
+	}
+	
+	if result.RowsAffected == 0 {
+		return errors.New("用户不存在")
+	}
+	
+	// 获取更新后的余额（在同一事务中确保数据一致性）
 	var user model.User
-	if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
+	if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
 		return err
 	}
 	
-	before := user.Balance
-	
-	// 更新余额
-	user.Balance += amount
-	if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error; err != nil {
-		return err
-	}
+	afterBalance := user.Balance
+	beforeBalance := afterBalance - amount
 	
 	// 写入流水
 	log := &model.BalanceLog{
@@ -134,8 +143,8 @@ func (s *BalanceService) RefundWithTx(ctx context.Context, tx *gorm.DB, userID i
 		Amount:        amount,
 		Type:          1, // 收入
 		Style:         2, // 退款
-		Balance:       user.Balance,
-		BalanceBefore: before,
+		Balance:       afterBalance,
+		BalanceBefore: beforeBalance,
 		Remark:        remark,
 		Operator:      operator,
 		OrderID:       orderID,

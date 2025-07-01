@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"recharge-go/internal/model"
 
 	"gorm.io/gorm"
@@ -38,34 +39,52 @@ func (r *BalanceLogRepository) ListLogs(ctx context.Context, userID int64, offse
 	return logs, total, err
 }
 
-// AddBalance 用户余额增加（带事务和行锁）
+// AddBalance 用户余额增加（使用原子性更新避免竞态条件）
 func (r *BalanceLogRepository) AddBalance(ctx context.Context, userID int64, amount float64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 使用FOR UPDATE行锁防止并发问题
-		var user model.User
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
-			return err
+		// 使用原子性更新避免读取-计算-写入的竞态条件
+		result := tx.Model(&model.User{}).
+			Where("id = ?", userID).
+			Update("balance", gorm.Expr("balance + ?", amount))
+		
+		if result.Error != nil {
+			return result.Error
 		}
-		// 更新余额
-		user.Balance += amount
-		return tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error
+		
+		if result.RowsAffected == 0 {
+			return errors.New("用户不存在")
+		}
+		
+		return nil
 	})
 }
 
-// SubBalance 用户余额扣减（带事务和行锁，校验余额充足）
+// SubBalance 用户余额扣减（使用原子性更新和余额校验避免竞态条件）
 func (r *BalanceLogRepository) SubBalance(ctx context.Context, userID int64, amount float64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 使用FOR UPDATE行锁防止并发问题
-		var user model.User
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
-			return err
+		// 使用原子性更新，同时在SQL层面校验余额充足
+		// 只有当余额充足时才会更新，避免读取-计算-写入的竞态条件
+		result := tx.Model(&model.User{}).
+			Where("id = ? AND balance >= ?", userID, amount).
+			Update("balance", gorm.Expr("balance - ?", amount))
+		
+		if result.Error != nil {
+			return result.Error
 		}
-		if user.Balance < amount {
-			return gorm.ErrInvalidTransaction // 余额不足
+		
+		if result.RowsAffected == 0 {
+			// 检查是用户不存在还是余额不足
+			var user model.User
+			if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return errors.New("用户不存在")
+				}
+				return err
+			}
+			return errors.New("余额不足")
 		}
-		// 更新余额
-		user.Balance -= amount
-		return tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error
+		
+		return nil
 	})
 }
 

@@ -33,12 +33,14 @@ notification:
   batch_size: 10
 
 task:
-  interval: 1 # 任务执行间隔（秒）
-  order_details_interval: 60 # 订单详情查询任务执行间隔（秒）
-  max_retries: 3 # 最大重试次数
-  retry_delay: 1 # 重试延迟（秒）
-  max_concurrent: 10 # 最大并发数
-  batch_size: 20 # 批量获取待充值订单数量
+  interval: 30
+  order_details_interval: 60
+  max_retries: 3
+  retry_delay: 5
+  max_concurrent: 10
+  batch_size: 100
+  suspend_threshold: 1000  # 处理中订单数量达到此值时暂停拉单
+  resume_threshold: 800    # 处理中订单数量降到此值时恢复拉单
 
 api:
   key: "" # API密钥

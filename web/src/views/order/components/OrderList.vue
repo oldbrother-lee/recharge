@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { ref, onMounted, watch } from 'vue';
+import { ref, onMounted, watch, nextTick } from 'vue';
 import OrderSearchForm from './OrderSearchForm.vue';
 import { request } from '@/service/request';
 import type { Order } from '@/typings/api';
@@ -436,6 +436,19 @@ const handlePageSizeChange = (size: number) => {
   fetchOrders();
 };
 
+const handleRowKeysUpdate = async (keys: string[]) => {
+  try {
+    selectedRowKeys.value = keys;
+    await nextTick();
+  } catch (error) {
+    console.warn('更新选中行时出现错误:', error);
+    // 如果出现错误，延迟更新
+    setTimeout(() => {
+      selectedRowKeys.value = keys;
+    }, 0);
+  }
+};
+
 watch(() => [props.platform, props.platform_code], () => {
   fetchOrders();
 });
@@ -464,44 +477,52 @@ function formatLocalDatetime(ts: number | null) {
           <span>订单列表</span>
           <div class="button-group">
             <NButton
-              v-if="selectedRowKeys.length > 0"
+              v-show="selectedRowKeys.length > 0"
               type="success"
               size="small"
               @click="handleBatchSuccess"
               class="batch-btn"
             >
-              <span class="btn-text-full">批量设置成功 ({{ selectedRowKeys.length }})</span>
-              <span class="btn-text-short">成功 ({{ selectedRowKeys.length }})</span>
+              <span class="btn-text">
+                <span class="btn-text-full">批量设置成功 ({{ selectedRowKeys.length }})</span>
+                <span class="btn-text-short">成功 ({{ selectedRowKeys.length }})</span>
+              </span>
             </NButton>
             <NButton
-              v-if="selectedRowKeys.length > 0"
+              v-show="selectedRowKeys.length > 0"
               type="error"
               size="small"
               @click="handleBatchFail"
               class="batch-btn"
             >
-              <span class="btn-text-full">批量设置失败 ({{ selectedRowKeys.length }})</span>
-              <span class="btn-text-short">失败 ({{ selectedRowKeys.length }})</span>
+              <span class="btn-text">
+                <span class="btn-text-full">批量设置失败 ({{ selectedRowKeys.length }})</span>
+                <span class="btn-text-short">失败 ({{ selectedRowKeys.length }})</span>
+              </span>
             </NButton>
             <NButton
-              v-if="selectedRowKeys.length > 0"
+              v-show="selectedRowKeys.length > 0"
               type="warning"
               size="small"
               @click="handleBatchDelete"
               class="batch-btn"
             >
-              <span class="btn-text-full">批量删除 ({{ selectedRowKeys.length }})</span>
-              <span class="btn-text-short">删除 ({{ selectedRowKeys.length }})</span>
+              <span class="btn-text">
+                <span class="btn-text-full">批量删除 ({{ selectedRowKeys.length }})</span>
+                <span class="btn-text-short">删除 ({{ selectedRowKeys.length }})</span>
+              </span>
             </NButton>
             <NButton
-              v-if="selectedRowKeys.length > 0"
+              v-show="selectedRowKeys.length > 0"
               type="info"
               size="small"
               @click="handleBatchNotification"
               class="batch-btn"
             >
-              <span class="btn-text-full">批量发送回调 ({{ selectedRowKeys.length }})</span>
-              <span class="btn-text-short">回调 ({{ selectedRowKeys.length }})</span>
+              <span class="btn-text">
+                <span class="btn-text-full">批量发送回调 ({{ selectedRowKeys.length }})</span>
+                <span class="btn-text-short">回调 ({{ selectedRowKeys.length }})</span>
+              </span>
             </NButton>
             <NButton
               v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
@@ -510,8 +531,10 @@ function formatLocalDatetime(ts: number | null) {
               @click="showCleanupModal = true"
               class="batch-btn"
             >
-              <span class="btn-text-full">清理订单</span>
-              <span class="btn-text-short">清理</span>
+              <span class="btn-text">
+                <span class="btn-text-full">清理订单</span>
+                <span class="btn-text-short">清理</span>
+              </span>
             </NButton>
           </div>
         </div>
@@ -527,7 +550,7 @@ function formatLocalDatetime(ts: number | null) {
         checkable
         :row-key="row => String(row.id)"
         :checked-row-keys="selectedRowKeys"
-        @update:checked-row-keys="selectedRowKeys = $event"
+        @update:checked-row-keys="handleRowKeysUpdate"
         @update:page="handlePageChange"
         @update:page-size="handlePageSizeChange"
         class="h-full"

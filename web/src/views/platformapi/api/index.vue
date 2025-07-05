@@ -293,7 +293,20 @@ const columns: DataTableColumns<PlatformAPI> = [
       );
     }
   },
-  {    key: 'operate',    title: '操作',    align: 'center',    width: 200,    render(row: PlatformAPI) {      return (        <div class="operation-buttons flex-center gap-8px">          <NButton type="primary" ghost size="small" onClick={() => handleEdit(row)} class="op-btn">            <span class="btn-text-full">编辑</span>            <span class="btn-text-short">编辑</span>          </NButton>          <NButton type="info" ghost size="small" onClick={() => showParamDialog(row)} class="op-btn">            <span class="btn-text-full">套餐配置</span>            <span class="btn-text-short">配置</span>          </NButton>          <NPopconfirm onPositiveClick={() => handleDelete(row)}>            {{              default: () => '确认删除？',              trigger: () => (                <NButton type="error" ghost size="small" class="op-btn">                  <span class="btn-text-full">删除</span>                  <span class="btn-text-short">删</span>                </NButton>              )            }}          </NPopconfirm>        </div>      );    }  }
+  {    key: 'operate',    title: '操作',    align: 'center',    width: 200,    render(row: PlatformAPI) {      return (        <div class="operation-buttons">          <NButton type="primary" ghost size="small" onClick={() => handleEdit(row)} class="op-btn">
+            编辑
+          </NButton>          <NButton type="info" ghost size="small" onClick={() => showParamDialog(row)} class="op-btn">
+            套餐配置
+          </NButton>          <NPopconfirm onPositiveClick={() => handleDelete(row)}>
+            {{
+              default: () => '确认删除？',
+              trigger: () => (
+                <NButton type="error" ghost size="small" class="op-btn">
+                  删除
+                </NButton>
+              )
+            }}
+          </NPopconfirm>        </div>      );    }  }
 ];
 
 // 参数表格列定义
@@ -341,7 +354,18 @@ const paramColumns: DataTableColumns<PlatformAPIParam> = [
     align: 'center',
     width: 120,
   },
-  {    key: 'operate',    title: '操作',    align: 'center',    width: 120,    render(row: PlatformAPIParam) {      return (        <div class="param-operation-buttons flex-center gap-8px">          <NButton type="primary" ghost size="small" onClick={() => paramFormRef.value?.edit(row)} class="param-op-btn">            <span class="btn-text-full">编辑</span>            <span class="btn-text-short">编辑</span>          </NButton>          <NPopconfirm onPositiveClick={() => handleDeleteParam(row)}>            {{              default: () => '确认删除？',              trigger: () => (                <NButton type="error" ghost size="small" class="param-op-btn">                  <span class="btn-text-full">删除</span>                  <span class="btn-text-short">删</span>                </NButton>              )            }}          </NPopconfirm>        </div>      );    }  }
+  {    key: 'operate',    title: '操作',    align: 'center',    width: 120,    render(row: PlatformAPIParam) {      return (        <div class="param-operation-buttons">          <NButton type="primary" ghost size="small" onClick={() => paramFormRef.value?.edit(row)} class="param-op-btn">
+            编辑
+          </NButton>          <NPopconfirm onPositiveClick={() => handleDeleteParam(row)}>
+            {{
+              default: () => '确认删除？',
+              trigger: () => (
+                <NButton type="error" ghost size="small" class="param-op-btn">
+                  删除
+                </NButton>
+              )
+            }}
+          </NPopconfirm>        </div>      );    }  }
 ];
 
 // 搜索表单
@@ -649,7 +673,11 @@ onMounted(() => {
 
 /* 移动端操作按钮优化 */
 .operation-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
+  gap: 8px;
 }
 
 .op-btn {
@@ -658,7 +686,11 @@ onMounted(() => {
 }
 
 .param-operation-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
+  gap: 8px;
 }
 
 .param-op-btn {
@@ -666,57 +698,5 @@ onMounted(() => {
   padding: 0 8px;
 }
 
-.btn-text-short {
-  display: none;
-}
-
-.btn-text-full {
-  display: inline;
-}
-
-/* 640px以下屏幕 */
-@media (max-width: 640px) {
-  .operation-buttons {
-    flex-direction: column;
-    gap: 4px;
-    align-items: stretch;
-  }
-  
-  .param-operation-buttons {
-    flex-direction: column;
-    gap: 4px;
-    align-items: stretch;
-  }
-  
-  .op-btn,
-  .param-op-btn {
-    width: 100%;
-    justify-content: center;
-    font-size: 12px;
-    padding: 4px 8px;
-  }
-  
-  .btn-text-full {
-    display: none;
-  }
-  
-  .btn-text-short {
-    display: inline;
-  }
-}
-
-/* 480px以下屏幕 */
-@media (max-width: 480px) {
-  .operation-buttons,
-  .param-operation-buttons {
-    gap: 2px;
-  }
-  
-  .op-btn,
-  .param-op-btn {
-    font-size: 11px;
-    padding: 2px 6px;
-    min-height: 24px;
-  }
-}
+/* 统一按钮样式，不区分设备类型 */
 </style>

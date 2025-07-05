@@ -42,20 +42,22 @@ const swatches: string[] = [
           <NSwitch v-model:value="themeStore.recommendColor" />
         </SettingItem>
       </template>
-      <p>
-        <span class="pr-12px">{{ $t('theme.recommendColorDesc') }}</span>
-        <br />
-        <NButton
-          text
-          tag="a"
-          href="https://uicolors.app/create"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-gray"
-        >
-          https://uicolors.app/create
-        </NButton>
-      </p>
+      <div>
+        <p>
+          <span class="pr-12px">{{ $t('theme.recommendColorDesc') }}</span>
+          <br />
+          <NButton
+            text
+            tag="a"
+            href="https://uicolors.app/create"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-gray"
+          >
+            https://uicolors.app/create
+          </NButton>
+        </p>
+      </div>
     </NTooltip>
     <SettingItem v-for="(_, key) in themeStore.themeColors" :key="key" :label="$t(`theme.themeColor.${key}`)">
       <template v-if="key === 'info'" #suffix>

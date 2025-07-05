@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"recharge-go/configs"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service/platform"
@@ -20,7 +21,7 @@ type TaskService struct {
 	daichongOrderRepo   *repository.DaichongOrderRepository
 	platformSvc         *platform.Service
 	orderService        OrderService
-	config              *TaskConfig
+	config           *configs.TaskConfig
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	wg                  sync.WaitGroup
@@ -32,6 +33,10 @@ type TaskService struct {
 	taskMutex    sync.RWMutex           // 保护taskContexts的读写锁
 	// 配置监听器
 	configListener *TaskConfigListener
+	// 订单数量监控相关字段
+	isPullingSuspended bool        // 是否暂停拉单
+	suspendMutex       sync.RWMutex // 保护暂停状态的读写锁
+	orderThresholds    OrderThresholds // 订单数量阈值配置
 }
 
 // TaskContext 任务上下文信息
@@ -40,15 +45,12 @@ type TaskContext struct {
 	Cancel context.CancelFunc
 }
 
-type TaskConfig struct {
-	Interval             time.Duration // 任务执行间隔
-	OrderDetailsInterval time.Duration // 订单详情查询任务执行间隔
-	MaxRetries           int           // 最大重试次数
-	RetryDelay           time.Duration // 重试延迟
-	MaxConcurrent        int           // 最大并发数
-	APIKey               string        // API密钥
-	UserID               string        // 用户ID
-	BaseURL              string        // API基础URL
+
+
+// OrderThresholds 订单数量阈值配置
+type OrderThresholds struct {
+	SuspendThreshold int // 暂停拉单阈值（充值中+待充值订单数量）
+	ResumeThreshold  int // 恢复拉单阈值（处理中订单数量）
 }
 
 func NewTaskService(
@@ -58,7 +60,7 @@ func NewTaskService(
 	daichongOrderRepo *repository.DaichongOrderRepository,
 	platformSvc *platform.Service,
 	orderService OrderService,
-	config *TaskConfig,
+	config *configs.TaskConfig,
 	platformAccountRepo *repository.PlatformAccountRepository,
 ) *TaskService {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,6 +76,11 @@ func NewTaskService(
 		cancel:              cancel,
 		platformAccountRepo: platformAccountRepo,
 		taskContexts:        make(map[int64]*TaskContext),
+		isPullingSuspended:  false,
+		orderThresholds: OrderThresholds{
+			SuspendThreshold: config.SuspendThreshold,
+			ResumeThreshold:  config.ResumeThreshold,
+		},
 	}
 }
 
@@ -112,7 +119,7 @@ func (s *TaskService) StartTask() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		ticker := time.NewTicker(s.config.Interval)
+		ticker := time.NewTicker(time.Duration(s.config.Interval) * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -155,7 +162,7 @@ func (s *TaskService) StartOrderDetailsTask() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
-		ticker := time.NewTicker(s.config.OrderDetailsInterval)
+		ticker := time.NewTicker(time.Duration(s.config.OrderDetailsInterval) * time.Second)
 		defer ticker.Stop()
 
 		for {
@@ -567,6 +574,17 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 			continue
 		}
 
+		// 检查订单数量阈值，决定是否暂停拉单
+		if err := s.checkOrderThresholds(taskCtx); err != nil {
+			logger.Error(fmt.Sprintf("检查订单数量阈值失败: TaskID=%d, error=%v", taskID, err))
+		}
+
+		// 如果拉单被暂停，跳过本次查询
+		if !s.isPullingAllowed() {
+			logger.Debug(fmt.Sprintf("拉单已暂停，跳过查询: TaskID=%d", taskID))
+			continue
+		}
+
 		// 查询订单
 		// apiurl := "http://60.205.159.182:5000/"
 		order, err := s.platformSvc.QueryTask(token, platform.ApiURL, appkey, accountName)
@@ -606,7 +624,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 						channelID, productID, accountName, time.Since(reapplyStartTime), err))
 					// 重新申请token失败时等待后重试，而不是直接退出
 					logger.Info(fmt.Sprintf("重新申请token失败，等待%v后重试", queryInterval))
-					time.Sleep(queryInterval)
+					time.Sleep(time.Duration(queryInterval) * time.Second)
 					continue
 				}
 
@@ -621,7 +639,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 			}
 			// 其他错误（非匹配失败），记录错误并等待后重试，而不是直接退出任务
 			logger.Warn(fmt.Sprintf("查询订单遇到非匹配失败错误，等待%v后重试: error=%v", queryInterval, err))
-			time.Sleep(queryInterval)
+			time.Sleep(time.Duration(queryInterval) * time.Second)
 			continue
 		}
 
@@ -671,7 +689,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 		}
 
 		// 等待查询间隔
-		time.Sleep(queryInterval)
+		time.Sleep(time.Duration(queryInterval) * time.Second)
 	}
 }
 
@@ -894,4 +912,64 @@ func (s *TaskService) handleMatchedOrder(order *platform.PlatformOrder, cfg *mod
 	}
 
 	logger.Info(fmt.Sprintf("保存任务订单成功: OrderNumber=%s", order.OrderNumber))
+}
+
+// checkOrderThresholds 检查订单数量阈值并决定是否暂停或恢复拉单
+func (s *TaskService) checkOrderThresholds(ctx context.Context) error {
+	s.suspendMutex.RLock()
+	currentSuspended := s.isPullingSuspended
+	s.suspendMutex.RUnlock()
+
+	if currentSuspended {
+		// 当前已暂停，检查是否可以恢复
+		processingCount, err := s.orderRepo.CountProcessingOrders(ctx)
+		if err != nil {
+			logger.Error("统计处理中订单数量失败: %v", err)
+			return err
+		}
+
+		if processingCount < int64(s.orderThresholds.ResumeThreshold) {
+			s.resumePulling()
+			logger.Info(fmt.Sprintf("处理中订单数量(%d)低于恢复阈值(%d)，恢复拉单", processingCount, s.orderThresholds.ResumeThreshold))
+		}
+	} else {
+		// 当前未暂停，检查是否需要暂停
+		rechargeStatuses := []model.OrderStatus{
+			model.OrderStatusPendingRecharge, // 待充值 (2)
+			model.OrderStatusRecharging,      // 充值中 (3)
+		}
+		rechargeCount, err := s.orderRepo.CountByStatuses(ctx, rechargeStatuses)
+		if err != nil {
+			logger.Error("统计充值中和待充值订单数量失败: %v", err)
+			return err
+		}
+
+		if rechargeCount >= int64(s.orderThresholds.SuspendThreshold) {
+			s.suspendPulling()
+			logger.Warn(fmt.Sprintf("充值中和待充值订单数量(%d)达到暂停阈值(%d)，暂停拉单", rechargeCount, s.orderThresholds.SuspendThreshold))
+		}
+	}
+
+	return nil
+}
+
+// suspendPulling 暂停拉单
+func (s *TaskService) suspendPulling() {
+	s.suspendMutex.Lock()
+	defer s.suspendMutex.Unlock()
+	s.isPullingSuspended = true
+}
+
+// resumePulling 恢复拉单
+func (s *TaskService) resumePulling() {
+	s.suspendMutex.Lock()
+	defer s.suspendMutex.Unlock()
+	s.isPullingSuspended = false
+}
+
+// isPullingAllowed 检查是否允许拉单
+func (s *TaskService) isPullingAllowed() bool {
+	s.suspendMutex.RLock()
+	defer s.suspendMutex.RUnlock()
+	return !s.isPullingSuspended
 }

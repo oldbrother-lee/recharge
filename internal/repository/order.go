@@ -80,6 +80,10 @@ type OrderRepository interface {
 	GetByUserID(ctx context.Context, userID int64, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error)
 	// SoftDeleteByID 软删除订单
 	SoftDeleteByID(ctx context.Context, id int64) error
+	// CountByStatuses 统计指定状态的订单数量
+	CountByStatuses(ctx context.Context, statuses []model.OrderStatus) (int64, error)
+	// CountProcessingOrders 统计处理中的订单数量（充值中和处理中状态）
+	CountProcessingOrders(ctx context.Context) (int64, error)
 }
 
 // OrderRepositoryImpl 订单仓库实现
@@ -609,5 +613,24 @@ func (r *OrderRepositoryImpl) GetByUserID(ctx context.Context, userID int64, par
 
 // SoftDeleteByID 软删除订单
 func (r *OrderRepositoryImpl) SoftDeleteByID(ctx context.Context, id int64) error {
-	return r.db.Model(&model.Order{}).Where("id = ?", id).Update("is_del", 1).Error
+	return r.db.WithContext(ctx).Model(&model.Order{}).Where("id = ?", id).Update("is_del", 1).Error
+}
+
+// CountByStatuses 统计指定状态的订单数量
+func (r *OrderRepositoryImpl) CountByStatuses(ctx context.Context, statuses []model.OrderStatus) (int64, error) {
+	var count int64
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+	err := r.db.WithContext(ctx).Model(&model.Order{}).Where("status IN ? AND is_del = 0", statuses).Count(&count).Error
+	return count, err
+}
+
+// CountProcessingOrders 统计处理中的订单数量（充值中和处理中状态）
+func (r *OrderRepositoryImpl) CountProcessingOrders(ctx context.Context) (int64, error) {
+	processingStatuses := []model.OrderStatus{
+		model.OrderStatusRecharging,  // 充值中 (3)
+		model.OrderStatusProcessing,  // 处理中 (10)
+	}
+	return r.CountByStatuses(ctx, processingStatuses)
 }

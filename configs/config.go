@@ -56,6 +56,8 @@ type TaskConfig struct {
 	RetryDelay         int `mapstructure:"retry_delay"`
 	MaxConcurrent      int `mapstructure:"max_concurrent"`
 	BatchSize          int `mapstructure:"batch_size"`
+	SuspendThreshold   int `mapstructure:"suspend_threshold"`
+	ResumeThreshold    int `mapstructure:"resume_threshold"`
 }
 
 type APIConfig struct {

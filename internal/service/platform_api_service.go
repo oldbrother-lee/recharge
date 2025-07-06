@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 
@@ -38,6 +39,7 @@ func NewPlatformAPIService(repo repository.PlatformAPIRepository) PlatformAPISer
 func (s *platformAPIService) CreateAPI(ctx context.Context, api *model.PlatformAPI) error {
 	// 检查接口代码是否已存在
 	existing, err := s.repo.GetByCode(ctx, api.Code)
+	fmt.Println(api.Code, "#######")
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}

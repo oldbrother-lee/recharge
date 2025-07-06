@@ -28,3 +28,12 @@ export function getBalanceLogs(params: {
 }) {
   return request({ url: '/api/v1/balance/logs', method: 'get', params });
 }
+
+/** 查询平台余额 */
+export function queryPlatformBalance(platform: string, accountId: number) {
+  return request({ 
+    url: `/platform-balance/${platform}`, 
+    method: 'get', 
+    params: { account_id: accountId } 
+  });
+}

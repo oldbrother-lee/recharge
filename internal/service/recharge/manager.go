@@ -33,6 +33,7 @@ func NewManager(db *gorm.DB) *Manager {
 			"mishi":        reflect.TypeOf((*MishiPlatform)(nil)).Elem(),
 			"external_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 			"internal_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
+			"chongzhi":     reflect.TypeOf((*ChongzhiPlatform)(nil)).Elem(),
 		},
 	}
 }
@@ -80,6 +81,8 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
 	case "internal_api":
 		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
+	case "chongzhi":
+		platform = NewChongzhiPlatform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}
@@ -160,6 +163,8 @@ func (m *Manager) getPlatformTypeByName(name string) reflect.Type {
 		return reflect.TypeOf((*KekebangPlatform)(nil)).Elem() // 暂时使用可客帮平台的实现
 	case "mishi":
 		return reflect.TypeOf((*MishiPlatform)(nil)).Elem()
+	case "chongzhi":
+		return reflect.TypeOf((*ChongzhiPlatform)(nil)).Elem()
 	default:
 		return nil
 	}

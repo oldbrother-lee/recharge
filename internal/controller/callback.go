@@ -189,6 +189,54 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 	ctx.String(200, "success")
 }
 
+// HandleChongzhiCallback 处理充值平台回调
+func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
+	// 1. 获取userid
+	logger.Info("处理充值平台回调!!!")
+	userIDStr := ctx.Param("userid")
+	if userIDStr == "" {
+		logger.Error("处理充值平台回调 返回：400 缺少userid")
+		utils.Error(ctx, 400, "缺少userid")
+		return
+	}
+
+	// 2. 验证平台账号是否存在
+	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
+	if err != nil {
+		logger.Error("处理充值平台回调 返回：400 平台账号不存在", zap.Error(err))
+		utils.Error(ctx, 400, "平台账号不存在")
+		return
+	}
+
+	// 3. 读取原始请求体
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		logger.Error("处理充值平台回调 返回：400 读取请求体失败", zap.Error(err))
+		utils.Error(ctx, 400, "读取请求体失败")
+		return
+	}
+
+	// 打印原始回调数据用于调试
+	logger.Info("收到充值平台回调数据", 
+		zap.String("userid", userIDStr),
+		zap.String("raw_body", string(body)),
+		zap.String("content_type", ctx.GetHeader("Content-Type")),
+		zap.String("user_agent", ctx.GetHeader("User-Agent")),
+	)
+
+	// 4. 调用 service 层处理业务（chongzhi平台的签名验证在ParseCallbackData中处理）
+	err = c.rechargeService.HandleCallback(ctx, "chongzhi", body)
+	if err != nil {
+		logger.Error("处理充值平台回调 返回：500 处理回调失败", zap.Error(err))
+		utils.Error(ctx, 500, err.Error())
+		return
+	}
+
+	// 5. 返回成功（根据文档要求返回OK字符）
+	logger.Info("处理充值平台回调 返回：200 成功")
+	ctx.String(200, "OK")
+}
+
 // HandleDayuanrenCallback 处理大猿人平台回调
 func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 1. 获取userid

@@ -93,7 +93,7 @@
             v-model:value="formModel.platform_id"
             :options="platformOptions"
             placeholder="请选择平台"
-            @change="fetchAccounts(formModel.platform_id)"
+            @change="handlePlatformChange"
           />
         </NFormItem>
         <NFormItem label="账号ID" path="account_id">
@@ -192,6 +192,7 @@ import PlatformAPIParamForm from './components/PlatformAPIParamForm.vue';
 interface PlatformAPI {
   id: number;
   name: string;
+  code: string;
   platform_id: number;
   api_url: string;
   method: string;
@@ -220,7 +221,7 @@ const { visible, showModal, hideModal } = useModal();
 const { formRef, formModel, rules, handleSubmit, resetForm } = useForm();
 
 // 平台选项
-const platformOptions = ref<{ label: string; value: number }[]>([]);
+const platformOptions = ref<{ label: string; value: number; code: string }[]>([]);
 const accountOptions = ref<{ label: string; value: number }[]>([]);
 // 参数相关状态
 const apiId = ref(0);
@@ -389,7 +390,8 @@ const fetchPlatforms = async () => {
     if (res.data) {
       platformOptions.value = res.data.list.map((item: any) => ({
         label: item.name,
-        value: item.id
+        value: item.id,
+        code: item.code
       }));
     }
   } catch (error) {
@@ -418,6 +420,17 @@ const fetchAccounts = async (platformId: number) => {
   } catch (error) {
     message.error('获取账号列表失败');
   }
+};
+
+// 处理平台选择
+const handlePlatformChange = (platformId: number) => {
+  // 获取选中平台的code
+  const selectedPlatform = platformOptions.value.find(p => p.value === platformId);
+  if (selectedPlatform) {
+    formModel.value.code = selectedPlatform.code;
+  }
+  // 获取账号列表
+  fetchAccounts(platformId);
 };
 
 // 获取接口列表

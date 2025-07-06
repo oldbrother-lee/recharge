@@ -464,6 +464,7 @@
   import ProductPriceForm from './components/ProductPriceForm.vue';
   import { getChannelList } from '@/api/platform';
   import { getTaskConfigList, deleteTaskConfig, updateTaskConfig, createTaskConfig } from '@/api/taskConfig';
+  import { queryPlatformBalance } from '@/api/balance';
   import type { ApiResponse } from '@/types/api';
  
   
@@ -874,6 +875,7 @@
       render(row: PlatformAccount) {
         return (
           <div class="flex-center gap-8px">
+            <NButton type="primary" ghost size="small" onClick={() => handleQueryBalance(row)}>查询余额</NButton>
             <NButton type="primary" ghost size="small" onClick={() => handleViewOrderStatistics(row)}>查看订单</NButton>
             <NButton type="primary" ghost size="small" onClick={() => accountFormRef.value?.edit(row)}>
               编辑
@@ -1330,6 +1332,17 @@
   function handleBeeProvinceConfig(row: any) {
     currentBeeAccount.value = row
     showBeeProvinceModal.value = true
+  }
+
+  // 查询平台余额
+  async function handleQueryBalance(row: PlatformAccount) {
+    try {
+      const res = await queryPlatformBalance(currentPlatformCode.value, row.id);
+      const balance = res.data?.balance || '0';
+      message.success(`账号 ${row.account_name} 的余额为：${balance}`);
+    } catch (error: any) {
+      message.error(error?.message || '查询余额失败');
+    }
   }
 
   function handleViewOrderStatistics(row: any) {

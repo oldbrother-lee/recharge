@@ -106,6 +106,7 @@ func SetupRouterV2(
 				callback.POST("/kekebang/:userid", cc.HandleKekebangCallback)
 				callback.POST("/mishi/:userid", cc.HandleMishiCallback)
 				callback.POST("/dayuanren/:userid", cc.HandleDayuanrenCallback)
+				callback.POST("/chongzhi/:userid", cc.HandleChongzhiCallback)
 			}
 		}
 
@@ -204,7 +205,7 @@ func SetupRouterV2(
 			}
 
 			// 平台余额查询接口（仅管理员可访问）
-			RegisterPlatformBalanceRoutes(auth, nil)
+			RegisterPlatformBalanceRoutes(auth, userSvc)
 
 			// 授信相关接口（仅管理员可访问）
 			if cc := assertCreditController(creditController); cc != nil {

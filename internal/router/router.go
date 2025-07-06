@@ -73,6 +73,7 @@ func SetupRouter(
 			callback.POST("/kekebang/:userid", callbackController.HandleKekebangCallback)
 			callback.POST("/mishi/:userid", callbackController.HandleMishiCallback)
 			callback.POST("/dayuanren/:userid", callbackController.HandleDayuanrenCallback)
+			callback.POST("/chongzhi/:userid", callbackController.HandleChongzhiCallback)
 		}
 
 		// Protected routes

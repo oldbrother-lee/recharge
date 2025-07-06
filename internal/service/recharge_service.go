@@ -381,7 +381,7 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		logger.Error("更新订单状态失败: %v", err)
 		return fmt.Errorf("update order status failed: %v", err)
 	}
-	logger.Info(fmt.Sprintf("mishi回调更新订单状态成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
+	logger.Info(fmt.Sprintf("订单回调更新订单状态成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
 
 	// 创建通知记录
 	notification := &notificationModel.NotificationRecord{
@@ -413,7 +413,7 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		logger.Error("推送通知到队列失败", "order_id", order.ID, "error", err)
 		return fmt.Errorf("push notification to queue failed: %v", err)
 	}
-	logger.Info("秘史推送通知到队列成功", "order_id", order.ID)
+	logger.Info("订单推送通知到队列成功", "order_id", order.ID)
 
 	// 5. 记录回调日志
 	log := &model.CallbackLog{
@@ -594,7 +594,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			"order_id", order.ID,
 			"platform_account_id", order.PlatformAccountID,
 			"amount", order.Price)
-		
+
 		// 使用平台账号余额服务进行扣款（支持授信额度）
 		balanceService := s.GetBalanceService()
 		if err := balanceService.DeductBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单充值扣除"); err != nil {

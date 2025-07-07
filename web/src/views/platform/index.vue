@@ -457,7 +457,7 @@
   import { useMessage } from 'naive-ui';
   import { request } from '@/service/request';
   import type { DataTableColumns } from 'naive-ui';
-  import { NButton, NPopconfirm, NCard, NForm, NFormItem, NSpace, NInput, NSelect, NSwitch, NModal, NDataTable, NGrid, NFormItemGi, NTag, NGridItem, NStatistic } from 'naive-ui';
+  import { NButton, NPopconfirm, NCard, NForm, NFormItem, NSpace, NInput, NSelect, NSwitch, NModal, NDataTable, NGrid, NFormItemGi, NTag, NGridItem, NStatistic, NDropdown, NIcon } from 'naive-ui';
   import { useAppStore } from '@/store/modules/app';
   import PlatformAccountForm from './components/PlatformAccountForm.vue';
   import BeeProductManagement from './components/BeeProductManagement.vue';
@@ -871,62 +871,85 @@
       key: 'operate',
       title: '操作',
       align: 'center' as const,
-      width: 300,
+      width: 200,
       render(row: PlatformAccount) {
+        // 构建下拉菜单选项
+        const dropdownOptions = [];
+        
+        // 添加条件性按钮到下拉菜单
+        if (isXianzhuanxia.value) {
+          dropdownOptions.push({
+            label: '配置拉取订单',
+            key: 'taskConfig',
+            props: {
+              onClick: () => {
+                console.log('Platform code:', currentPlatformCode.value);
+                console.log('Is equal to xianzhuanxia:', isXianzhuanxia.value);
+                handleTaskConfig(row);
+              }
+            }
+          });
+        }
+        
+        if (isMf178.value) {
+          dropdownOptions.push(
+            {
+              label: '商品管理',
+              key: 'productManagement',
+              props: {
+                onClick: () => handleBeeProductManagement(row)
+              }
+            },
+            {
+              label: '省份配置',
+              key: 'provinceConfig',
+              props: {
+                onClick: () => handleBeeProvinceConfig(row)
+              }
+            }
+          );
+        }
+        
+        dropdownOptions.push(
+          {
+            label: row.bind_user_id ? '更换绑定' : '绑定账号',
+            key: 'bindUser',
+            props: {
+              onClick: () => handleBindUser(row)
+            }
+          },
+          {
+            label: '删除',
+            key: 'delete',
+            props: {
+              onClick: () => {
+                // 使用确认对话框
+                if (window.confirm('确认删除？')) {
+                  handleDeleteAccount(row);
+                }
+              }
+            }
+          }
+        );
+        
         return (
           <div class="flex-center gap-8px">
             <NButton type="primary" ghost size="small" onClick={() => handleQueryBalance(row)}>查询余额</NButton>
             <NButton type="primary" ghost size="small" onClick={() => handleViewOrderStatistics(row)}>查看订单</NButton>
-            <NButton type="primary" ghost size="small" onClick={() => accountFormRef.value?.edit(row)}>
-              编辑
-            </NButton>
-            {isXianzhuanxia.value && (
-              <NButton 
-                type="primary" 
-                ghost 
-                size="small" 
-                onClick={() => {
-                  console.log('Platform code:', currentPlatformCode.value);
-                  console.log('Is equal to xianzhuanxia:', isXianzhuanxia.value);
-                  handleTaskConfig(row);
+            <NButton type="primary" ghost size="small" onClick={() => accountFormRef.value?.edit(row)}>编辑</NButton>
+            {dropdownOptions.length > 0 && (
+              <NDropdown
+                trigger="click"
+                options={dropdownOptions}
+                onSelect={(key) => {
+                  // 选项的点击事件已在props中定义
                 }}
               >
-                配置拉取订单
-              </NButton>
-            )}
-            {isMf178.value && (
-              <>
-                <NButton 
-                  type="success" 
-                  ghost 
-                  size="small" 
-                  onClick={() => handleBeeProductManagement(row)}
-                >
-                  商品管理
+                <NButton type="default" ghost size="small">
+                  更多
                 </NButton>
-                <NButton 
-                  type="warning" 
-                  ghost 
-                  size="small" 
-                  onClick={() => handleBeeProvinceConfig(row)}
-                >
-                  省份配置
-                </NButton>
-              </>
+              </NDropdown>
             )}
-            <NButton type="info" ghost size="small" onClick={() => handleBindUser(row)}>
-              {row.bind_user_id ? '更换绑定' : '绑定账号'}
-            </NButton>
-            <NPopconfirm onPositiveClick={() => handleDeleteAccount(row)}>
-              {{
-                default: () => '确认删除？',
-                trigger: () => (
-                  <NButton type="error" ghost size="small">
-                    删除
-                  </NButton>
-                )
-              }}
-            </NPopconfirm>
           </div>
         );
       }

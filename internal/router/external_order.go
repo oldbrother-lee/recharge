@@ -75,6 +75,10 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		platformAccountBalanceService,
 	)
 
+	// 创建授信服务
+	creditLogRepo := repository.NewCreditLogRepository(db)
+	creditService := service.NewCreditService(userRepo, creditLogRepo)
+
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
@@ -86,6 +90,8 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		notificationRepo,
 		queueInstance,
 		db,
+		productRepo,
+		creditService,
 	)
 
 	// 创建认证中间件

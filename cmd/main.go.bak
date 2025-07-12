@@ -117,12 +117,23 @@ func main() {
 	// 创建队列实例
 	queueInstance = queue.NewRedisQueue()
 
+	// 创建授信服务
+	creditLogRepo := repository.NewCreditLogRepository(database.DB)
+	creditService := service.NewCreditService(userRepo, creditLogRepo)
+
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
-		nil, // 先传入 nil，后面再设置
+		balanceLogRepo,
+		userRepo,
+		nil, // rechargeService 先传入 nil，后面再设置
+		nil, // unifiedRefundService
+		nil, // refundLockManager
 		notificationRepo,
 		queueInstance,
+		database.DB,
+		productRepo,
+		creditService,
 	)
 
 	// 创建平台API参数服务

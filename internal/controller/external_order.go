@@ -7,6 +7,7 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
+	"recharge-go/internal/utils"
 	"recharge-go/pkg/logger"
 	"strconv"
 	"strings"
@@ -192,6 +193,14 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 	// 	return
 	// }
 
+	// 从商品名称中提取面值
+	denom, err := utils.ExtractNumberFromProductName(product.Product.Name)
+	if err != nil {
+		logger.Warn("Failed to extract denom from product name", "product_name", product.Product.Name, "error", err)
+		// 如果提取失败，使用商品价格作为面值
+		denom = productPrice
+	}
+
 	// 创建新订单
 	order := &model.Order{
 		Mobile:              req.Mobile,
@@ -199,7 +208,7 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 		OutTradeNum:         req.OutTradeNum,
 		TotalPrice:          productPrice, // 使用商品价格作为总价
 		Price:               productPrice, // 使用商品价格作为面值
-		Denom:               productPrice,
+		Denom:               denom,
 		IsDel:               0,
 		Param1:              req.Param1,
 		Param2:              req.Param2,

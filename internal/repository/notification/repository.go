@@ -13,6 +13,7 @@ type Repository interface {
 	Create(ctx context.Context, record *notification.NotificationRecord) error
 	UpdateStatus(ctx context.Context, id int64, status int) error
 	GetByID(ctx context.Context, id int64) (*notification.NotificationRecord, error)
+	GetByOrderID(ctx context.Context, orderID int64) (*notification.NotificationRecord, error)
 	GetPendingRecords(ctx context.Context, limit int) ([]*notification.NotificationRecord, error)
 	List(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*notification.NotificationRecord, int64, error)
 	Update(ctx context.Context, record *notification.NotificationRecord) error
@@ -52,6 +53,16 @@ func (r *RepositoryImpl) UpdateStatus(ctx context.Context, id int64, status int)
 func (r *RepositoryImpl) GetByID(ctx context.Context, id int64) (*notification.NotificationRecord, error) {
 	var record notification.NotificationRecord
 	err := r.db.WithContext(ctx).Where("id = ?", id).First(&record).Error
+	if err != nil {
+		return nil, err
+	}
+	return &record, nil
+}
+
+// GetByOrderID 根据订单ID获取最新的通知记录
+func (r *RepositoryImpl) GetByOrderID(ctx context.Context, orderID int64) (*notification.NotificationRecord, error) {
+	var record notification.NotificationRecord
+	err := r.db.WithContext(ctx).Where("order_id = ?", orderID).Order("created_at DESC").First(&record).Error
 	if err != nil {
 		return nil, err
 	}

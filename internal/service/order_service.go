@@ -92,6 +92,7 @@ type orderService struct {
 	unifiedRefundService *UnifiedRefundService
 	lockManager      *lock.RefundLockManager
 	db               *gorm.DB
+	creditService    *CreditService
 }
 
 // NewOrderService 创建订单服务实例
@@ -105,6 +106,8 @@ func NewOrderService(
 	notificationRepo notificationRepo.Repository,
 	queue queue.Queue,
 	db *gorm.DB,
+	productRepo repository.ProductRepository,
+	creditService *CreditService,
 ) OrderService {
 	return &orderService{
 		orderRepo:        orderRepo,
@@ -113,9 +116,11 @@ func NewOrderService(
 		queue:            queue,
 		balanceLogRepo:   balanceLogRepo,
 		userRepo:         userRepo,
+		productRepo:      productRepo,
 		unifiedRefundService: unifiedRefundService,
 		lockManager:      lockManager,
 		db:               db,
+		creditService:    creditService,
 	}
 }
 
@@ -286,13 +291,34 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		"new_status", status,
 	)
 
-	// 在订单状态更新后，添加日志记录通知推送的流程
-	logger.Info("准备推送通知到队列", "order_id", order.ID, "status", order.Status)
-	err = s.queue.Push(ctx, "notification_queue", notification)
-	if err != nil {
-		logger.Error("推送通知到队列失败", "order_id", order.ID, "error", err)
+	// 事务提交成功后，重新获取订单信息并推送通知到队列
+	updatedOrder, getErr := s.orderRepo.GetByID(ctx, id)
+	if getErr != nil {
+		logger.Error("获取更新后的订单信息失败", "order_id", id, "error", getErr)
+		return nil // 订单状态已更新成功，通知推送失败不影响主流程
+	}
+
+	// 重新创建通知记录，确保包含最新的订单信息
+	updatedNotification := &notificationModel.NotificationRecord{
+		OrderID:          id,
+		PlatformCode:     updatedOrder.PlatformCode,
+		NotificationType: "order_status_changed",
+		Content:          fmt.Sprintf("订单状态已更新为: %d", status),
+		Status:           1, // 待处理
+	}
+
+	// 保存新的通知记录到数据库
+	if createErr := s.notificationRepo.Create(ctx, updatedNotification); createErr != nil {
+		logger.Error("创建更新后的通知记录失败", "order_id", id, "error", createErr)
+		return nil // 订单状态已更新成功，通知推送失败不影响主流程
+	}
+
+	// 推送通知到队列
+	logger.Info("准备推送通知到队列", "order_id", id, "new_status", status)
+	if pushErr := s.queue.Push(ctx, "notification_queue", updatedNotification); pushErr != nil {
+		logger.Error("推送通知到队列失败", "order_id", id, "error", pushErr)
 	} else {
-		logger.Info("推送通知到队列成功", "order_id", order.ID)
+		logger.Info("推送通知到队列成功", "order_id", id, "status", status)
 	}
 	return nil
 }
@@ -335,11 +361,15 @@ func (s *orderService) ProcessOrderSuccess(ctx context.Context, orderID int64) e
 
 // ProcessOrderFail 处理订单失败
 func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, remark string) error {
+	logger.Info("开始处理订单失败", "order_id", orderID, "remark", remark)
+	
 	// 1. 先获取订单信息以确定用户ID
 	order, err := s.orderRepo.GetByID(ctx, orderID)
 	if err != nil {
+		logger.Error("获取订单信息失败", "order_id", orderID, "error", err)
 		return fmt.Errorf("获取订单信息失败: %v", err)
 	}
+	logger.Info("获取订单信息成功", "order_id", orderID, "customer_id", order.CustomerID, "status", order.Status)
 
 	// 2. 获取用户级别的分布式锁
 	lockValue, err := s.lockManager.LockUserRefund(ctx, order.CustomerID)
@@ -354,12 +384,16 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 	}()
 
 	// 3. 在锁保护下执行事务
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	logger.Info("开始执行事务", "order_id", orderID)
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		logger.Info("事务内部开始执行", "order_id", orderID)
 		// 使用行锁防止同一订单的并发处理
 		var lockedOrder model.Order
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", orderID).First(&lockedOrder).Error; err != nil {
+			logger.Error("获取订单行锁失败", "order_id", orderID, "error", err)
 			return err
 		}
+		logger.Info("获取订单行锁成功", "order_id", orderID, "locked_status", lockedOrder.Status)
 
 		// 检查订单状态，防止重复处理
 		if lockedOrder.Status == model.OrderStatusFailed {
@@ -455,6 +489,7 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 		}
 
 		// 保存通知记录到数据库
+		logger.Info("准备创建通知记录", "order_id", orderID, "platform_code", lockedOrder.PlatformCode)
 		if err := s.notificationRepo.Create(ctx, notification); err != nil {
 			logger.Error("创建通知记录失败",
 				"error", err,
@@ -463,19 +498,36 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 				"notification_type", notification.NotificationType)
 			return fmt.Errorf("create notification record failed: %v", err)
 		}
+		logger.Info("创建通知记录成功", "order_id", orderID, "notification_id", notification.ID)
 
-		// 推送通知到队列（在事务外执行）
-		go func() {
+		logger.Info("事务内部执行完成", "order_id", orderID)
+		return nil
+	})
+	
+	logger.Info("事务执行结果", "order_id", orderID, "error", err)
+
+	// 事务提交成功后，异步推送通知到队列
+	if err == nil {
+		logger.Info("事务提交成功，开始推送通知到队列", "order_id", orderID)
+		// 重新获取已创建的通知记录
+		notification, getErr := s.notificationRepo.GetByOrderID(ctx, orderID)
+		if getErr != nil {
+			logger.Error("获取通知记录失败", "error", getErr, "order_id", orderID)
+		} else {
+			logger.Info("成功获取通知记录", "order_id", orderID, "notification_id", notification.ID)
+			// 推送通知到队列
 			logger.Info("准备推送订单失败通知到队列", "order_id", orderID, "remark", remark)
-			if err := s.queue.Push(context.Background(), "notification_queue", notification); err != nil {
-				logger.Error("推送订单失败通知到队列失败", "order_id", orderID, "error", err)
+			if pushErr := s.queue.Push(ctx, "notification_queue", notification); pushErr != nil {
+				logger.Error("推送订单失败通知到队列失败", "order_id", orderID, "error", pushErr)
 			} else {
 				logger.Info("推送订单失败通知到队列成功", "order_id", orderID)
 			}
-		}()
+		}
+	} else {
+		logger.Error("事务执行失败，跳过推送通知", "order_id", orderID, "error", err)
+	}
 
-		return nil
-	})
+	return err
 }
 
 // ProcessOrderRefund 处理订单退款
@@ -730,23 +782,23 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 		return fmt.Errorf("开启事务失败: %v", tx.Error)
 	}
 
-	// 2. 从用户余额扣款（使用商品表的价格）
-	logger.Info("开始扣除用户余额",
+	// 2. 智能扣款（优先使用余额，不足时使用授信额度）
+	logger.Info("开始智能扣款",
 		"user_id", userID,
 		"amount", actualPrice)
 
-	// 创建余额服务实例
-	balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
-	if err := balanceService.Deduct(ctx, userID, actualPrice, model.BalanceStyleOrderDeduct, "外部订单预扣款", "system"); err != nil {
+	// 创建带授信功能的余额服务实例
+	balanceService := NewBalanceServiceWithCredit(s.balanceLogRepo, s.userRepo, s.creditService)
+	if err := balanceService.SmartDeduct(ctx, userID, actualPrice, model.BalanceStyleOrderDeduct, "外部订单智能扣款", "system"); err != nil {
 		tx.Rollback()
-		logger.Error("扣除用户余额失败",
+		logger.Error("智能扣款失败",
 			"error", err,
 			"user_id", userID,
 			"amount", actualPrice)
-		return fmt.Errorf("余额不足: %v", err)
+		return fmt.Errorf("余额和授信额度均不足: %v", err)
 	}
 
-	logger.Info("扣除用户余额成功",
+	logger.Info("智能扣款成功",
 		"user_id", userID,
 		"amount", actualPrice)
 

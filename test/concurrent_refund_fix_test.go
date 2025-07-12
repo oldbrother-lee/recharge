@@ -138,7 +138,11 @@ func TestConcurrentOrderFailRefund(t *testing.T) {
 	// 创建模拟的队列
 	queueInstance := &MockQueue{}
 
-	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, rechargeService, unifiedRefundService, refundLockManager, notificationRepo, queueInstance, db)
+	// 创建授信服务
+	creditLogRepo := repository.NewCreditLogRepository(db)
+	creditService := service.NewCreditService(userRepo, creditLogRepo)
+
+	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, rechargeService, unifiedRefundService, refundLockManager, notificationRepo, queueInstance, db, nil, creditService)
 
 	// 5. 并发执行订单失败处理
 	var wg sync.WaitGroup

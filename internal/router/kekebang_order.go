@@ -48,6 +48,10 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 	// 创建统一退款服务
 	unifiedRefundService := service.NewUnifiedRefundService(db, userRepo, orderRepo, balanceLogRepo, refundLockManager, balanceService, platformAccountBalanceService)
 
+	// 创建授信服务
+	creditLogRepo := repository.NewCreditLogRepository(db)
+	creditService := service.NewCreditService(userRepo, creditLogRepo)
+
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
@@ -59,6 +63,8 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 		notificationRepo,
 		queueInstance,
 		database.DB,
+		productRepo,
+		creditService,
 	)
 
 	// 初始化充值服务需要的额外仓库

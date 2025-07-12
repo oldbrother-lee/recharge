@@ -602,19 +602,41 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 				"error", err,
 				"platform_account_id", order.PlatformAccountID,
 				"amount", order.Price)
-			// 将订单状态设置为失败，并写入备注
-			_ = s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed)
-			_ = s.orderRepo.UpdateRemark(ctx, order.ID, "平台账号余额和授信额度均不足，订单失败")
-			// 推送订单失败通知
-			notification := &notificationModel.NotificationRecord{
-				OrderID:          order.ID,
-				PlatformCode:     order.PlatformCode,
-				NotificationType: "order_status_changed",
-				Content:          "订单失败：平台账号余额和授信额度均不足",
-				Status:           1, // 待处理
+			
+			// 使用事务处理订单状态更新
+			txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				// 将订单状态设置为失败，并写入备注
+				if err := tx.Model(&model.Order{}).Where("id = ?", order.ID).Update("status", model.OrderStatusFailed).Error; err != nil {
+					return err
+				}
+				if err := tx.Model(&model.Order{}).Where("id = ?", order.ID).Update("remark", "平台账号余额和授信额度均不足，订单失败").Error; err != nil {
+					return err
+				}
+				return nil
+			})
+			
+			if txErr != nil {
+				logger.Error("更新订单状态失败", "error", txErr, "order_id", order.ID)
+			} else {
+				// 事务提交成功后，创建并推送通知
+				notification := &notificationModel.NotificationRecord{
+					OrderID:          order.ID,
+					PlatformCode:     order.PlatformCode,
+					NotificationType: "order_status_changed",
+					Content:          "订单失败：平台账号余额和授信额度均不足",
+					Status:           1, // 待处理
+				}
+				if createErr := s.notificationRepo.Create(ctx, notification); createErr != nil {
+					logger.Error("创建通知记录失败", "error", createErr, "order_id", order.ID)
+				} else {
+					if pushErr := s.queue.Push(ctx, "notification_queue", notification); pushErr != nil {
+						logger.Error("推送通知到队列失败", "error", pushErr, "order_id", order.ID)
+					} else {
+						logger.Info("推送扣款失败通知到队列成功", "order_id", order.ID)
+					}
+				}
 			}
-			_ = s.notificationRepo.Create(ctx, notification)
-			_ = s.queue.Push(ctx, "notification_queue", notification)
+			
 			return fmt.Errorf("deduct platform account balance failed: %v", err)
 		}
 		logger.Info("【扣除平台账号余额成功】",

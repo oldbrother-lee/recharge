@@ -88,8 +88,12 @@ func main() {
 	// 初始化统一退款服务
 	unifiedRefundService := service.NewUnifiedRefundService(db, userRepo, orderRepo, balanceLogRepo, refundLockManager, userBalanceService, platformAccountBalanceService)
 
+	// 初始化授信服务
+	creditLogRepo := repository.NewCreditLogRepository(db)
+	creditService := service.NewCreditService(userRepo, creditLogRepo)
+
 	// 初始化服务
-	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, nil, unifiedRefundService, refundLockManager, notificationRepoInstance, queue, db)
+	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, nil, unifiedRefundService, refundLockManager, notificationRepoInstance, queue, db, productRepo, creditService)
 	rechargeService := service.NewRechargeService(
 		db,
 		orderRepo,

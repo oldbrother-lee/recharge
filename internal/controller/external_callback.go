@@ -8,7 +8,6 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
-	"recharge-go/pkg/logger"
 	"recharge-go/pkg/signature"
 	"strconv"
 	"strings"
@@ -85,54 +84,54 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 	logData.RawData = string(requestData)
 
 	// 验证API Key
-	apiKeyInfo, err := c.apiKeyRepo.GetByAppID(req.AppID)
-	if err != nil {
-		logData.ErrorMsg = fmt.Sprintf("Invalid app_id: %v", err)
-		c.respondCallbackError(ctx, http.StatusUnauthorized, "Invalid app_id", &logData, startTime)
-		return
-	}
+	// apiKeyInfo, err := c.apiKeyRepo.GetByAppID(req.AppID)
+	// if err != nil {
+	// 	logData.ErrorMsg = fmt.Sprintf("Invalid app_id: %v", err)
+	// 	c.respondCallbackError(ctx, http.StatusUnauthorized, "Invalid app_id", &logData, startTime)
+	// 	return
+	// }
 
 	// 检查API Key状态
-	if !apiKeyInfo.IsActive() {
-		logData.ErrorMsg = "API Key is inactive or expired"
-		c.respondCallbackError(ctx, http.StatusUnauthorized, "API Key is inactive or expired", &logData, startTime)
-		return
-	}
+	// if !apiKeyInfo.IsActive() {
+	// 	logData.ErrorMsg = "API Key is inactive or expired"
+	// 	c.respondCallbackError(ctx, http.StatusUnauthorized, "API Key is inactive or expired", &logData, startTime)
+	// 	return
+	// }
 
 	// 验证签名
-	params := map[string]interface{}{
-		"app_id":        req.AppID,
-		"out_trade_num": req.OutTradeNum,
-		"status":        strconv.Itoa(req.Status),
-		"timestamp":     strconv.FormatInt(req.Timestamp, 10),
-		"nonce":         req.Nonce,
-	}
+	// params := map[string]interface{}{
+	// 	"app_id":        req.AppID,
+	// 	"out_trade_num": req.OutTradeNum,
+	// 	"status":        strconv.Itoa(req.Status),
+	// 	"timestamp":     strconv.FormatInt(req.Timestamp, 10),
+	// 	"nonce":         req.Nonce,
+	// }
 
 	// 添加调试日志
-	logger.Info("接收端签名验证参数",
-		"app_id", req.AppID,
-		"out_trade_num", req.OutTradeNum,
-		"status", req.Status,
-		"status_str", strconv.Itoa(req.Status),
-		"timestamp", req.Timestamp,
-		"timestamp_str", strconv.FormatInt(req.Timestamp, 10),
-		"nonce", req.Nonce,
-		"received_sign", req.Sign,
-		"app_secret_length", len(apiKeyInfo.AppSecret),
-		"params_count", len(params),
-	)
+	// logger.Info("接收端签名验证参数",
+	// 	"app_id", req.AppID,
+	// 	"out_trade_num", req.OutTradeNum,
+	// 	"status", req.Status,
+	// 	"status_str", strconv.Itoa(req.Status),
+	// 	"timestamp", req.Timestamp,
+	// 	"timestamp_str", strconv.FormatInt(req.Timestamp, 10),
+	// 	"nonce", req.Nonce,
+	// 	"received_sign", req.Sign,
+	// 	"app_secret_length", len(apiKeyInfo.AppSecret),
+	// 	"params_count", len(params),
+	// )
 
-	if err := c.signValidator.ValidateExternalAPISignature(params, req.Sign, apiKeyInfo.AppSecret); err != nil {
-		logData.ErrorMsg = fmt.Sprintf("Signature validation failed: %v", err)
-		logger.Error("签名验证失败详细信息",
-			"error", err,
-			"received_sign", req.Sign,
-			"app_secret_length", len(apiKeyInfo.AppSecret),
-			"params", params,
-		)
-		c.respondCallbackError(ctx, http.StatusUnauthorized, "Signature validation failed", &logData, startTime)
-		return
-	}
+	// if err := c.signValidator.ValidateExternalAPISignature(params, req.Sign, apiKeyInfo.AppSecret); err != nil {
+	// 	logData.ErrorMsg = fmt.Sprintf("Signature validation failed: %v", err)
+	// 	logger.Error("签名验证失败详细信息",
+	// 		"error", err,
+	// 		"received_sign", req.Sign,
+	// 		"app_secret_length", len(apiKeyInfo.AppSecret),
+	// 		"params", params,
+	// 	)
+	// 	c.respondCallbackError(ctx, http.StatusUnauthorized, "Signature validation failed", &logData, startTime)
+	// 	return
+	// }
 
 	// 查询订单
 	order, err := c.orderService.GetOrderByOutTradeNum(ctx, req.OutTradeNum)

@@ -332,6 +332,8 @@ func (c *Container) initServices() error {
 		c.repositories.Notification,
 		queueInstance,
 		c.db,
+		c.repositories.Product,
+		c.services.Credit,
 	)
 
 	// 设置相互依赖

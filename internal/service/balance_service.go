@@ -13,9 +13,10 @@ import (
 // BalanceService 余额相关业务逻辑
 
 type BalanceService struct {
-	repo     *repository.BalanceLogRepository
-	userRepo *repository.UserRepository
-	db       *gorm.DB
+	repo         *repository.BalanceLogRepository
+	userRepo     *repository.UserRepository
+	db           *gorm.DB
+	creditService *CreditService
 }
 
 func NewBalanceService(repo *repository.BalanceLogRepository, userRepo *repository.UserRepository) *BalanceService {
@@ -23,6 +24,16 @@ func NewBalanceService(repo *repository.BalanceLogRepository, userRepo *reposito
 		repo:     repo,
 		userRepo: userRepo,
 		db:       repo.GetDB(), // 需要添加GetDB方法
+	}
+}
+
+// NewBalanceServiceWithCredit 创建带授信功能的余额服务
+func NewBalanceServiceWithCredit(repo *repository.BalanceLogRepository, userRepo *repository.UserRepository, creditService *CreditService) *BalanceService {
+	return &BalanceService{
+		repo:         repo,
+		userRepo:     userRepo,
+		db:           repo.GetDB(),
+		creditService: creditService,
 	}
 }
 
@@ -151,6 +162,108 @@ func (s *BalanceService) RefundWithTx(ctx context.Context, tx *gorm.DB, userID i
 		CreatedAt:     time.Now(),
 	}
 	return tx.Create(log).Error
+}
+
+// SmartDeduct 智能扣款（优先使用余额，不足时使用授信额度）
+func (s *BalanceService) SmartDeduct(ctx context.Context, userID int64, amount float64, style int, remark, operator string) error {
+	if amount <= 0 {
+		return errors.New("扣款金额必须大于0")
+	}
+
+	// 如果没有授信服务，直接使用普通扣款
+	if s.creditService == nil {
+		return s.Deduct(ctx, userID, amount, style, remark, operator)
+	}
+
+	// 获取用户信息
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+
+	// 计算总可用金额（余额 + 授信额度）
+	totalAvailable := user.Balance + user.Credit
+	if totalAvailable < amount {
+		return errors.New("余额和授信额度总和不足")
+	}
+
+	// 使用事务确保原子性
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 计算扣款策略
+		balanceDeduct := amount
+		creditDeduct := 0.0
+
+		if user.Balance < amount {
+			// 余额不足，需要使用授信
+			balanceDeduct = user.Balance
+			creditDeduct = amount - user.Balance
+		}
+
+		// 1. 扣除余额（如果有需要扣除的余额）
+		if balanceDeduct > 0 {
+			// 使用原子性更新扣除余额
+			result := tx.Model(&model.User{}).
+				Where("id = ? AND balance >= ?", userID, balanceDeduct).
+				Update("balance", gorm.Expr("balance - ?", balanceDeduct))
+
+			if result.Error != nil {
+				return result.Error
+			}
+
+			if result.RowsAffected == 0 {
+				return errors.New("余额不足")
+			}
+
+			// 创建余额扣款日志
+			balanceLog := &model.BalanceLog{
+				UserID:        userID,
+				Amount:        -balanceDeduct,
+				Type:          2,     // 支出
+				Style:         style, // 业务类型
+				Balance:       user.Balance - balanceDeduct,
+				BalanceBefore: user.Balance,
+				Remark:        remark + "(余额部分)",
+				Operator:      operator,
+				CreatedAt:     time.Now(),
+			}
+			if err := tx.Create(balanceLog).Error; err != nil {
+				return err
+			}
+		}
+
+		// 2. 扣除授信额度（如果需要）
+		if creditDeduct > 0 {
+			// 使用原子性更新扣除授信额度
+			result := tx.Model(&model.User{}).
+				Where("id = ? AND credit >= ?", userID, creditDeduct).
+				Update("credit", gorm.Expr("credit - ?", creditDeduct))
+
+			if result.Error != nil {
+				return result.Error
+			}
+
+			if result.RowsAffected == 0 {
+				return errors.New("授信额度不足")
+			}
+
+			// 创建授信使用日志
+			creditLog := &model.CreditLog{
+				UserID:       userID,
+				Amount:       creditDeduct,
+				Type:         model.CreditTypeUse,
+				CreditBefore: user.Credit,
+				CreditAfter:  user.Credit - creditDeduct,
+				Remark:       remark + "(授信部分)",
+				Operator:     operator,
+				CreatedAt:    time.Now(),
+			}
+			if err := tx.Create(creditLog).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 // ListLogs 查询余额流水

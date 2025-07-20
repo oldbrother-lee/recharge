@@ -1,0 +1,628 @@
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"strconv"
+	"time"
+
+	"recharge-go/internal/model"
+	notificationModel "recharge-go/internal/model/notification"
+	"recharge-go/internal/repository"
+	notificationRepo "recharge-go/internal/repository/notification"
+	"recharge-go/pkg/queue"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+)
+
+// UnifiedOrderService 统一订单处理服务
+// 提供统一的订单状态更新、余额查询、退款等功能
+// 供外部回调和平台回调共同使用
+type UnifiedOrderService struct {
+	orderRepo               repository.OrderRepository
+	balanceQueryRecordRepo  repository.BalanceQueryRecordRepository
+	phoneQueryService       PhoneQueryService
+	balanceService          *BalanceService
+	notificationRepo        notificationRepo.Repository
+	queue                   queue.Queue
+	db                      *gorm.DB
+	logger                  *zap.Logger
+}
+
+// NewUnifiedOrderService 创建统一订单处理服务
+func NewUnifiedOrderService(
+	orderRepo repository.OrderRepository,
+	balanceQueryRecordRepo repository.BalanceQueryRecordRepository,
+	phoneQueryService PhoneQueryService,
+	balanceService *BalanceService,
+	notificationRepo notificationRepo.Repository,
+	queue queue.Queue,
+	db *gorm.DB,
+	logger *zap.Logger,
+) *UnifiedOrderService {
+	return &UnifiedOrderService{
+		orderRepo:              orderRepo,
+		balanceQueryRecordRepo: balanceQueryRecordRepo,
+		phoneQueryService:      phoneQueryService,
+		balanceService:         balanceService,
+		notificationRepo:       notificationRepo,
+		queue:                  queue,
+		db:                     db,
+		logger:                 logger,
+	}
+}
+
+// OrderStatusUpdateRequest 订单状态更新请求
+type OrderStatusUpdateRequest struct {
+	OrderID         int64                `json:"order_id"`
+	NewStatus       model.OrderStatus    `json:"new_status"`
+	CallbackSource  string               `json:"callback_source"` // "external" 或 "platform"
+	Remark          string               `json:"remark,omitempty"`
+	NeedBalanceCheck bool                `json:"need_balance_check"` // 是否需要余额验证
+}
+
+// OrderStatusUpdateResponse 订单状态更新响应
+type OrderStatusUpdateResponse struct {
+	Success         bool   `json:"success"`
+	Message         string `json:"message"`
+	BalanceChanged  *bool  `json:"balance_changed,omitempty"` // 余额是否有变化（仅在余额验证时返回）
+	RefundTriggered bool   `json:"refund_triggered"`          // 是否触发了退款
+}
+
+// UpdateOrderStatusUnified 统一的订单状态更新方法
+// 支持外部回调和平台回调的统一处理
+func (s *UnifiedOrderService) UpdateOrderStatusUnified(ctx context.Context, req *OrderStatusUpdateRequest) (*OrderStatusUpdateResponse, error) {
+	s.logger.Info("开始统一订单状态更新",
+		zap.Int64("order_id", req.OrderID),
+		zap.String("new_status", string(req.NewStatus)),
+		zap.String("callback_source", req.CallbackSource),
+		zap.Bool("need_balance_check", req.NeedBalanceCheck),
+	)
+
+	// 使用事务确保订单状态更新的原子性
+	var result *OrderStatusUpdateResponse
+	var order model.Order
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. 获取订单信息（使用行锁）
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", req.OrderID).First(&order).Error; err != nil {
+			s.logger.Error("获取订单信息失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+			return fmt.Errorf("获取订单信息失败: %v", err)
+		}
+
+		// 2. 检查订单状态是否需要更新
+		if order.Status == req.NewStatus {
+			s.logger.Info("订单状态未发生变化", zap.Int64("order_id", req.OrderID), zap.String("status", string(req.NewStatus)))
+			response := &OrderStatusUpdateResponse{
+				Success: true,
+				Message: "订单状态未发生变化",
+			}
+			result = response
+			return nil
+		}
+
+		// 3. 更新订单状态
+		if err := tx.Model(&model.Order{}).Where("id = ?", req.OrderID).Update("status", req.NewStatus).Error; err != nil {
+			s.logger.Error("更新订单状态失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+			return fmt.Errorf("更新订单状态失败: %v", err)
+		}
+
+		s.logger.Info("订单状态更新成功",
+			zap.Int64("order_id", req.OrderID),
+			zap.String("old_status", string(order.Status)),
+			zap.String("new_status", string(req.NewStatus)),
+		)
+
+		response := &OrderStatusUpdateResponse{
+			Success: true,
+			Message: "订单状态更新成功",
+		}
+
+		result = response
+		return nil
+	})
+
+	if err != nil {
+		s.logger.Error("订单状态更新事务失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+		return nil, err
+	}
+
+	// 4. 在事务外执行余额验证（避免长时间持有数据库锁）
+	if req.NewStatus == model.OrderStatusSuccess && req.NeedBalanceCheck && s.phoneQueryService != nil && order.Mobile != "" {
+		balanceCheckResult, err := s.performBalanceCheck(ctx, &order)
+		if err != nil {
+			s.logger.Error("余额验证失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+			// 余额验证失败不影响订单状态更新的成功
+			result.Message = fmt.Sprintf("%s (余额验证失败: %v)", result.Message, err)
+		} else {
+			result.BalanceChanged = &balanceCheckResult.BalanceChanged
+			result.RefundTriggered = balanceCheckResult.RefundTriggered
+			result.Message = balanceCheckResult.Message
+		}
+	}
+
+	// 5. 在事务外执行失败订单的退款逻辑（避免长时间持有数据库锁）
+	if req.NewStatus == model.OrderStatusFailed {
+		refundResult, err := s.performRefundAsync(ctx, &order, req.Remark)
+		if err != nil {
+			s.logger.Error("退款失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+			// 退款失败不影响订单状态更新的成功
+			result.Message = fmt.Sprintf("%s (退款失败: %v)", result.Message, err)
+		} else {
+			result.RefundTriggered = refundResult.Success
+			if refundResult.Success {
+				result.Message += ", 退款成功"
+			}
+		}
+	}
+
+	// 6. 发送订单状态变更通知（使用订单的最终状态）
+	if s.notificationRepo != nil && s.queue != nil {
+		// 重新获取订单以确保使用最新的状态
+		var finalOrder model.Order
+		if err := s.db.WithContext(ctx).Where("id = ?", req.OrderID).First(&finalOrder).Error; err != nil {
+			s.logger.Error("获取订单最终状态失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+		} else {
+			// 只有当最终状态与原始请求状态一致时才发送通知
+			// 如果状态已在余额验证中被改变，则余额验证逻辑已经发送了通知
+			if finalOrder.Status == req.NewStatus {
+				if err := s.sendOrderStatusNotification(ctx, &finalOrder, finalOrder.Status); err != nil {
+					s.logger.Error("发送订单状态通知失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+					// 通知失败不影响订单状态更新的成功
+				}
+			} else {
+				s.logger.Info("订单状态已在处理过程中变更，跳过重复通知", 
+					zap.Int64("order_id", req.OrderID),
+					zap.Int("original_status", int(req.NewStatus)),
+					zap.Int("final_status", int(finalOrder.Status)))
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// sendOrderStatusNotification 发送订单状态变更通知
+func (s *UnifiedOrderService) sendOrderStatusNotification(ctx context.Context, order *model.Order, newStatus model.OrderStatus) error {
+	// 序列化订单快照
+	orderData, err := json.Marshal(order)
+	if err != nil {
+		s.logger.Error("序列化订单快照失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		return err
+	}
+
+	// 创建通知记录（包含订单快照）
+	notification := &notificationModel.NotificationRecord{
+		OrderID:          order.ID,
+		PlatformCode:     order.PlatformCode,
+		NotificationType: "order_status_changed",
+		Content:          fmt.Sprintf("订单状态已更新为: %d", newStatus),
+		OrderSnapshot:    string(orderData), // 保存完整订单快照
+		TargetStatus:     int(newStatus),    // 保存目标状态
+		Status:           1,                 // 待处理
+	}
+
+	// 原子操作：创建通知记录并推送到队列
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 保存通知记录到数据库
+		if err := tx.Create(notification).Error; err != nil {
+			s.logger.Error("创建通知记录失败", zap.Int64("order_id", order.ID), zap.Error(err))
+			return err
+		}
+
+		// 推送通知到队列
+		s.logger.Info("准备推送通知到队列", 
+			zap.Int64("order_id", order.ID), 
+			zap.Int("new_status", int(newStatus)),
+			zap.Int64("notification_id", notification.ID))
+		
+		if err := s.queue.Push(ctx, "notification_queue", notification); err != nil {
+			s.logger.Error("推送通知到队列失败", zap.Int64("order_id", order.ID), zap.Error(err))
+			return err
+		}
+
+		s.logger.Info("推送通知到队列成功", 
+			zap.Int64("order_id", order.ID), 
+			zap.Int("status", int(newStatus)),
+			zap.Int64("notification_id", notification.ID))
+		return nil
+	})
+}
+
+// BalanceCheckResult 余额验证结果
+type BalanceCheckResult struct {
+	BalanceChanged  bool   `json:"balance_changed"`
+	RefundTriggered bool   `json:"refund_triggered"`
+	Message         string `json:"message"`
+}
+
+// performBalanceCheck 在事务外执行余额验证逻辑
+func (s *UnifiedOrderService) performBalanceCheck(ctx context.Context, order *model.Order) (*BalanceCheckResult, error) {
+	s.logger.Info("开始余额验证", zap.Int64("order_id", order.ID), zap.String("mobile", order.Mobile))
+
+	// 获取充值前余额记录
+	preBalanceRecord, err := s.balanceQueryRecordRepo.GetByOrderIDAndType(ctx, order.ID, "before")
+	if err != nil {
+		s.logger.Error("获取充值前余额记录失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		return nil, fmt.Errorf("获取充值前余额记录失败: %v", err)
+	}
+
+	if preBalanceRecord == nil {
+		s.logger.Error("未找到充值前余额记录", zap.Int64("order_id", order.ID))
+		return nil, fmt.Errorf("未找到充值前余额记录")
+	}
+
+	// 确定运营商类型
+	ispType := s.getISPTypeFromOrder(order)
+
+	// 实时查询充值后余额
+	startTime := time.Now()
+	postBalanceResp, err := s.phoneQueryService.QueryBalanceWithRetry(ctx, order.Mobile, ispType, 3)
+	queryDuration := time.Since(startTime)
+
+	s.logger.Info("充值后余额查询完成",
+		zap.Int64("order_id", order.ID),
+		zap.String("mobile", order.Mobile),
+		zap.String("post_balance_data", postBalanceResp.Data),
+		zap.Duration("query_duration", queryDuration),
+		zap.Error(err),
+	)
+
+	if err != nil {
+		return nil, fmt.Errorf("查询充值后余额失败: %v", err)
+	}
+
+	// 保存充值后余额查询记录
+	postBalanceRecord := &model.BalanceQueryRecord{
+		OrderID:     order.ID,
+		OrderNumber: order.OrderNumber,
+		Mobile:      order.Mobile,
+		ISPType:     ispType,
+		QueryType:   "after",
+		Balance:     postBalanceResp.Data,
+		QueryTime:   time.Now(),
+		Success:     err == nil,
+		Duration:    int64(queryDuration.Milliseconds()),
+	}
+
+	if err := s.balanceQueryRecordRepo.Create(ctx, postBalanceRecord); err != nil {
+		s.logger.Error("保存充值后余额记录失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		// 不返回错误，继续执行余额对比
+	}
+
+	// 解析余额字符串为浮点数
+	preBalance, err := strconv.ParseFloat(preBalanceRecord.Balance, 64)
+	if err != nil {
+		s.logger.Error("解析充值前余额失败", zap.Int64("order_id", order.ID), zap.String("balance", preBalanceRecord.Balance), zap.Error(err))
+		return nil, fmt.Errorf("解析充值前余额失败: %v", err)
+	}
+
+	postBalance, err := strconv.ParseFloat(postBalanceResp.Data, 64)
+	if err != nil {
+		s.logger.Error("解析充值后余额失败", zap.Int64("order_id", order.ID), zap.String("balance", postBalanceResp.Data), zap.Error(err))
+		return nil, fmt.Errorf("解析充值后余额失败: %v", err)
+	}
+
+	// 计算余额变化
+	balanceChange := postBalance - preBalance
+	expectedChange := order.Price
+	balanceChanged := math.Abs(balanceChange-expectedChange) < 0.01 // 允许0.01的误差
+
+	s.logger.Info("余额对比结果",
+		zap.Int64("order_id", order.ID),
+		zap.Float64("pre_balance", preBalance),
+		zap.Float64("post_balance", postBalance),
+		zap.Float64("balance_change", balanceChange),
+		zap.Float64("expected_change", expectedChange),
+		zap.Bool("balance_changed", balanceChanged),
+	)
+
+	result := &BalanceCheckResult{
+		BalanceChanged: balanceChanged,
+		Message:        "余额验证完成",
+	}
+
+	// 如果余额没有变化，触发退款并更新订单状态
+	if !balanceChanged {
+		s.logger.Warn("余额验证失败，准备执行退款", zap.Int64("order_id", order.ID))
+		
+		// 在新事务中更新订单状态为失败
+		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return tx.Model(&model.Order{}).Where("id = ?", order.ID).Update("status", model.OrderStatusFailed).Error
+		})
+		
+		if err != nil {
+			s.logger.Error("更新订单状态为失败失败", zap.Int64("order_id", order.ID), zap.Error(err))
+			result.Message = "余额验证失败，但更新订单状态失败"
+		} else {
+			// 更新订单状态成功后，发送状态变更通知
+			order.Status = model.OrderStatusFailed
+			if s.notificationRepo != nil && s.queue != nil {
+				if notifyErr := s.sendOrderStatusNotification(ctx, order, model.OrderStatusFailed); notifyErr != nil {
+					s.logger.Error("发送订单失败状态通知失败", zap.Int64("order_id", order.ID), zap.Error(notifyErr))
+				}
+			}
+			
+			// 执行退款
+			refundResult, refundErr := s.performRefundAsync(ctx, order, "余额验证失败")
+			if refundErr != nil {
+				s.logger.Error("退款失败", zap.Int64("order_id", order.ID), zap.Error(refundErr))
+				result.Message = "余额验证失败，订单已设置为失败状态，但退款失败"
+			} else {
+				result.RefundTriggered = refundResult.Success
+				result.Message = "余额验证失败，订单已设置为失败状态并触发退款"
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// performBalanceCheckWithTx 在事务内执行余额验证逻辑
+func (s *UnifiedOrderService) performBalanceCheckWithTx(ctx context.Context, tx *gorm.DB, order *model.Order) (*BalanceCheckResult, error) {
+	s.logger.Info("开始执行余额验证", zap.Int64("order_id", order.ID), zap.String("mobile", order.Mobile))
+
+	// 获取充值前余额记录
+	preRecord, err := s.balanceQueryRecordRepo.GetByOrderIDAndType(ctx, order.ID, "before")
+	if err != nil {
+		s.logger.Error("获取充值前余额记录失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		return &BalanceCheckResult{
+			BalanceChanged:  false,
+			RefundTriggered: false,
+			Message:         "无法获取充值前余额记录",
+		}, nil // 不返回错误，继续正常流程
+	}
+
+	// 根据订单信息确定运营商类型
+	ispType := s.getISPTypeFromOrder(order)
+
+	// 实时查询充值后余额
+	start := time.Now()
+	postBalance, err := s.phoneQueryService.QueryBalanceWithRetry(ctx, order.Mobile, ispType, 3)
+	duration := time.Since(start).Milliseconds()
+
+	if err != nil {
+		s.logger.Error("充值后余额查询失败", zap.Int64("order_id", order.ID), zap.String("mobile", order.Mobile), zap.Error(err))
+
+		// 保存失败的查询记录
+		balanceRecord := &model.BalanceQueryRecord{
+			OrderID:     order.ID,
+			OrderNumber: order.OrderNumber,
+			Mobile:      order.Mobile,
+			ISPType:     ispType,
+			QueryType:   "after",
+			QueryTime:   time.Now(),
+			Success:     false,
+			ErrorMsg:    err.Error(),
+			Duration:    duration,
+		}
+
+		if err := s.balanceQueryRecordRepo.Create(ctx, balanceRecord); err != nil {
+			s.logger.Error("保存充值后余额查询记录失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		}
+
+		return &BalanceCheckResult{
+			BalanceChanged:  false,
+			RefundTriggered: false,
+			Message:         "余额查询失败",
+		}, fmt.Errorf("充值后余额查询失败: %v", err)
+	}
+
+	// 处理查询结果，PhoneBalanceResponse结构体包含Data字段
+	var balanceData string
+	if postBalance != nil {
+		balanceData = postBalance.Data
+	} else {
+		// 如果查询结果为空
+		balanceData = "0"
+	}
+
+	s.logger.Info("充值后余额查询成功",
+		zap.Int64("order_id", order.ID),
+		zap.String("mobile", order.Mobile),
+		zap.String("pre_balance", preRecord.Balance),
+		zap.String("post_balance", balanceData),
+	)
+
+	// 比较充值前后余额
+	preAmount, err1 := strconv.ParseFloat(preRecord.Balance, 64)
+	postAmount, err2 := strconv.ParseFloat(balanceData, 64)
+
+	balanceChanged := false
+	if err1 == nil && err2 == nil {
+		// 设置最小变化阈值为0.01元，避免浮点数精度问题
+		balanceChanged = (postAmount - preAmount) >= 0.01
+	}
+
+	// 保存充值后余额查询记录
+	balanceRecord := &model.BalanceQueryRecord{
+		OrderID:     order.ID,
+		OrderNumber: order.OrderNumber,
+		Mobile:      order.Mobile,
+		ISPType:     ispType,
+		QueryType:   "after",
+		Balance:     balanceData,
+		QueryTime:   time.Now(),
+		Success:     true,
+		Duration:    duration,
+	}
+
+	if err := s.balanceQueryRecordRepo.Create(ctx, balanceRecord); err != nil {
+		s.logger.Error("保存充值后余额查询记录失败", zap.Int64("order_id", order.ID), zap.Error(err))
+	}
+
+	result := &BalanceCheckResult{
+		BalanceChanged:  balanceChanged,
+		RefundTriggered: false,
+	}
+
+	// 如果余额没有变化，触发退款
+	if !balanceChanged {
+		s.logger.Error("余额无变化，触发退款",
+			zap.Int64("order_id", order.ID),
+			zap.String("pre_balance", preRecord.Balance),
+			zap.String("post_balance", balanceData),
+		)
+
+		refundResult, err := s.performRefund(ctx, tx, order, "充值后余额无变化")
+		if err != nil {
+			s.logger.Error("退款失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		} else {
+			result.RefundTriggered = refundResult.Success
+		}
+		result.Message = "余额无变化"
+	} else {
+		result.Message = "余额验证通过"
+	}
+
+	return result, nil
+}
+
+// RefundResult 退款结果
+type RefundResult struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
+
+// performRefundAsync 在事务外执行退款逻辑
+func (s *UnifiedOrderService) performRefundAsync(ctx context.Context, order *model.Order, remark string) (*RefundResult, error) {
+	s.logger.Info("开始异步执行退款", zap.Int64("order_id", order.ID), zap.String("remark", remark))
+
+	// 检查余额服务是否可用
+	if s.balanceService == nil {
+		s.logger.Error("余额服务未初始化", zap.Int64("order_id", order.ID))
+		return &RefundResult{
+			Success: false,
+			Message: "余额服务未初始化",
+		}, nil
+	}
+
+	// 检查是否已经退款（通过查询余额日志）
+	var existingRefundCount int64
+	err := s.db.Model(&model.BalanceLog{}).Where("order_id = ? AND style = ?", order.ID, model.BalanceStyleRefund).Count(&existingRefundCount).Error
+	if err != nil {
+		s.logger.Error("查询退款记录失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		return &RefundResult{
+			Success: false,
+			Message: "查询退款记录失败",
+		}, nil
+	}
+
+	if existingRefundCount > 0 {
+		s.logger.Info("订单已存在退款记录", zap.Int64("order_id", order.ID))
+		return &RefundResult{
+			Success: true,
+			Message: "订单已存在退款记录",
+		}, nil
+	}
+
+	// 执行退款
+	err = s.balanceService.Refund(ctx, order.CustomerID, order.Price, order.ID, remark, "system")
+	if err != nil {
+		s.logger.Error("退款失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		return &RefundResult{
+			Success: false,
+			Message: fmt.Sprintf("退款失败: %v", err),
+		}, nil
+	}
+
+	s.logger.Info("退款成功",
+		zap.Int64("order_id", order.ID),
+		zap.Float64("amount", order.Price),
+		zap.Int64("customer_id", order.CustomerID),
+	)
+
+	return &RefundResult{
+		Success: true,
+		Message: "退款成功",
+	}, nil
+}
+
+// performRefund 执行退款逻辑（保留原有方法以兼容其他调用）
+func (s *UnifiedOrderService) performRefund(ctx context.Context, tx *gorm.DB, order *model.Order, remark string) (*RefundResult, error) {
+	s.logger.Info("开始执行退款", zap.Int64("order_id", order.ID), zap.Float64("amount", order.Price), zap.String("reason", remark))
+
+	if s.balanceService == nil {
+		return &RefundResult{
+			Success: false,
+			Message: "余额服务未初始化",
+		}, fmt.Errorf("余额服务未初始化")
+	}
+
+	// 统一退款到订单的CustomerID
+	err := s.balanceService.Refund(ctx, order.CustomerID, order.Price, order.ID, fmt.Sprintf("订单退款: %s", remark), "system")
+
+	if err != nil {
+		s.logger.Error("退款失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		return &RefundResult{
+			Success: false,
+			Message: fmt.Sprintf("退款失败: %v", err),
+		}, err
+	}
+
+	s.logger.Info("退款成功", zap.Int64("order_id", order.ID), zap.Float64("amount", order.Price))
+	return &RefundResult{
+		Success: true,
+		Message: "退款成功",
+	}, nil
+}
+
+// getISPTypeFromOrder 从订单信息获取运营商类型
+func (s *UnifiedOrderService) getISPTypeFromOrder(order *model.Order) string {
+	// 根据订单中的 ISP 字段判断运营商类型
+	// 1: 移动(yd), 2: 电信(dx), 3: 联通(lt)
+	switch order.ISP {
+	case 1:
+		return "yd" // 中国移动
+	case 2:
+		return "dx" // 中国电信
+	case 3:
+		return "lt" // 中国联通
+	default:
+		// 默认返回移动
+		return "yd"
+	}
+}
+
+// ProcessOrderStatusChange 处理订单状态变更（供外部回调使用）
+func (s *UnifiedOrderService) ProcessOrderStatusChange(ctx context.Context, orderID int64, newStatus model.OrderStatus, callbackSource string) error {
+	req := &OrderStatusUpdateRequest{
+		OrderID:         orderID,
+		NewStatus:       newStatus,
+		CallbackSource:  callbackSource,
+		NeedBalanceCheck: newStatus == model.OrderStatusSuccess, // 成功状态需要余额验证
+	}
+
+	response, err := s.UpdateOrderStatusUnified(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	if !response.Success {
+		return fmt.Errorf("订单状态更新失败: %s", response.Message)
+	}
+
+	return nil
+}
+
+// ProcessOrderStatusChangeWithBalanceCheck 处理订单状态变更（供平台回调使用，包含余额验证）
+func (s *UnifiedOrderService) ProcessOrderStatusChangeWithBalanceCheck(ctx context.Context, orderID int64, newStatus model.OrderStatus, callbackSource string, needBalanceCheck bool) error {
+	req := &OrderStatusUpdateRequest{
+		OrderID:         orderID,
+		NewStatus:       newStatus,
+		CallbackSource:  callbackSource,
+		NeedBalanceCheck: needBalanceCheck && newStatus == model.OrderStatusSuccess,
+	}
+
+	response, err := s.UpdateOrderStatusUnified(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	if !response.Success {
+		return fmt.Errorf("订单状态更新失败: %s", response.Message)
+	}
+
+	return nil
+}

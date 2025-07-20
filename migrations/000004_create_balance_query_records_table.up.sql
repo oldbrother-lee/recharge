@@ -1,0 +1,25 @@
+-- 创建余额查询记录表
+CREATE TABLE IF NOT EXISTS `balance_query_records` (
+    `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `order_id` bigint NOT NULL COMMENT '订单ID',
+    `order_number` varchar(32) NOT NULL COMMENT '订单号',
+    `mobile` varchar(20) NOT NULL COMMENT '手机号',
+    `isp_type` varchar(10) NOT NULL COMMENT '运营商类型(yd:移动, dx:电信, lt:联通)',
+    `query_type` varchar(10) NOT NULL DEFAULT 'before' COMMENT '查询类型(before:充值前,after:充值后)',
+    `balance` varchar(50) DEFAULT NULL COMMENT '余额',
+    `query_time` datetime NOT NULL COMMENT '查询时间',
+    `success` tinyint(1) NOT NULL DEFAULT '0' COMMENT '查询是否成功',
+    `error_msg` varchar(500) DEFAULT NULL COMMENT '错误信息',
+    `retry_count` int NOT NULL DEFAULT '0' COMMENT '重试次数',
+    `duration` bigint DEFAULT NULL COMMENT '查询耗时(毫秒)',
+    `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    `deleted_at` datetime DEFAULT NULL COMMENT '删除时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_order_id` (`order_id`),
+    KEY `idx_order_number` (`order_number`),
+    KEY `idx_mobile` (`mobile`),
+    KEY `idx_query_time` (`query_time`),
+    KEY `idx_query_type` (`query_type`),
+    KEY `idx_deleted_at` (`deleted_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='余额查询记录表';

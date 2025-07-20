@@ -1,12 +1,14 @@
 package router
 
 import (
+	"recharge-go/configs"
 	"recharge-go/internal/controller"
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
 	"recharge-go/pkg/database"
 	"recharge-go/pkg/lock"
+	"recharge-go/pkg/logger"
 	"recharge-go/pkg/queue"
 	"recharge-go/pkg/redis"
 
@@ -74,6 +76,24 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 	platformAPIParamRepo := repository.NewPlatformAPIParamRepository(database.DB)
 	retryRepo := repository.NewRetryRepository(database.DB)
 
+	// 创建手机查询服务
+	phoneQueryService := service.NewPhoneQueryService(configs.GetConfig())
+	
+	// 创建余额查询记录仓库
+	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(database.DB)
+	
+	// 创建统一订单处理服务
+	unifiedOrderService := service.NewUnifiedOrderService(
+		orderRepo,
+		balanceQueryRecordRepo,
+		phoneQueryService,
+		balanceService,
+		notificationRepo,
+		queueInstance,
+		database.DB,
+		logger.Log,
+	)
+	
 	rechargeService := service.NewRechargeService(
 		database.DB,
 		orderRepo,
@@ -86,6 +106,9 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 		platformAPIParamRepo,
 		platformAccountBalanceService,
 		balanceService,
+		phoneQueryService, // 添加手机查询服务
+		balanceQueryRecordRepo, // 添加余额查询记录仓库
+		unifiedOrderService, // 添加统一订单处理服务
 		notificationRepo,
 		queueInstance,
 	)

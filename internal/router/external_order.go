@@ -1,12 +1,15 @@
 package router
 
 import (
+	"recharge-go/configs"
 	"recharge-go/internal/controller"
 	"recharge-go/internal/middleware"
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
+	"recharge-go/internal/signature"
 	"recharge-go/pkg/lock"
+	"recharge-go/pkg/logger"
 	"recharge-go/pkg/queue"
 	"recharge-go/pkg/redis"
 
@@ -43,6 +46,24 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 
 	balanceService := service.NewBalanceService(balanceLogRepo, userRepo)
 
+	// 创建手机查询服务
+	phoneQueryService := service.NewPhoneQueryService(configs.GetConfig())
+	
+	// 创建余额查询记录仓库
+	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
+	
+	// 创建统一订单服务
+	unifiedOrderService := service.NewUnifiedOrderService(
+		orderRepo,
+		balanceQueryRecordRepo,
+		phoneQueryService,
+		balanceService, // 使用 balanceService 替代 userBalanceService
+		notificationRepo,
+		queueInstance,
+		db,
+		logger.Log,
+	)
+	
 	// 先创建充值服务（因为订单服务需要它）
 	rechargeService := service.NewRechargeService(
 		db,
@@ -56,6 +77,9 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		platformAPIParamRepo,
 		platformAccountBalanceService,
 		balanceService,
+		phoneQueryService, // 添加手机查询服务
+		balanceQueryRecordRepo, // 添加余额查询记录仓库
+		unifiedOrderService, // 添加统一订单服务
 		notificationRepo,
 		queueInstance,
 	)
@@ -105,7 +129,13 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 
 	// 创建控制器
 	externalOrderController := controller.NewExternalOrderController(orderService, productService, externalOrderLogRepo)
-	externalCallbackController := controller.NewExternalCallbackController(orderService, apiKeyRepo, externalOrderLogRepo)
+	// 创建统一订单处理服务
+	// 统一订单服务已在上面创建
+	
+	// 创建签名验证器（使用基础处理器）
+	signValidator := signature.NewBaseSignatureHandler(&signature.Config{})
+	
+	externalCallbackController := controller.NewExternalCallbackController(orderService, unifiedOrderService, apiKeyRepo, externalOrderLogRepo, signValidator)
 	externalRefundController := controller.NewExternalRefundController(orderService)
 
 	// 注册外部订单API路由（需要认证）

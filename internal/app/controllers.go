@@ -27,6 +27,7 @@ type Controllers struct {
 	Credit             *controller.CreditController
 	SystemConfig       *controller.SystemConfigController
 	ExternalAPIKey     *controller.ExternalAPIKeyController
+	PhoneQuery         *controller.PhoneQueryController
 
 	// Handlers
 	Recharge     *handler.RechargeHandler
@@ -59,6 +60,7 @@ func (c *Container) initControllers() {
 		Credit:             controller.NewCreditController(c.services.Credit),
 		SystemConfig:       controller.NewSystemConfigController(c.services.SystemConfig),
 		ExternalAPIKey:     controller.NewExternalAPIKeyController(c.repositories.ExternalAPIKey, c.repositories.User),
+		PhoneQuery:         controller.NewPhoneQueryController(c.services.PhoneQuery),
 
 		// Handlers
 		Recharge:     handler.NewRechargeHandler(c.services.Recharge),

@@ -15,6 +15,9 @@ type NotificationRecord struct {
 	RetryCount       int       `json:"retry_count" gorm:"type:int;default:0"`
 	NextRetryTime    time.Time `json:"next_retry_time"`
 	SuccessAt        time.Time `json:"success_at" gorm:"type:datetime"` // 通知成功时间
+	// 新增字段：订单状态快照
+	OrderSnapshot    string    `json:"order_snapshot" gorm:"type:text"`     // 序列化的订单快照
+	TargetStatus     int       `json:"target_status" gorm:"type:tinyint"`   // 目标状态
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }

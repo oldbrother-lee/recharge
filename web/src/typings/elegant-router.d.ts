@@ -36,6 +36,7 @@ declare module "@elegant-router/types" {
     "product_set-menu": "/product/set-menu";
     "product_type": "/product/type";
     "system": "/system";
+    "system_phone-query": "/system/phone-query";
     "system_settings": "/system/settings";
     "system_user": "/system/user";
     "system_user-grade": "/system/user-grade";
@@ -114,6 +115,7 @@ declare module "@elegant-router/types" {
     | "product_phone-location"
     | "product_set-menu"
     | "product_type"
+    | "system_phone-query"
     | "system_settings"
     | "system_user-grade"
     | "system_user"

@@ -92,6 +92,12 @@ func main() {
 	creditLogRepo := repository.NewCreditLogRepository(db)
 	creditService := service.NewCreditService(userRepo, creditLogRepo)
 
+	// 创建手机查询服务
+	phoneQueryService := service.NewPhoneQueryService(config.GetConfig())
+	
+	// 创建余额查询记录仓库
+	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
+	
 	// 初始化服务
 	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, nil, unifiedRefundService, refundLockManager, notificationRepoInstance, queue, db, productRepo, creditService)
 	rechargeService := service.NewRechargeService(
@@ -106,6 +112,8 @@ func main() {
 		platformAPIParamRepo,
 		balanceService,
 		userBalanceService,
+		phoneQueryService, // 添加手机查询服务
+		balanceQueryRecordRepo, // 添加余额查询记录仓库
 		notificationRepoInstance,
 		queue,
 	)

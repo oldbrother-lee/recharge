@@ -70,6 +70,9 @@ type rechargeService struct {
 	platformAPIParamRepo   repository.PlatformAPIParamRepository
 	balanceService         *PlatformAccountBalanceService
 	userBalanceService     *BalanceService
+	phoneQueryService      PhoneQueryService // 新增手机查询服务
+	balanceQueryRecordRepo repository.BalanceQueryRecordRepository // 余额查询记录仓库
+	unifiedOrderService    *UnifiedOrderService // 统一订单处理服务
 	manager                *recharge.Manager
 	redisClient            *redisV8.Client
 	processingOrders       map[int64]bool
@@ -92,6 +95,9 @@ func NewRechargeService(
 	platformAPIParamRepo repository.PlatformAPIParamRepository,
 	balanceService *PlatformAccountBalanceService,
 	userBalanceService *BalanceService,
+	phoneQueryService PhoneQueryService, // 新增手机查询服务参数
+	balanceQueryRecordRepo repository.BalanceQueryRecordRepository, // 余额查询记录仓库参数
+	unifiedOrderService *UnifiedOrderService, // 统一订单处理服务参数
 	notificationRepo notificationRepo.Repository,
 	queue queue.Queue,
 ) *rechargeService {
@@ -107,6 +113,9 @@ func NewRechargeService(
 		platformAPIParamRepo:   platformAPIParamRepo,
 		balanceService:         balanceService,
 		userBalanceService:     userBalanceService,
+		phoneQueryService:      phoneQueryService, // 新增手机查询服务初始化
+		balanceQueryRecordRepo: balanceQueryRecordRepo, // 余额查询记录仓库初始化
+		unifiedOrderService:    unifiedOrderService, // 统一订单处理服务初始化
 		manager:                recharge.NewManager(db),
 		redisClient:            redis.GetClient(),
 		processingOrders:       make(map[int64]bool),
@@ -135,6 +144,8 @@ func (s *rechargeService) Recharge(ctx context.Context, orderID int64) error {
 		_ = s.RemoveFromProcessingQueue(ctx, orderID)
 		return nil
 	}
+
+
 
 	// 2. 获取平台API信息
 	api, apiParam, err := s.GetPlatformAPIByOrderID(ctx, order.OrderNumber)
@@ -294,6 +305,23 @@ func (s *rechargeService) Recharge(ctx context.Context, orderID int64) error {
 	return nil
 }
 
+// getISPTypeFromOrder 根据订单信息确定运营商类型
+func (s *rechargeService) getISPTypeFromOrder(order *model.Order) string {
+	// 根据订单中的 ISP 字段判断运营商类型
+	// 1: 移动(yd), 2: 电信(dx), 3: 联通(lt)
+	switch order.ISP {
+	case 1:
+		return "yd" // 中国移动
+	case 2:
+		return "dx" // 中国电信
+	case 3:
+		return "lt" // 中国联通
+	default:
+		// 默认返回移动
+		return "yd"
+	}
+}
+
 // HandleCallback 处理平台回调
 func (s *rechargeService) HandleCallback(ctx context.Context, platformName string, data []byte) error {
 	// 1. 解析回调数据
@@ -375,13 +403,25 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	}
 	// === 新增 END ===
 
-	// 更新订单状态
-	if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatus(orderState)); err != nil {
-		tx.Rollback()
-		logger.Error("更新订单状态失败: %v", err)
-		return fmt.Errorf("update order status failed: %v", err)
+	// 使用统一订单处理服务更新订单状态
+	if s.unifiedOrderService != nil {
+		// 使用统一服务处理订单状态更新（包含余额验证和退款逻辑）
+		if err := s.unifiedOrderService.ProcessOrderStatusChangeWithBalanceCheck(ctx, order.ID, model.OrderStatus(orderState), "platform", true); err != nil {
+			tx.Rollback()
+			logger.Error("统一订单状态更新失败: %v", err)
+			return fmt.Errorf("unified order status update failed: %v", err)
+		}
+		logger.Info(fmt.Sprintf("统一订单回调更新订单状态成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
+	} else {
+		// 降级到原有的简单状态更新
+		logger.Warn("统一订单服务未初始化，使用原有的简单状态更新", "order_id", order.ID)
+		if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatus(orderState)); err != nil {
+			tx.Rollback()
+			logger.Error("更新订单状态失败: %v", err)
+			return fmt.Errorf("update order status failed: %v", err)
+		}
+		logger.Info(fmt.Sprintf("订单回调更新订单状态成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
 	}
-	logger.Info(fmt.Sprintf("订单回调更新订单状态成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
 
 	// 创建通知记录
 	notification := &notificationModel.NotificationRecord{
@@ -538,7 +578,44 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		"order_number", order.OrderNumber,
 		"mobile", order.Mobile)
 
-	// 获取平台API信息 - 直接使用传入的订单对象，避免通过order_number重新查询
+	// 1. 充值前查询余额并记录
+	logger.Info(fmt.Sprintf("【调试：余额查询条件检查】order_id: %d, phoneQueryService_nil: %v, mobile: %s", order.ID, s.phoneQueryService == nil, order.Mobile))
+	if s.phoneQueryService != nil && order.Mobile != "" {
+		logger.Info(fmt.Sprintf("【充值前查询余额】order_id: %d, mobile: %s", order.ID, order.Mobile))
+		
+		// 根据订单信息确定运营商类型
+		ispType := s.getISPTypeFromOrder(order)
+		
+		// 查询充值前余额
+		preBalance, err := s.phoneQueryService.QueryBalanceWithRetry(ctx, order.Mobile, ispType, 3)
+		if err != nil {
+			logger.Error(fmt.Sprintf("【充值前余额查询失败】order_id: %d, mobile: %s, error: %v", order.ID, order.Mobile, err))
+			// 余额查询失败不阻断充值流程，只记录日志
+		} else {
+			logger.Info(fmt.Sprintf("【充值前余额查询成功】order_id: %d, mobile: %s, balance: %s", 
+					order.ID, order.Mobile, preBalance.Data))
+				
+			// 保存余额查询记录到独立表
+			balanceRecord := &model.BalanceQueryRecord{
+				OrderID:     order.ID,
+				OrderNumber: order.OrderNumber,
+				Mobile:      order.Mobile,
+				ISPType:     ispType,
+				QueryType:   "before", // 充值前查询
+				Balance:     preBalance.Data,
+				QueryTime:   time.Now(),
+				Success:     true,
+			}
+			
+			// 保存到余额查询记录表
+			if err := s.balanceQueryRecordRepo.Create(ctx, balanceRecord); err != nil {
+				logger.Error(fmt.Sprintf("【保存余额查询记录失败】order_id: %d, error: %v", order.ID, err))
+			} else {
+				logger.Info(fmt.Sprintf("【余额查询记录保存成功】order_id: %d, balance: %s", order.ID, preBalance.Data))
+			}
+		}
+	}
+
 	api, apiParam, err := s.getPlatformAPIByOrder(ctx, order)
 	if err != nil {
 		logger.Error("【获取API信息失败】",
@@ -546,7 +623,6 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			"order_id", order.ID)
 		return fmt.Errorf("get platform API failed: %v", err)
 	}
-	fmt.Println(apiParam, "apiParam+$$$$$$$$$$$$$$$$$$$$$$$$$$")
 	logger.Info("【获取API信息成功】",
 		"order_id", order.ID,
 		"api_id", api.ID,
@@ -602,7 +678,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 				"error", err,
 				"platform_account_id", order.PlatformAccountID,
 				"amount", order.Price)
-			
+
 			// 使用事务处理订单状态更新
 			txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 				// 将订单状态设置为失败，并写入备注
@@ -614,7 +690,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 				}
 				return nil
 			})
-			
+
 			if txErr != nil {
 				logger.Error("更新订单状态失败", "error", txErr, "order_id", order.ID)
 			} else {
@@ -636,7 +712,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 					}
 				}
 			}
-			
+
 			return fmt.Errorf("deduct platform account balance failed: %v", err)
 		}
 		logger.Info("【扣除平台账号余额成功】",
@@ -864,7 +940,7 @@ func (s *rechargeService) CreateRechargeTask(ctx context.Context, orderID int64)
 // GetPlatformAPIByOrderID 根据订单ID获取平台API信息
 // getPlatformAPIByOrder 直接使用订单对象获取平台API信息
 func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *model.Order) (*model.PlatformAPI, *model.PlatformAPIParam, error) {
-	// 直接使用传入的订单对象，无需重新查询
+
 	logger.Info("【获取平台API信息】", "order_id", order.ID, "product_id", order.ProductID)
 
 	//product_api_relations

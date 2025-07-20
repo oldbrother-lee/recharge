@@ -14,13 +14,14 @@ type RedisConfig struct {
 }
 
 type Config struct {
-	Server ServerConfig `mapstructure:"server"`
-	DB     DBConfig     `mapstructure:"database"`
-	JWT    JWTConfig    `mapstructure:"jwt"`
-	Log    LogConfig    `mapstructure:"log"`
-	Task   TaskConfig   `mapstructure:"task"`
-	API    APIConfig    `mapstructure:"api"`
-	Redis  RedisConfig  `mapstructure:"redis"`
+	Server        ServerConfig        `mapstructure:"server"`
+	DB            DBConfig            `mapstructure:"database"`
+	JWT           JWTConfig           `mapstructure:"jwt"`
+	Log           LogConfig           `mapstructure:"log"`
+	Task          TaskConfig          `mapstructure:"task"`
+	API           APIConfig           `mapstructure:"api"`
+	Redis         RedisConfig         `mapstructure:"redis"`
+	ThirdPartyAPI ThirdPartyAPIConfig `mapstructure:"third_party_api"`
 }
 
 type ServerConfig struct {
@@ -64,6 +65,13 @@ type APIConfig struct {
 	Key     string `mapstructure:"key"`
 	UserID  string `mapstructure:"user_id"`
 	BaseURL string `mapstructure:"base_url"`
+}
+
+type ThirdPartyAPIConfig struct {
+	BaseURL    string `mapstructure:"base_url"`
+	MerchantID string `mapstructure:"merchant_id"`
+	Token      string `mapstructure:"token"`
+	Timeout    int    `mapstructure:"timeout"`
 }
 
 var config *Config

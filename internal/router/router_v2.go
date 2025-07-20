@@ -53,6 +53,7 @@ func SetupRouterV2(
 	statisticsController := getControllerByName(controllersValue, "Statistics")
 	systemConfigController := getControllerByName(controllersValue, "SystemConfig")
 	externalAPIKeyController := getControllerByName(controllersValue, "ExternalAPIKey")
+	phoneQueryController := getControllerByName(controllersValue, "PhoneQuery")
 	// userLogController := getControllerByName(controllersValue, "UserLog") // 从参数获取
 
 	// 类型断言
@@ -235,6 +236,11 @@ func SetupRouterV2(
 			// External API Key routes
 			if eakc := assertExternalAPIKeyController(externalAPIKeyController); eakc != nil {
 				RegisterExternalAPIKeyRoutes(auth, eakc, userSvc)
+			}
+
+			// Phone Query routes
+			if pqc := assertPhoneQueryController(phoneQueryController); pqc != nil {
+				RegisterPhoneQueryRoutes(auth, pqc, userSvc)
 			}
 
 			// TODO: 以下路由对应的控制器暂未初始化，需要对应的服务支持
@@ -454,6 +460,16 @@ func assertExternalAPIKeyController(ctrl interface{}) *controller.ExternalAPIKey
 	}
 	if eakc, ok := ctrl.(*controller.ExternalAPIKeyController); ok {
 		return eakc
+	}
+	return nil
+}
+
+func assertPhoneQueryController(ctrl interface{}) *controller.PhoneQueryController {
+	if ctrl == nil {
+		return nil
+	}
+	if pqc, ok := ctrl.(*controller.PhoneQueryController); ok {
+		return pqc
 	}
 	return nil
 }

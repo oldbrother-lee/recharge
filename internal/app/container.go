@@ -60,6 +60,7 @@ type Repositories struct {
 	Retry               repository.RetryRepository
 	CallbackLog         repository.CallbackLogRepository
 	BalanceLog          *repository.BalanceLogRepository
+	BalanceQueryRecord  repository.BalanceQueryRecordRepository // 添加余额查询记录 repository
 	Notification        notificationRepo.Repository
 	TaskConfig          *repository.TaskConfigRepository
 	TaskOrder           *repository.TaskOrderRepository
@@ -89,6 +90,7 @@ type Services struct {
 	Balance                *service.BalanceService // 添加Balance服务
 	PlatformAccountBalance *service.PlatformAccountBalanceService
 	UnifiedRefund          *service.UnifiedRefundService // 添加统一退款服务
+	UnifiedOrder           *service.UnifiedOrderService  // 添加统一订单服务
 	Task                   *service.TaskService
 	TaskConfigNotifier     *service.TaskConfigNotifier       // 添加任务配置通知器
 	PhoneLocation          *service.PhoneLocationService     // 添加PhoneLocation服务
@@ -104,6 +106,7 @@ type Services struct {
 	PlatformPushStatus     *platform.PushStatusService       // 添加PlatformPushStatus服务
 	PlatformSvc            *platform.Service                 // 添加platform.Service
 	SystemConfig           *service.SystemConfigService      // 添加SystemConfig服务
+	PhoneQuery             service.PhoneQueryService         // 添加PhoneQuery服务
 }
 
 // NewContainer 创建新的容器实例
@@ -230,6 +233,7 @@ func (c *Container) initRepositories() {
 		Retry:               repository.NewRetryRepository(c.db),
 		CallbackLog:         repository.NewCallbackLogRepository(c.db),
 		BalanceLog:          repository.NewBalanceLogRepository(c.db),
+		BalanceQueryRecord:  repository.NewBalanceQueryRecordRepository(c.db),
 		Notification:        notificationRepo.NewRepository(c.db),
 		TaskConfig:          repository.NewTaskConfigRepository(c.db),
 		TaskOrder:           repository.NewTaskOrderRepository(c.db),
@@ -304,6 +308,21 @@ func (c *Container) initServices() error {
 	c.services.Statistics = service.NewStatisticsService(c.repositories.OrderStatistics, c.repositories.Order)
 	c.services.Notification = notificationService.NewNotificationService(c.repositories.Notification, queueInstance)
 
+	// 初始化PhoneQuery服务（需要在充值服务之前创建）
+	c.services.PhoneQuery = service.NewPhoneQueryService(c.config)
+
+	// 创建统一订单服务
+	c.services.UnifiedOrder = service.NewUnifiedOrderService(
+		c.repositories.Order,
+		c.repositories.BalanceQueryRecord,
+		c.services.PhoneQuery,
+		c.services.Balance,
+		c.repositories.Notification,
+		queueInstance,
+		c.db,
+		c.logger,
+	)
+
 	// 创建充值服务
 	c.services.Recharge = service.NewRechargeService(
 		c.db,
@@ -317,6 +336,9 @@ func (c *Container) initServices() error {
 		c.repositories.PlatformAPIParam,
 		c.services.PlatformAccountBalance,
 		c.services.Balance,
+		c.services.PhoneQuery, // 添加手机查询服务依赖
+		c.repositories.BalanceQueryRecord, // 添加余额查询记录仓库依赖
+		c.services.UnifiedOrder, // 添加统一订单服务
 		c.repositories.Notification,
 		queueInstance,
 	)
@@ -422,6 +444,8 @@ func (c *Container) initServices() error {
 
 	// 初始化SystemConfig服务
 	c.services.SystemConfig = service.NewSystemConfigService(c.repositories.SystemConfig)
+
+
 
 	// 初始化系统配置数据
 	if err := c.services.SystemConfig.InitSystemConfigs(context.Background()); err != nil {

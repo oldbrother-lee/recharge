@@ -8,7 +8,8 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
-	"recharge-go/pkg/signature"
+	"recharge-go/internal/signature"
+	"recharge-go/pkg/logger"
 	"strconv"
 	"strings"
 	"time"
@@ -18,23 +19,27 @@ import (
 
 // ExternalCallbackController 外部回调控制器
 type ExternalCallbackController struct {
-	orderService  service.OrderService
-	apiKeyRepo    repository.ExternalAPIKeyRepository
-	logRepo       repository.ExternalOrderLogRepository
-	signValidator *signature.ExternalAPISignatureValidator
+	orderService        service.OrderService
+	unifiedOrderService *service.UnifiedOrderService
+	apiKeyRepo          repository.ExternalAPIKeyRepository
+	logRepo             repository.ExternalOrderLogRepository
+	signValidator       signature.SignatureHandler
 }
 
 // NewExternalCallbackController 创建外部回调控制器
 func NewExternalCallbackController(
 	orderService service.OrderService,
+	unifiedOrderService *service.UnifiedOrderService,
 	apiKeyRepo repository.ExternalAPIKeyRepository,
 	logRepo repository.ExternalOrderLogRepository,
+	signValidator signature.SignatureHandler,
 ) *ExternalCallbackController {
 	return &ExternalCallbackController{
-		orderService:  orderService,
-		apiKeyRepo:    apiKeyRepo,
-		logRepo:       logRepo,
-		signValidator: signature.NewExternalAPISignatureValidator(),
+		orderService:        orderService,
+		unifiedOrderService: unifiedOrderService,
+		apiKeyRepo:          apiKeyRepo,
+		logRepo:             logRepo,
+		signValidator:       signValidator,
 	}
 }
 
@@ -155,11 +160,22 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 		return
 	}
 
-	// 更新订单状态
-	if err := c.orderService.UpdateOrderStatus(ctx, order.ID, model.OrderStatus(req.Status)); err != nil {
-		logData.ErrorMsg = fmt.Sprintf("Update order status failed: %v", err)
-		c.respondCallbackError(ctx, http.StatusInternalServerError, "Update order status failed", &logData, startTime)
-		return
+	// 使用统一订单处理服务更新订单状态
+	if c.unifiedOrderService != nil {
+		// 使用统一服务处理订单状态更新（包含余额验证和退款逻辑）
+		if err := c.unifiedOrderService.ProcessOrderStatusChange(ctx, order.ID, model.OrderStatus(req.Status), "external"); err != nil {
+			logData.ErrorMsg = fmt.Sprintf("Update order status failed: %v", err)
+			c.respondCallbackError(ctx, http.StatusInternalServerError, "Update order status failed", &logData, startTime)
+			return
+		}
+	} else {
+		// 降级到原有的简单状态更新
+		logger.Warn("统一订单服务未初始化，使用原有的简单状态更新", "order_id", order.ID)
+		if err := c.orderService.UpdateOrderStatus(ctx, order.ID, model.OrderStatus(req.Status)); err != nil {
+			logData.ErrorMsg = fmt.Sprintf("Update order status failed: %v", err)
+			c.respondCallbackError(ctx, http.StatusInternalServerError, "Update order status failed", &logData, startTime)
+			return
+		}
 	}
 
 	// 成功响应

@@ -225,6 +225,15 @@ export const generatedRoutes: GeneratedRoute[] = [
     },
     children: [
       {
+        name: 'system_phone-query',
+        path: '/system/phone-query',
+        component: 'view.system_phone-query',
+        meta: {
+          title: 'system_phone-query',
+          i18nKey: 'route.system_phone-query'
+        }
+      },
+      {
         name: 'system_settings',
         path: '/system/settings',
         component: 'view.system_settings',

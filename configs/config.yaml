@@ -46,3 +46,10 @@ api:
   key: "" # API密钥
   user_id: "" # 用户ID
   base_url: "" # API基础URL
+
+# 第三方API配置
+third_party_api:
+  base_url: "http://35.220.200.84:18080"  # 第三方API基础URL
+  merchant_id: "250705SY"         # 商户号（需要替换为实际值）
+  token: "5eb38f73b40f4b6aa48da3cc7027a0c1"                     # 访问令牌（需要替换为实际值）
+  timeout: 30                             # 请求超时时间（秒）

@@ -246,6 +246,7 @@ const local: App.I18n.Schema = {
     'order_kekebang':"客客帮订单",
     'order_xianzhuanxia':"闲赚侠订单",
     'user':"用户中心",
+    'system_phone-query':"缴费查询",
   },
   page: {
     login: {

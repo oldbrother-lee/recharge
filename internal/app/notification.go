@@ -6,6 +6,7 @@ import (
 
 	"recharge-go/internal/handler"
 	"recharge-go/internal/task"
+	"recharge-go/pkg/logger"
 	"recharge-go/pkg/queue"
 )
 
@@ -37,6 +38,7 @@ func (n *NotificationApp) Initialize() error {
 		n.container.GetServices().Platform,
 		queueInstance,
 		3, // 最大重试次数
+		logger.Log, // 添加 logger 参数
 	)
 
 	return nil

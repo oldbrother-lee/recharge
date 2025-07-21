@@ -217,7 +217,7 @@ func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
 	}
 
 	// 打印原始回调数据用于调试
-	logger.Info("收到充值平台回调数据", 
+	logger.Info("收到充值平台回调数据",
 		zap.String("userid", userIDStr),
 		zap.String("raw_body", string(body)),
 		zap.String("content_type", ctx.GetHeader("Content-Type")),

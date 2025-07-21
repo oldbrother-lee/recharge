@@ -1003,6 +1003,28 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 		return nil, nil, fmt.Errorf("获取平台API信息失败: %v", err)
 	}
 
+	// 检查平台API状态
+	if api.Status != 1 {
+		logger.Error("【平台API已禁用】",
+			"api_id", api.ID,
+			"api_code", api.Code,
+			"status", api.Status,
+			"order_id", order.ID)
+		// 将订单设置为失败状态
+		if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
+			logger.Error("【更新订单状态失败】",
+				"error", err,
+				"order_id", order.ID)
+		}
+		// 更新订单备注
+		if err := s.orderRepo.UpdateRemark(ctx, order.ID, "平台API已禁用"); err != nil {
+			logger.Error("【更新订单备注失败】",
+				"error", err,
+				"order_id", order.ID)
+		}
+		return nil, nil, fmt.Errorf("平台API已禁用: api_id=%d, status=%d", api.ID, api.Status)
+	}
+
 	return api, apiParam, nil
 }
 

@@ -7,6 +7,7 @@ import (
 
 	"recharge-go/internal/handler"
 	"recharge-go/internal/service"
+	"recharge-go/internal/task"
 )
 
 // RechargeApp 充值应用
@@ -15,6 +16,7 @@ type RechargeApp struct {
 	retryHandler    *handler.RetryHandler
 	rechargeHandler *handler.RechargeHandler
 	rechargeWorker  *service.RechargeWorker
+	retryTask       *task.RetryTask
 	ctx             context.Context
 	cancel          context.CancelFunc
 }
@@ -36,6 +38,11 @@ func (r *RechargeApp) Initialize() error {
 	// 创建充值处理器
 	r.rechargeHandler = handler.NewRechargeHandler(
 		r.container.GetServices().Recharge,
+	)
+
+	// 创建重试任务
+	r.retryTask = task.NewRetryTask(
+		r.container.GetServices().Retry,
 	)
 
 	return nil
@@ -66,6 +73,9 @@ func (r *RechargeApp) Start(ctx context.Context) error {
 	// 启动充值工作器
 	go r.rechargeWorker.Start(r.ctx)
 
+	// 启动重试任务
+	r.retryTask.Start()
+
 	log.Println("充值应用启动成功")
 	return nil
 }
@@ -77,6 +87,11 @@ func (r *RechargeApp) Stop(ctx context.Context) error {
 	// 停止充值工作器
 	if r.cancel != nil {
 		r.cancel()
+	}
+
+	// 停止重试任务
+	if r.retryTask != nil {
+		r.retryTask.Stop()
 	}
 
 	// 关闭容器资源

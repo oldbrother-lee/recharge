@@ -467,7 +467,17 @@ func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int
 	// 3. 过滤和排序可用的API
 	availableRelations := make([]*model.ProductAPIRelation, 0)
 	for _, relation := range relations {
-		// 3.1 检查API是否已使用
+		// 3.1 检查ProductAPIRelation状态
+		if relation.Status != 1 { // 1 表示启用
+			logger.Info("ProductAPIRelation未启用，跳过",
+				"relation_id", relation.ID,
+				"api_id", relation.APIID,
+				"status", relation.Status,
+			)
+			continue
+		}
+
+		// 3.2 检查API是否已使用
 		isUsed := false
 		for _, usedAPI := range usedAPIs {
 			if relation.APIID == usedAPI {
@@ -479,7 +489,7 @@ func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int
 			continue
 		}
 
-		// 3.2 获取API信息
+		// 3.3 获取API信息
 		api, err := s.platformRepo.GetAPIByID(ctx, relation.APIID)
 		if err != nil {
 			logger.Error("获取API信息失败",
@@ -489,7 +499,7 @@ func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int
 			continue
 		}
 
-		// 3.3 检查API状态
+		// 3.4 检查API状态
 		if api.Status != 1 { // 1 表示启用
 			logger.Info("API未启用，跳过",
 				"api_id", relation.APIID,
@@ -498,7 +508,7 @@ func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int
 			continue
 		}
 
-		// 3.4 添加到可用列表
+		// 3.5 添加到可用列表
 		availableRelations = append(availableRelations, relation)
 	}
 

@@ -177,7 +177,7 @@ func (r *productRepository) GetAPIRelationsByProductID(ctx context.Context, prod
 	var relations []*model.ProductAPIRelation
 	err := r.db.WithContext(ctx).
 		Where("product_id = ? AND status = 1", productID).
-		Order("priority DESC").
+		Order("sort ASC").
 		Find(&relations).Error
 	return relations, err
 }

@@ -43,7 +43,7 @@ func (r *retryRepository) GetByID(ctx context.Context, id int64) (*model.OrderRe
 func (r *retryRepository) GetPendingRetries(ctx context.Context) ([]*model.OrderRetryRecord, error) {
 	var records []*model.OrderRetryRecord
 	err := r.db.WithContext(ctx).
-		Where("status IN (0, 1) AND next_retry_time <= NOW()").
+		Where("status = 0 AND next_retry_time <= NOW()").
 		Order("next_retry_time ASC").
 		Find(&records).Error
 	return records, err

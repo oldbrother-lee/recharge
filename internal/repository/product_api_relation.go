@@ -88,7 +88,7 @@ func (r *productAPIRelationRepository) List(ctx context.Context, productID, apiI
 		return nil, 0, err
 	}
 
-	err = query.Offset((page - 1) * pageSize).Limit(pageSize).Find(&relations).Error
+	err = query.Order("product_api_relations.sort ASC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&relations).Error
 	if err != nil {
 		return nil, 0, err
 	}
@@ -103,9 +103,10 @@ func (r *productAPIRelationRepository) List(ctx context.Context, productID, apiI
 
 func (r *productAPIRelationRepository) GetByProductID(ctx context.Context, productID int64) (*model.ProductAPIRelation, error) {
 	var relation model.ProductAPIRelation
-	if err := r.db.Where("product_id = ?", productID).First(&relation).Error; err != nil {
+	// 添加状态检查：只获取启用状态的API关系
+	if err := r.db.Where("product_id = ? AND status = 1", productID).Order("sort ASC").First(&relation).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("product %d has no API relation", productID)
+			return nil, fmt.Errorf("product %d has no enabled API relation", productID)
 		}
 		return nil, err
 	}

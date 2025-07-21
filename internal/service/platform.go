@@ -863,7 +863,7 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 
 	// 检查业务状态码（根据外部API的响应格式调整）
 	if code, ok := result["code"]; ok {
-		if codeInt, ok := code.(float64); ok && codeInt != 0 {
+		if codeInt, ok := code.(float64); ok && codeInt != 200 {
 			logger.Error("外部API返回业务错误",
 				"callback_url", callbackURL,
 				"business_code", code,

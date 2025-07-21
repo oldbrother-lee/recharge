@@ -118,6 +118,20 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		creditService,
 	)
 
+	// 设置相互依赖
+	rechargeService.SetOrderService(orderService)
+
+	// 创建重试服务
+	retryService := service.NewRetryService(
+		retryRepo,
+		orderRepo,
+		platformRepo,
+		productRepo,
+		productAPIRelationRepo,
+		rechargeService,
+		orderService,
+	)
+
 	// 创建认证中间件
 	authMiddleware := middleware.NewExternalAuthMiddleware(apiKeyRepo)
 
@@ -135,7 +149,9 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	// 创建签名验证器（使用基础处理器）
 	signValidator := signature.NewBaseSignatureHandler(&signature.Config{})
 	
-	externalCallbackController := controller.NewExternalCallbackController(orderService, unifiedOrderService, apiKeyRepo, externalOrderLogRepo, signValidator)
+	// 重用之前创建的队列实例
+	
+	externalCallbackController := controller.NewExternalCallbackController(orderService, unifiedOrderService, apiKeyRepo, externalOrderLogRepo, signValidator, retryService, productRepo, queueInstance)
 	externalRefundController := controller.NewExternalRefundController(orderService)
 
 	// 注册外部订单API路由（需要认证）

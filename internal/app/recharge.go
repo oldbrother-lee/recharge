@@ -8,6 +8,7 @@ import (
 	"recharge-go/internal/handler"
 	"recharge-go/internal/service"
 	"recharge-go/internal/task"
+	"recharge-go/pkg/queue"
 )
 
 // RechargeApp 充值应用
@@ -40,9 +41,14 @@ func (r *RechargeApp) Initialize() error {
 		r.container.GetServices().Recharge,
 	)
 
+	// 创建队列实例
+	queueInstance := queue.NewRedisQueue()
+	
 	// 创建重试任务
 	r.retryTask = task.NewRetryTask(
 		r.container.GetServices().Retry,
+		r.container.GetConfig(),
+		queueInstance,
 	)
 
 	return nil

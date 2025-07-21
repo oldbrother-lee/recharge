@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -10,6 +11,7 @@ import (
 	"recharge-go/internal/service"
 	"recharge-go/internal/signature"
 	"recharge-go/pkg/logger"
+	"recharge-go/pkg/queue"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +26,9 @@ type ExternalCallbackController struct {
 	apiKeyRepo          repository.ExternalAPIKeyRepository
 	logRepo             repository.ExternalOrderLogRepository
 	signValidator       signature.SignatureHandler
+	retryService        *service.RetryService
+	productRepo         repository.ProductRepository
+	queue               queue.Queue
 }
 
 // NewExternalCallbackController 创建外部回调控制器
@@ -33,6 +38,9 @@ func NewExternalCallbackController(
 	apiKeyRepo repository.ExternalAPIKeyRepository,
 	logRepo repository.ExternalOrderLogRepository,
 	signValidator signature.SignatureHandler,
+	retryService *service.RetryService,
+	productRepo repository.ProductRepository,
+	queue queue.Queue,
 ) *ExternalCallbackController {
 	return &ExternalCallbackController{
 		orderService:        orderService,
@@ -40,6 +48,9 @@ func NewExternalCallbackController(
 		apiKeyRepo:          apiKeyRepo,
 		logRepo:             logRepo,
 		signValidator:       signValidator,
+		retryService:        retryService,
+		productRepo:         productRepo,
+		queue:               queue,
 	}
 }
 
@@ -160,27 +171,151 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 		return
 	}
 
-	// 使用统一订单处理服务更新订单状态
-	if c.unifiedOrderService != nil {
-		// 使用统一服务处理订单状态更新（包含余额验证和退款逻辑）
-		if err := c.unifiedOrderService.ProcessOrderStatusChange(ctx, order.ID, model.OrderStatus(req.Status), "external"); err != nil {
-			logData.ErrorMsg = fmt.Sprintf("Update order status failed: %v", err)
-			c.respondCallbackError(ctx, http.StatusInternalServerError, "Update order status failed", &logData, startTime)
-			return
-		}
-	} else {
-		// 降级到原有的简单状态更新
-		logger.Warn("统一订单服务未初始化，使用原有的简单状态更新", "order_id", order.ID)
-		if err := c.orderService.UpdateOrderStatus(ctx, order.ID, model.OrderStatus(req.Status)); err != nil {
-			logData.ErrorMsg = fmt.Sprintf("Update order status failed: %v", err)
-			c.respondCallbackError(ctx, http.StatusInternalServerError, "Update order status failed", &logData, startTime)
-			return
-		}
+	// 处理订单状态更新
+	if err := c.handleOrderStatusUpdate(ctx, order, model.OrderStatus(req.Status)); err != nil {
+		logData.ErrorMsg = fmt.Sprintf("Update order status failed: %v", err)
+		c.respondCallbackError(ctx, http.StatusInternalServerError, "Update order status failed", &logData, startTime)
+		return
 	}
 
 	// 成功响应
 	logData.Status = 1
 	c.respondCallbackSuccess(ctx, "Success", &logData)
+}
+
+// handleOrderStatusUpdate 处理订单状态更新，失败时检查是否有其他可用通道
+func (c *ExternalCallbackController) handleOrderStatusUpdate(ctx context.Context, order *model.Order, newStatus model.OrderStatus) error {
+	// 如果是失败状态，检查是否有其他可用通道进行重试
+	if newStatus == model.OrderStatusFailed {
+		return c.handleFailedOrderWithRetry(ctx, order)
+	}
+
+	// 非失败状态，使用原有逻辑
+	if c.unifiedOrderService != nil {
+		return c.unifiedOrderService.ProcessOrderStatusChange(ctx, order.ID, newStatus, "external")
+	} else {
+		logger.Warn("统一订单服务未初始化，使用原有的简单状态更新", "order_id", order.ID)
+		return c.orderService.UpdateOrderStatus(ctx, order.ID, newStatus)
+	}
+}
+
+// handleFailedOrderWithRetry 处理失败订单，检查是否有其他可用通道进行重试
+func (c *ExternalCallbackController) handleFailedOrderWithRetry(ctx context.Context, order *model.Order) error {
+	logger.Info("处理失败订单，检查是否有其他可用通道",
+		"order_id", order.ID,
+		"order_number", order.OrderNumber)
+
+	// 获取商品的所有API关系
+	relations, err := c.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
+	if err != nil {
+		logger.Error("获取API关系失败", "order_id", order.ID, "error", err)
+		return err
+	}
+
+	// 解析已使用的API列表
+	var usedAPIs []map[string]interface{}
+	if order.UsedAPIs != "" {
+		if err := json.Unmarshal([]byte(order.UsedAPIs), &usedAPIs); err != nil {
+			logger.Error("解析已使用API列表失败", "order_id", order.ID, "error", err)
+			usedAPIs = []map[string]interface{}{}
+		}
+	}
+
+	// 检查是否还有未使用的API
+	hasAvailableAPI := false
+	for _, relation := range relations {
+		alreadyUsed := false
+		for _, usedAPI := range usedAPIs {
+			if apiID, ok := usedAPI["api_id"].(float64); ok && int64(apiID) == relation.APIID {
+				alreadyUsed = true
+				break
+			}
+		}
+		if !alreadyUsed {
+			hasAvailableAPI = true
+			break
+		}
+	}
+
+	if hasAvailableAPI {
+		// 有可用通道，推送重试任务到消息队列
+		logger.Info("发现可用通道，推送重试任务到队列", "order_id", order.ID)
+		if err := c.pushRetryTaskToQueue(ctx, order.ID, 2, "外部回调失败，切换通道重试"); err != nil {
+			logger.Error("推送重试任务到队列失败", "order_id", order.ID, "error", err)
+			// 推送失败，仍然更新订单状态为失败并发送通知
+			return c.handleAllRetriesCompleted(ctx, order)
+		}
+		// 推送成功，不更新订单状态为失败，也不发送通知
+		return nil
+	} else {
+		// 没有可用通道，更新订单状态为失败并发送通知
+		logger.Info("没有可用通道，订单最终失败", "order_id", order.ID)
+		return c.handleAllRetriesCompleted(ctx, order)
+	}
+}
+
+// pushRetryTaskToQueue 推送重试任务到队列
+func (c *ExternalCallbackController) pushRetryTaskToQueue(ctx context.Context, orderID int64, retryType int, reason string) error {
+	task := model.NewRetryTaskMessage(orderID, retryType, reason)
+
+	// 使用默认队列名称，也可以从配置中读取
+	queueName := "retry_queue"
+	if err := c.queue.Push(ctx, queueName, task); err != nil {
+		return fmt.Errorf("推送重试任务到队列失败: %v", err)
+	}
+
+	logger.Info("重试任务推送到队列成功", "order_id", orderID, "retry_type", retryType, "queue_name", queueName)
+	return nil
+}
+
+// createRetryRecord 创建重试记录
+func (c *ExternalCallbackController) createRetryRecord(ctx context.Context, order *model.Order, nextAPIID int64, usedAPIs []int64) error {
+	// 更新已使用的API列表
+	updatedUsedAPIs := append(usedAPIs, nextAPIID)
+	usedAPIListBytes, err := json.Marshal(updatedUsedAPIs)
+	if err != nil {
+		return fmt.Errorf("序列化已使用API列表失败: %v", err)
+	}
+
+	// 创建重试记录
+	retryRecord := &model.OrderRetryRecord{
+		OrderID:       order.ID,
+		APIID:         nextAPIID,
+		ParamID:       0, // 暂时设为0，后续在重试时会更新
+		RetryType:     2, // 2: 外部回调重试
+		RetryCount:    1,
+		LastError:     "外部回调失败，切换通道重试",
+		RetryParams:   "", // 可以根据需要设置重试参数
+		UsedAPIs:      string(usedAPIListBytes),
+		Status:        0, // 0: 待处理
+		NextRetryTime: time.Now(), // 立即重试
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+	}
+
+	// 直接调用重试仓库创建记录
+	if err := c.retryService.CreateRetryRecord(ctx, retryRecord); err != nil {
+		return fmt.Errorf("创建重试记录失败: %v", err)
+	}
+
+	logger.Info("创建重试记录成功", "order_id", order.ID, "next_api_id", nextAPIID)
+	return nil
+}
+
+// handleAllRetriesCompleted 处理所有重试完成后的通知发送
+func (c *ExternalCallbackController) handleAllRetriesCompleted(ctx context.Context, order *model.Order) error {
+	logger.Info("所有重试已完成，发送失败通知", "order_id", order.ID)
+	return c.updateOrderStatusWithNotification(ctx, order, model.OrderStatusFailed)
+}
+
+// updateOrderStatusWithNotification 更新订单状态并发送通知
+func (c *ExternalCallbackController) updateOrderStatusWithNotification(ctx context.Context, order *model.Order, newStatus model.OrderStatus) error {
+	if c.unifiedOrderService != nil {
+		return c.unifiedOrderService.ProcessOrderStatusChange(ctx, order.ID, newStatus, "external")
+	} else {
+		logger.Warn("统一订单服务未初始化，使用原有的简单状态更新", "order_id", order.ID)
+		return c.orderService.UpdateOrderStatus(ctx, order.ID, newStatus)
+	}
 }
 
 // respondCallbackError 回调错误响应

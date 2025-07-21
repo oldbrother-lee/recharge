@@ -84,30 +84,48 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 		// 收集已使用的API ID
 		usedAPIs := make([]int64, 0)
 		for _, record := range records {
+			// 尝试解析为对象数组格式
 			var usedAPIList []struct {
 				APIID   int64 `json:"api_id"`
 				ParamID int64 `json:"param_id,omitempty"`
 			}
 			if err := json.Unmarshal([]byte(record.UsedAPIs), &usedAPIList); err != nil {
-				return fmt.Errorf("解析已使用API失败: %v", err)
-			}
-			for _, u := range usedAPIList {
-				usedAPIs = append(usedAPIs, u.APIID)
+				// 如果解析失败，尝试解析为简单数字数组格式
+				var simpleAPIList []int64
+				if err2 := json.Unmarshal([]byte(record.UsedAPIs), &simpleAPIList); err2 != nil {
+					return fmt.Errorf("解析已使用API失败: %v", err)
+				}
+				usedAPIs = append(usedAPIs, simpleAPIList...)
+			} else {
+				for _, u := range usedAPIList {
+					usedAPIs = append(usedAPIs, u.APIID)
+				}
 			}
 		}
 
-		// 添加当前API到已使用列表
+		// 添加当前API到已使用列表，使用对象格式
 		usedAPIs = append(usedAPIs, relation.APIID)
-		usedAPIsJSON, err := json.Marshal(usedAPIs)
+		usedAPIObjects := make([]struct {
+			APIID   int64 `json:"api_id"`
+			ParamID int64 `json:"param_id,omitempty"`
+		}, len(usedAPIs))
+		for i, apiID := range usedAPIs {
+			usedAPIObjects[i] = struct {
+				APIID   int64 `json:"api_id"`
+				ParamID int64 `json:"param_id,omitempty"`
+			}{APIID: apiID}
+		}
+		usedAPIsJSON, err := json.Marshal(usedAPIObjects)
 		if err != nil {
 			return fmt.Errorf("序列化已使用API失败: %v", err)
 		}
 
-		// 设置重试时间：如果是第一次重试（RetryCount为0），立即执行；否则设置5分钟后重试
+		// 设置重试时间：如果是第一次重试（RetryCount为0），立即执行；否则设置3秒后重试
 		retryCount := len(records)
 		nextRetryTime := time.Now()
 		if retryCount > 0 {
-			nextRetryTime = time.Now().Add(5 * time.Minute)
+			// 实现秒级充值：缩短重试间隔到3秒
+			nextRetryTime = time.Now().Add(3 * time.Second)
 		}
 
 		retryRecord := &model.OrderRetryRecord{
@@ -117,6 +135,7 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 			RetryType:     retryType,
 			Status:        0, // 待重试
 			NextRetryTime: nextRetryTime,
+			RetryParams:   "{}", // 设置为空JSON对象
 			UsedAPIs:      string(usedAPIsJSON),
 			RetryCount:    retryCount, // 设置重试次数为已存在的记录数
 		}
@@ -141,7 +160,9 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 					logger.Error("【更新重试记录状态失败】record_id: %d, order_id: %d, error: %v",
 						retryRecord.ID, retryRecord.OrderID, err)
 				}
-				return fmt.Errorf("首次重试失败: %v", err)
+				logger.Error("【首次重试失败】record_id: %d, order_id: %d, error: %v, 继续尝试其他通道",
+					retryRecord.ID, order.ID, err)
+				// 不要立即返回错误，继续尝试其他通道
 			} else {
 				// 更新重试记录状态为成功
 				retryRecord.Status = 2 // 重试成功
@@ -150,7 +171,38 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 						retryRecord.ID, retryRecord.OrderID, err)
 				}
 				logger.Info("【首次重试成功】record_id: %d, order_id: %d", retryRecord.ID, order.ID)
+				// 如果重试成功，可以直接返回
+				return nil
 			}
+		}
+	}
+
+	// 检查当前订单是否所有重试通道都已完成
+	orderRetries, err := s.retryRepo.GetByOrderID(ctx, order.ID)
+	if err != nil {
+		logger.Error("【获取订单重试记录失败】order_id: %d, error: %v", order.ID, err)
+		return nil // 不影响主流程
+	}
+
+	// 检查是否所有重试都已完成（成功或失败）
+	allCompleted := true
+	hasSuccess := false
+	for _, r := range orderRetries {
+		if r.Status == 0 || r.Status == 1 { // 0: 待处理, 1: 处理中
+			allCompleted = false
+			break
+		} else if r.Status == 2 { // 2: 重试成功
+			hasSuccess = true
+		}
+	}
+
+	// 如果所有重试都已完成且没有成功的，将订单标记为失败
+	if allCompleted && !hasSuccess {
+		logger.Info("【所有重试通道均已失败，更新订单状态为失败】order_id: %d", order.ID)
+		if err := s.orderService.ProcessOrderFail(ctx, order.ID, "所有通道重试失败，自动失败"); err != nil {
+			logger.Error("【订单失败处理失败】order_id: %d, error: %v", order.ID, err)
+		} else {
+			logger.Info("【订单状态已更新为失败并已发送通知】order_id: %d", order.ID)
 		}
 	}
 
@@ -211,19 +263,19 @@ func (s *RetryService) ProcessRetries(ctx context.Context) error {
 			// 检查当前订单是否所有重试都失败
 			orderRetries, err := s.retryRepo.GetByOrderID(ctx, record.OrderID)
 			if err == nil {
-				allFailed := true
+				allCompleted := true
 				for _, r := range orderRetries {
-					if r.Status != 3 { // 3 表示重试失败
-						allFailed = false
+					if r.Status == 0 || r.Status == 1 { // 0: 待处理, 1: 处理中
+						allCompleted = false
 						break
 					}
 				}
-				if allFailed {
-					logger.Info(fmt.Sprintf("【所有平台重试均失败，更新订单状态为失败】order_id: %d", record.OrderID))
-					if err := s.orderService.ProcessOrderFail(ctx, record.OrderID, "所有平台重试失败，自动失败"); err != nil {
+				if allCompleted {
+					logger.Info(fmt.Sprintf("【所有重试均已完成，更新订单状态为失败并发送通知】order_id: %d", record.OrderID))
+					if err := s.orderService.ProcessOrderFail(ctx, record.OrderID, "所有通道重试失败，自动失败"); err != nil {
 						logger.Error("【订单失败处理失败】order_id: %d, error: %v", record.OrderID, err)
 					} else {
-						logger.Info("【订单状态已更新为失败】order_id: %d", record.OrderID)
+						logger.Info("【订单状态已更新为失败并已发送通知】order_id: %d", record.OrderID)
 					}
 				}
 			}
@@ -409,6 +461,13 @@ func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetr
 	logger.Info("【订单状态更新成功】record_id: %d, order_id: %d, order_number: %s",
 		record.ID, record.OrderID, order.OrderNumber)
 
+	// 11. 重试成功，取消同一订单的其他待重试记录
+	if err := s.cancelPendingRetries(ctx, record.OrderID, record.ID); err != nil {
+		logger.Error("【取消其他待重试记录失败】record_id: %d, order_id: %d, error: %v",
+			record.ID, record.OrderID, err)
+		// 不返回错误，因为主要任务已完成
+	}
+
 	return nil
 }
 
@@ -432,20 +491,26 @@ func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int
 	// 收集已使用的API ID
 	usedAPIs := make([]int64, 0)
 	for _, record := range records {
-		// 解析 UsedAPIs 字段
+		// 解析 UsedAPIs 字段，兼容两种格式
 		var usedAPIList []struct {
 			APIID   int64 `json:"api_id"`
 			ParamID int64 `json:"param_id,omitempty"`
 		}
 		if err := json.Unmarshal([]byte(record.UsedAPIs), &usedAPIList); err != nil {
-			logger.Error("解析已使用API失败",
-				"error", err,
-				"record_id", record.ID,
-			)
-			return nil, fmt.Errorf("解析已使用API失败: %v", err)
-		}
-		for _, u := range usedAPIList {
-			usedAPIs = append(usedAPIs, u.APIID)
+			// 如果解析对象数组失败，尝试解析为简单数字数组
+			var simpleAPIList []int64
+			if err2 := json.Unmarshal([]byte(record.UsedAPIs), &simpleAPIList); err2 != nil {
+				logger.Error("解析已使用API失败",
+					"error", err,
+					"record_id", record.ID,
+				)
+				return nil, fmt.Errorf("解析已使用API失败: %v", err)
+			}
+			usedAPIs = append(usedAPIs, simpleAPIList...)
+		} else {
+			for _, u := range usedAPIList {
+				usedAPIs = append(usedAPIs, u.APIID)
+			}
 		}
 	}
 
@@ -527,6 +592,55 @@ func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int
 	return availableRelations, nil
 }
 
+// cancelPendingRetries 取消同一订单的其他待重试记录
+func (s *RetryService) cancelPendingRetries(ctx context.Context, orderID int64, excludeRecordID int64) error {
+	logger.Info("【开始取消其他待重试记录】order_id: %d, exclude_record_id: %d", orderID, excludeRecordID)
+
+	// 获取同一订单的所有待重试记录
+	records, err := s.retryRepo.GetByOrderID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("获取订单重试记录失败: %v", err)
+	}
+
+	// 取消除当前记录外的其他待重试记录
+	for _, record := range records {
+		if record.ID != excludeRecordID && record.Status == 0 { // 0: 待处理
+			record.Status = 3 // 3: 已取消
+			if err := s.retryRepo.Update(ctx, record); err != nil {
+				logger.Error("【取消重试记录失败】record_id: %d, order_id: %d, error: %v",
+					record.ID, orderID, err)
+				continue
+			}
+			logger.Info("【取消重试记录成功】record_id: %d, order_id: %d", record.ID, orderID)
+		}
+	}
+
+	return nil
+}
+
+// CreateRetryRecord 创建重试记录
+func (s *RetryService) CreateRetryRecord(ctx context.Context, record *model.OrderRetryRecord) error {
+	return s.retryRepo.Create(ctx, record)
+}
+
+// checkAllRetriesCompleted 检查订单的所有重试是否已完成
+func (s *RetryService) checkAllRetriesCompleted(ctx context.Context, orderID int64) (bool, error) {
+	// 获取订单的所有重试记录
+	records, err := s.retryRepo.GetByOrderID(ctx, orderID)
+	if err != nil {
+		return false, fmt.Errorf("获取订单重试记录失败: %v", err)
+	}
+
+	// 检查是否还有待处理或处理中的记录
+	for _, record := range records {
+		if record.Status == 0 || record.Status == 1 { // 0: 待处理, 1: 处理中
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
 // TriggerRetry 手动触发重试
 func (s *RetryService) TriggerRetry(ctx context.Context, recordID int64) error {
 	// 1. 获取重试记录
@@ -543,4 +657,9 @@ func (s *RetryService) TriggerRetry(ctx context.Context, recordID int64) error {
 
 	// 3. 执行重试
 	return s.executeRetry(ctx, record)
+}
+
+// GetOrderByID 根据订单ID获取订单信息
+func (s *RetryService) GetOrderByID(ctx context.Context, orderID int64) (*model.Order, error) {
+	return s.orderRepo.GetByID(ctx, orderID)
 }

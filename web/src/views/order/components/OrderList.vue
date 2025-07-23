@@ -46,6 +46,9 @@ const showBatchNotificationModal = ref(false);
 const batchFailRemark = ref('');
 const batchLoading = ref(false);
 
+// 余额验证状态
+const balanceVerificationEnabled = ref(false);
+
 const statusMap: Record<string, { type: 'success' | 'warning' | 'error' | 'info' | 'default', text: string }> = {
   '1': { type: 'warning', text: '待支付' },
   '2': { type: 'warning', text: '待充值' },
@@ -289,6 +292,46 @@ const confirmBatchFail = async () => {
   }
 };
 
+// 初始化余额验证状态
+const initBalanceVerificationStatus = async () => {
+  try {
+    const res = await request({
+      url: '/systemManage/key/balance_verification_enabled',
+      method: 'GET'
+    });
+    balanceVerificationEnabled.value = res.data?.config_value === 'true';
+  } catch (error) {
+    console.error('获取余额验证状态失败:', error);
+  }
+};
+
+const toggleBalanceQuery = async () => {
+  try {
+    const res = await request({
+      url: '/systemManage/key/balance_verification_enabled',
+      method: 'GET'
+    });
+    
+    const currentValue = res.data?.config_value === 'true';
+    const newValue = !currentValue;
+    
+    await request({
+      url: '/systemManage/settings/batch',
+      method: 'PUT',
+      data: {
+        balance_verification_enabled: newValue.toString()
+      }
+    });
+    
+    // 更新本地状态
+    balanceVerificationEnabled.value = newValue;
+    
+    message.success(`余额查询已${newValue ? '开启' : '关闭'}`);
+  } catch (error) {
+    message.error('切换余额查询状态失败');
+  }
+};
+
 const columns: DataTableColumns<Order> = [
   {
     type: 'selection'
@@ -455,6 +498,7 @@ watch(() => [props.platform, props.platform_code], () => {
 
 onMounted(() => {
   fetchOrders();
+  initBalanceVerificationStatus();
 });
 
 function formatLocalDatetime(ts: number | null) {
@@ -534,6 +578,18 @@ function formatLocalDatetime(ts: number | null) {
               <span class="btn-text">
                 <span class="btn-text-full">清理订单</span>
                 <span class="btn-text-short">清理</span>
+              </span>
+            </NButton>
+            <NButton
+              v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
+              type="primary"
+              size="small"
+              @click="toggleBalanceQuery"
+              class="batch-btn"
+            >
+              <span class="btn-text">
+                <span class="btn-text-full">{{ balanceVerificationEnabled ? '关闭查询余额' : '开启查询余额' }}</span>
+                <span class="btn-text-short">查询余额</span>
               </span>
             </NButton>
           </div>

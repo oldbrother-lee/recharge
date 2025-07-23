@@ -29,6 +29,7 @@ type UnifiedOrderService struct {
 	queue                   queue.Queue
 	db                      *gorm.DB
 	logger                  *zap.Logger
+	systemConfigService     *SystemConfigService
 }
 
 // NewUnifiedOrderService 创建统一订单处理服务
@@ -41,6 +42,7 @@ func NewUnifiedOrderService(
 	queue queue.Queue,
 	db *gorm.DB,
 	logger *zap.Logger,
+	systemConfigService *SystemConfigService,
 ) *UnifiedOrderService {
 	return &UnifiedOrderService{
 		orderRepo:              orderRepo,
@@ -51,6 +53,7 @@ func NewUnifiedOrderService(
 		queue:                  queue,
 		db:                     db,
 		logger:                 logger,
+		systemConfigService:    systemConfigService,
 	}
 }
 
@@ -239,6 +242,23 @@ type BalanceCheckResult struct {
 
 // performBalanceCheck 在事务外执行余额验证逻辑
 func (s *UnifiedOrderService) performBalanceCheck(ctx context.Context, order *model.Order) (*BalanceCheckResult, error) {
+	// 检查余额验证开关
+	balanceVerificationEnabled, err := s.systemConfigService.GetBoolValue(ctx, "balance_verification_enabled")
+	if err != nil {
+		s.logger.Error("获取余额验证开关配置失败", zap.Error(err))
+		// 配置获取失败时，默认启用余额验证以保证安全性
+		balanceVerificationEnabled = true
+	}
+
+	if !balanceVerificationEnabled {
+		s.logger.Info("余额验证已关闭，跳过余额验证", zap.Int64("order_id", order.ID))
+		return &BalanceCheckResult{
+			BalanceChanged:  true, // 假设余额已变化，避免触发退款
+			RefundTriggered: false,
+			Message:         "余额验证已关闭",
+		}, nil
+	}
+
 	s.logger.Info("开始余额验证", zap.Int64("order_id", order.ID), zap.String("mobile", order.Mobile))
 
 	// 获取充值前余额记录
@@ -361,6 +381,23 @@ func (s *UnifiedOrderService) performBalanceCheck(ctx context.Context, order *mo
 
 // performBalanceCheckWithTx 在事务内执行余额验证逻辑
 func (s *UnifiedOrderService) performBalanceCheckWithTx(ctx context.Context, tx *gorm.DB, order *model.Order) (*BalanceCheckResult, error) {
+	// 检查余额验证开关
+	balanceVerificationEnabled, err := s.systemConfigService.GetBoolValue(ctx, "balance_verification_enabled")
+	if err != nil {
+		s.logger.Error("获取余额验证开关配置失败", zap.Error(err))
+		// 配置获取失败时，默认启用余额验证以保证安全性
+		balanceVerificationEnabled = true
+	}
+
+	if !balanceVerificationEnabled {
+		s.logger.Info("余额验证已关闭，跳过余额验证", zap.Int64("order_id", order.ID))
+		return &BalanceCheckResult{
+			BalanceChanged:  true, // 假设余额已变化，避免触发退款
+			RefundTriggered: false,
+			Message:         "余额验证已关闭",
+		}, nil
+	}
+
 	s.logger.Info("开始执行余额验证", zap.Int64("order_id", order.ID), zap.String("mobile", order.Mobile))
 
 	// 获取充值前余额记录

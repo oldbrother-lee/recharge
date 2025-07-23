@@ -83,6 +83,10 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 	// 创建余额查询记录仓库
 	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(database.DB)
 	
+	// 创建系统配置服务
+	systemConfigRepo := repository.NewSystemConfigRepository(database.DB)
+	systemConfigService := service.NewSystemConfigService(systemConfigRepo)
+
 	// 创建统一订单处理服务
 	unifiedOrderService := service.NewUnifiedOrderService(
 		orderRepo,
@@ -93,6 +97,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		queueInstance,
 		database.DB,
 		logger.Log,
+		systemConfigService,
 	)
 	
 	rechargeService := service.NewRechargeService(
@@ -110,6 +115,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		phoneQueryService, // 添加手机查询服务
 		balanceQueryRecordRepo, // 添加余额查询记录仓库
 		unifiedOrderService, // 添加统一订单处理服务
+		systemConfigService, // 添加系统配置服务
 		notificationRepo,
 		queueInstance,
 	)

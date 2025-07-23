@@ -34,6 +34,7 @@ func NewManager(db *gorm.DB) *Manager {
 			"external_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 			"internal_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 			"chongzhi":     reflect.TypeOf((*ChongzhiPlatform)(nil)).Elem(),
+			"payc2":        reflect.TypeOf((*Payc2Platform)(nil)).Elem(),
 		},
 	}
 }
@@ -83,6 +84,8 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
 	case "chongzhi":
 		platform = NewChongzhiPlatform(m.platformRepo.GetDB())
+	case "payc2":
+		platform = NewPayc2Platform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}

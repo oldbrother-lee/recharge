@@ -52,6 +52,10 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	// 创建余额查询记录仓库
 	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
 	
+	// 创建系统配置服务
+	systemConfigRepo := repository.NewSystemConfigRepository(db)
+	systemConfigService := service.NewSystemConfigService(systemConfigRepo)
+
 	// 创建统一订单服务
 	unifiedOrderService := service.NewUnifiedOrderService(
 		orderRepo,
@@ -62,6 +66,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		queueInstance,
 		db,
 		logger.Log,
+		systemConfigService,
 	)
 	
 	// 先创建充值服务（因为订单服务需要它）
@@ -80,6 +85,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		phoneQueryService, // 添加手机查询服务
 		balanceQueryRecordRepo, // 添加余额查询记录仓库
 		unifiedOrderService, // 添加统一订单服务
+		systemConfigService, // 添加系统配置服务
 		notificationRepo,
 		queueInstance,
 	)

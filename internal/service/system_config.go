@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"strconv"
@@ -228,6 +229,16 @@ func (s *SystemConfigService) InitSystemConfigs(ctx context.Context) error {
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		},
+		{
+			ConfigKey:   "balance_verification_enabled",
+			ConfigValue: "true",
+			ConfigDesc:  "余额验证开关（充值前后余额查询验证）",
+			ConfigType:  "boolean",
+			IsSystem:    1,
+			Status:      1,
+			CreatedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		},
 	}
 
 	for _, config := range defaultConfigs {
@@ -279,6 +290,21 @@ func (s *SystemConfigService) GetAllAsMap(ctx context.Context) (map[string]strin
 	}
 
 	return configMap, nil
+}
+
+// GetBoolValue 获取布尔类型配置值
+func (s *SystemConfigService) GetBoolValue(ctx context.Context, key string) (bool, error) {
+	config, err := s.systemConfigRepo.GetByKey(key)
+	if err != nil {
+		return false, err
+	}
+
+	value, err := strconv.ParseBool(config.ConfigValue)
+	if err != nil {
+		return false, fmt.Errorf("配置值 %s 不是有效的布尔值: %v", key, err)
+	}
+
+	return value, nil
 }
 
 // toResponse 转换为响应结构

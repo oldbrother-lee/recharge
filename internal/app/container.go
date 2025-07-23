@@ -311,6 +311,9 @@ func (c *Container) initServices() error {
 	// 初始化PhoneQuery服务（需要在充值服务之前创建）
 	c.services.PhoneQuery = service.NewPhoneQueryService(c.config)
 
+	// 初始化SystemConfig服务（需要在其他服务之前创建）
+	c.services.SystemConfig = service.NewSystemConfigService(c.repositories.SystemConfig)
+
 	// 创建统一订单服务
 	c.services.UnifiedOrder = service.NewUnifiedOrderService(
 		c.repositories.Order,
@@ -321,6 +324,7 @@ func (c *Container) initServices() error {
 		queueInstance,
 		c.db,
 		c.logger,
+		c.services.SystemConfig,
 	)
 
 	// 创建充值服务
@@ -339,6 +343,7 @@ func (c *Container) initServices() error {
 		c.services.PhoneQuery, // 添加手机查询服务依赖
 		c.repositories.BalanceQueryRecord, // 添加余额查询记录仓库依赖
 		c.services.UnifiedOrder, // 添加统一订单服务
+		c.services.SystemConfig, // 添加系统配置服务
 		c.repositories.Notification,
 		queueInstance,
 	)
@@ -441,11 +446,6 @@ func (c *Container) initServices() error {
 
 	// 初始化PlatformPushStatus服务
 	c.services.PlatformPushStatus = platform.NewPushStatusService(c.repositories.PlatformAccount)
-
-	// 初始化SystemConfig服务
-	c.services.SystemConfig = service.NewSystemConfigService(c.repositories.SystemConfig)
-
-
 
 	// 初始化系统配置数据
 	if err := c.services.SystemConfig.InitSystemConfigs(context.Background()); err != nil {

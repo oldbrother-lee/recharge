@@ -22,6 +22,8 @@ type NotificationService interface {
 	UpdateNotificationStatus(ctx context.Context, id int64, status int) error
 	// GetNotification 获取通知记录
 	GetNotification(ctx context.Context, id int64) (*notification.NotificationRecord, error)
+	// DeleteByOrderIDs 根据订单ID列表删除通知记录
+	DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error
 }
 
 // notificationService 通知服务实现
@@ -85,4 +87,9 @@ func (s *notificationService) UpdateNotificationStatus(ctx context.Context, id i
 // GetNotification 获取通知记录
 func (s *notificationService) GetNotification(ctx context.Context, id int64) (*notification.NotificationRecord, error) {
 	return s.recordRepo.GetByID(ctx, id)
+}
+
+// DeleteByOrderIDs 根据订单ID列表删除通知记录
+func (s *notificationService) DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error {
+	return s.recordRepo.DeleteByOrderIDs(ctx, orderIDs)
 }

@@ -57,6 +57,7 @@ type ProductCreateRequest struct {
 	APIID           int64   `json:"api_id"`
 	APIParamID      int64   `json:"api_param_id"`
 	IsApi           bool    `json:"is_api"`
+	DuplicateCheck  bool    `json:"duplicate_check"`
 }
 
 // ProductUpdateRequest 更新商品请求
@@ -87,6 +88,7 @@ type ProductUpdateRequest struct {
 	APIID           int64   `json:"api_id"`
 	APIParamID      int64   `json:"api_param_id"`
 	IsApi           bool    `json:"is_api"`
+	DuplicateCheck  bool    `json:"duplicate_check"`
 }
 
 // ProductAPIRelationCreateRequest 创建商品接口关联请求
@@ -125,4 +127,9 @@ type ProductAPIRelationListRequest struct {
 type ProductAPIRelationListResponse struct {
 	Total int64                `json:"total"`
 	List  []ProductAPIRelation `json:"list"`
+}
+
+// ProductDuplicateCheckRequest 更新商品重复检查开关请求
+type ProductDuplicateCheckRequest struct {
+	DuplicateCheck bool `json:"duplicate_check" binding:"required"`
 }

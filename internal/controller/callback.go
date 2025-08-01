@@ -123,7 +123,7 @@ func verifySignature(body []byte, sign string, secretKey string) bool {
 
 // HandleMishiCallback 处理秘史平台回调
 func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
-	fmt.Printf("[mishi] 处理秘史平台回调!!!\n")
+	fmt.Printf("处理平台回调!!!\n")
 	// 1. 获取userid
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {

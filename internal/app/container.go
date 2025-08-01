@@ -72,6 +72,7 @@ type Repositories struct {
 	CreditLog           *repository.CreditLogRepository     // 添加CreditLog repository
 	SystemConfig        *repository.SystemConfigRepository  // 添加SystemConfig repository
 	ExternalAPIKey      repository.ExternalAPIKeyRepository // 添加ExternalAPIKey repository
+	OrderException      repository.OrderExceptionRepository // 添加OrderException repository
 }
 
 // Services 服务集合
@@ -107,6 +108,7 @@ type Services struct {
 	PlatformSvc            *platform.Service                 // 添加platform.Service
 	SystemConfig           *service.SystemConfigService      // 添加SystemConfig服务
 	PhoneQuery             service.PhoneQueryService         // 添加PhoneQuery服务
+	OrderException         service.OrderExceptionService     // 添加OrderException服务
 }
 
 // NewContainer 创建新的容器实例
@@ -214,6 +216,8 @@ func (c *Container) initQueue() error {
 func (c *Container) initMiddleware() {
 	// 初始化MF178认证中间件
 	middleware.InitMF178Auth(c.db)
+	// 初始化全局认证中间件
+	middleware.InitGlobalAuthMiddleware(c.db)
 }
 
 // 初始化仓储
@@ -245,6 +249,7 @@ func (c *Container) initRepositories() {
 		CreditLog:           repository.NewCreditLogRepository(c.db),
 		SystemConfig:        repository.NewSystemConfigRepository(c.db),
 		ExternalAPIKey:      repository.NewExternalAPIKeyRepository(c.db),
+		OrderException:      repository.NewOrderExceptionRepository(c.db),
 	}
 }
 
@@ -314,7 +319,14 @@ func (c *Container) initServices() error {
 	// 初始化SystemConfig服务（需要在其他服务之前创建）
 	c.services.SystemConfig = service.NewSystemConfigService(c.repositories.SystemConfig)
 
-	// 创建统一订单服务
+	// 初始化OrderException服务
+	c.services.OrderException = service.NewOrderExceptionService(
+		c.repositories.OrderException,
+		c.repositories.Order,
+		c.logger,
+	)
+
+	// 创建统一订单服务（暂时不传入retryService，避免循环依赖）
 	c.services.UnifiedOrder = service.NewUnifiedOrderService(
 		c.repositories.Order,
 		c.repositories.BalanceQueryRecord,
@@ -325,6 +337,9 @@ func (c *Container) initServices() error {
 		c.db,
 		c.logger,
 		c.services.SystemConfig,
+		c.repositories.Product,
+		nil, // retryService 稍后设置
+		c.services.OrderException,
 	)
 
 	// 创建充值服务
@@ -376,6 +391,9 @@ func (c *Container) initServices() error {
 		c.services.Recharge,
 		c.services.Order,
 	)
+
+	// 设置统一订单服务的重试服务依赖（解决循环依赖）
+	c.services.UnifiedOrder.SetRetryService(c.services.Retry)
 
 	// 初始化统计任务服务
 	c.services.StatisticsTask = service.NewStatisticsTask(
@@ -464,7 +482,7 @@ func (c *Container) initLogger(serviceName string) error {
 	}
 
 	// 同时保持原有的zap logger初始化
-	logger, err := zap.NewProduction()
+	logger, err := zap.NewProduction(zap.AddCallerSkip(1))
 	if err != nil {
 		return fmt.Errorf("初始化zap logger失败: %w", err)
 	}

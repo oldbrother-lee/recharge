@@ -30,6 +30,9 @@ type UnifiedOrderService struct {
 	db                      *gorm.DB
 	logger                  *zap.Logger
 	systemConfigService     *SystemConfigService
+	productRepo             repository.ProductRepository
+	retryService            *RetryService
+	orderExceptionService   OrderExceptionService
 }
 
 // NewUnifiedOrderService 创建统一订单处理服务
@@ -43,6 +46,9 @@ func NewUnifiedOrderService(
 	db *gorm.DB,
 	logger *zap.Logger,
 	systemConfigService *SystemConfigService,
+	productRepo repository.ProductRepository,
+	retryService *RetryService,
+	orderExceptionService OrderExceptionService,
 ) *UnifiedOrderService {
 	return &UnifiedOrderService{
 		orderRepo:              orderRepo,
@@ -54,6 +60,9 @@ func NewUnifiedOrderService(
 		db:                     db,
 		logger:                 logger,
 		systemConfigService:    systemConfigService,
+		productRepo:            productRepo,
+		retryService:           retryService,
+		orderExceptionService:  orderExceptionService,
 	}
 }
 
@@ -145,23 +154,47 @@ func (s *UnifiedOrderService) UpdateOrderStatusUnified(ctx context.Context, req 
 		}
 	}
 
-	// 5. 在事务外执行失败订单的退款逻辑（避免长时间持有数据库锁）
+	// 5. 在事务外执行失败订单的换通道重试逻辑（避免长时间持有数据库锁）
+	var hasAvailableChannel bool
 	if req.NewStatus == model.OrderStatusFailed {
-		refundResult, err := s.performRefundAsync(ctx, &order, req.Remark)
+		// 检查是否有可用通道进行重试
+		var err error
+		hasAvailableChannel, err = s.checkAndHandleFailedOrderRetry(ctx, &order)
 		if err != nil {
-			s.logger.Error("退款失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
-			// 退款失败不影响订单状态更新的成功
-			result.Message = fmt.Sprintf("%s (退款失败: %v)", result.Message, err)
+			s.logger.Error("检查失败订单重试逻辑失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+			// 检查失败，继续执行退款逻辑
+			hasAvailableChannel = false
+		}
+
+		if hasAvailableChannel {
+			// 有可用通道，已推送重试任务，不执行退款，也不发送失败通知
+			s.logger.Info("订单已推送重试任务，跳过退款逻辑和失败通知", zap.Int64("order_id", req.OrderID))
+			result.Message += ", 已推送重试任务"
 		} else {
-			result.RefundTriggered = refundResult.Success
-			if refundResult.Success {
-				result.Message += ", 退款成功"
+			// 没有可用通道或重试失败，执行退款逻辑
+			refundResult, err := s.performRefundAsync(ctx, &order, req.Remark)
+			if err != nil {
+				s.logger.Error("退款失败", zap.Int64("order_id", req.OrderID), zap.Error(err))
+				// 退款失败不影响订单状态更新的成功
+				result.Message = fmt.Sprintf("%s (退款失败: %v)", result.Message, err)
+			} else {
+				result.RefundTriggered = refundResult.Success
+				if refundResult.Success {
+					result.Message += ", 退款成功"
+				}
 			}
 		}
 	}
 
 	// 6. 发送订单状态变更通知（使用订单的最终状态）
-	if s.notificationRepo != nil && s.queue != nil {
+	// 如果是失败状态且有可用通道重试，则不发送失败通知
+	shouldSendNotification := true
+	if req.NewStatus == model.OrderStatusFailed && hasAvailableChannel {
+		shouldSendNotification = false
+		s.logger.Info("订单有可用通道重试，跳过失败通知发送", zap.Int64("order_id", req.OrderID))
+	}
+
+	if shouldSendNotification && s.notificationRepo != nil && s.queue != nil {
 		// 重新获取订单以确保使用最新的状态
 		var finalOrder model.Order
 		if err := s.db.WithContext(ctx).Where("id = ?", req.OrderID).First(&finalOrder).Error; err != nil {
@@ -343,37 +376,40 @@ func (s *UnifiedOrderService) performBalanceCheck(ctx context.Context, order *mo
 		Message:        "余额验证完成",
 	}
 
-	// 如果余额没有变化，触发退款并更新订单状态
+	// 如果余额没有变化，创建异常记录，但保持订单成功状态
 	if !balanceChanged {
-		s.logger.Warn("余额验证失败，准备执行退款", zap.Int64("order_id", order.ID))
+		s.logger.Warn("余额验证失败，创建异常记录", zap.Int64("order_id", order.ID))
 		
-		// 在新事务中更新订单状态为失败
-		err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return tx.Model(&model.Order{}).Where("id = ?", order.ID).Update("status", model.OrderStatusFailed).Error
-		})
-		
-		if err != nil {
-			s.logger.Error("更新订单状态为失败失败", zap.Int64("order_id", order.ID), zap.Error(err))
-			result.Message = "余额验证失败，但更新订单状态失败"
-		} else {
-			// 更新订单状态成功后，发送状态变更通知
-			order.Status = model.OrderStatusFailed
-			if s.notificationRepo != nil && s.queue != nil {
-				if notifyErr := s.sendOrderStatusNotification(ctx, order, model.OrderStatusFailed); notifyErr != nil {
-					s.logger.Error("发送订单失败状态通知失败", zap.Int64("order_id", order.ID), zap.Error(notifyErr))
-				}
-			}
-			
-			// 执行退款
-			refundResult, refundErr := s.performRefundAsync(ctx, order, "余额验证失败")
-			if refundErr != nil {
-				s.logger.Error("退款失败", zap.Int64("order_id", order.ID), zap.Error(refundErr))
-				result.Message = "余额验证失败，订单已设置为失败状态，但退款失败"
-			} else {
-				result.RefundTriggered = refundResult.Success
-				result.Message = "余额验证失败，订单已设置为失败状态并触发退款"
-			}
+		// 构建异常数据
+		exceptionData := &model.BalanceVerificationExceptionData{
+			PreBalance:    preBalanceRecord.Balance,
+			PostBalance:   postBalanceResp.Data,
+			ExpectedDiff:  expectedChange,
+			ActualDiff:    balanceChange,
+			Mobile:        order.Mobile,
+			ISPType:       ispType,
+			PlatformCode:  order.PlatformCode,
+			Amount:        order.Price,
+			QueryDuration: queryDuration.Milliseconds(),
 		}
+		
+		// 创建异常记录
+		if s.orderExceptionService != nil {
+			if exceptionErr := s.orderExceptionService.CreateBalanceVerificationException(ctx, nil, order, exceptionData); exceptionErr != nil {
+				s.logger.Error("创建余额验证异常记录失败", zap.Int64("order_id", order.ID), zap.Error(exceptionErr))
+				result.Message = "余额验证失败，但创建异常记录失败"
+			} else {
+				s.logger.Info("余额验证异常记录创建成功", zap.Int64("order_id", order.ID))
+				result.Message = "余额验证失败，已创建异常记录，订单保持成功状态"
+			}
+		} else {
+			s.logger.Error("订单异常服务未初始化", zap.Int64("order_id", order.ID))
+			result.Message = "余额验证失败，但异常服务不可用"
+		}
+		
+		// 注意：这里不再触发退款，也不更新订单状态为失败
+		// 订单保持成功状态，等待人工审核
+		result.RefundTriggered = false
 	}
 
 	return result, nil
@@ -494,21 +530,44 @@ func (s *UnifiedOrderService) performBalanceCheckWithTx(ctx context.Context, tx 
 		RefundTriggered: false,
 	}
 
-	// 如果余额没有变化，触发退款
+	// 如果余额没有变化，创建异常记录，但保持订单成功状态
 	if !balanceChanged {
-		s.logger.Error("余额无变化，触发退款",
+		s.logger.Warn("余额验证失败，创建异常记录",
 			zap.Int64("order_id", order.ID),
 			zap.String("pre_balance", preRecord.Balance),
 			zap.String("post_balance", balanceData),
 		)
 
-		refundResult, err := s.performRefund(ctx, tx, order, "充值后余额无变化")
-		if err != nil {
-			s.logger.Error("退款失败", zap.Int64("order_id", order.ID), zap.Error(err))
-		} else {
-			result.RefundTriggered = refundResult.Success
+		// 构建异常数据
+		exceptionData := &model.BalanceVerificationExceptionData{
+			PreBalance:    preRecord.Balance,
+			PostBalance:   balanceData,
+			ExpectedDiff:  0.01, // 最小期望变化
+			ActualDiff:    postAmount - preAmount,
+			Mobile:        order.Mobile,
+			ISPType:       ispType,
+			PlatformCode:  order.PlatformCode,
+			Amount:        order.Price,
+			QueryDuration: duration,
 		}
-		result.Message = "余额无变化"
+		
+		// 在事务中创建异常记录
+		if s.orderExceptionService != nil {
+			if exceptionErr := s.orderExceptionService.CreateBalanceVerificationException(ctx, tx, order, exceptionData); exceptionErr != nil {
+				s.logger.Error("创建余额验证异常记录失败", zap.Int64("order_id", order.ID), zap.Error(exceptionErr))
+				result.Message = "余额验证失败，但创建异常记录失败"
+			} else {
+				s.logger.Info("余额验证异常记录创建成功", zap.Int64("order_id", order.ID))
+				result.Message = "余额验证失败，已创建异常记录，订单保持成功状态"
+			}
+		} else {
+			s.logger.Error("订单异常服务未初始化", zap.Int64("order_id", order.ID))
+			result.Message = "余额验证失败，但异常服务不可用"
+		}
+		
+		// 注意：这里不再触发退款
+		// 订单保持成功状态，等待人工审核
+		result.RefundTriggered = false
 	} else {
 		result.Message = "余额验证通过"
 	}
@@ -641,6 +700,120 @@ func (s *UnifiedOrderService) ProcessOrderStatusChange(ctx context.Context, orde
 	}
 
 	return nil
+}
+
+// checkAndHandleFailedOrderRetry 检查失败订单是否有可用通道进行重试
+// 返回值：hasAvailableChannel bool - 是否有可用通道并已推送重试任务
+// CheckAndHandleFailedOrderRetry 检查失败订单是否有可用通道并处理重试
+func (s *UnifiedOrderService) CheckAndHandleFailedOrderRetry(ctx context.Context, order *model.Order) (bool, error) {
+	return s.checkAndHandleFailedOrderRetry(ctx, order)
+}
+
+func (s *UnifiedOrderService) checkAndHandleFailedOrderRetry(ctx context.Context, order *model.Order) (bool, error) {
+	s.logger.Info("处理失败订单，检查是否有其他可用通道",
+		zap.Int64("order_id", order.ID),
+		zap.String("order_number", order.OrderNumber),
+		zap.Int64("product_id", order.ProductID),
+		zap.String("used_apis", order.UsedAPIs))
+
+	// 检查依赖是否可用
+	if s.productRepo == nil || s.retryService == nil || s.queue == nil {
+		s.logger.Warn("重试逻辑依赖未初始化，跳过重试检查",
+			zap.Int64("order_id", order.ID),
+			zap.Bool("product_repo_nil", s.productRepo == nil),
+			zap.Bool("retry_service_nil", s.retryService == nil),
+			zap.Bool("queue_nil", s.queue == nil))
+		return false, nil
+	}
+
+	// 获取商品的所有API关系
+	relations, err := s.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
+	if err != nil {
+		s.logger.Error("获取API关系失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		return false, err
+	}
+
+	s.logger.Info("获取到的API关系列表",
+		zap.Int64("order_id", order.ID),
+		zap.Int("relations_count", len(relations)))
+
+	// 解析已使用的API列表
+	var usedAPIs []map[string]interface{}
+	if order.UsedAPIs != "" {
+		if err := json.Unmarshal([]byte(order.UsedAPIs), &usedAPIs); err != nil {
+			s.logger.Error("解析已使用API列表失败", zap.Int64("order_id", order.ID), zap.Error(err))
+			usedAPIs = []map[string]interface{}{}
+		}
+	}
+
+	// 检查是否还有未使用的API
+	hasAvailableAPI := false
+	s.logger.Info("开始检查可用API",
+		zap.Int64("order_id", order.ID),
+		zap.Int("total_relations", len(relations)),
+		zap.Int("used_apis_count", len(usedAPIs)))
+
+	for _, relation := range relations {
+		alreadyUsed := false
+		for _, usedAPI := range usedAPIs {
+			if apiID, ok := usedAPI["api_id"].(float64); ok && int64(apiID) == relation.APIID {
+				alreadyUsed = true
+				s.logger.Info("API已被使用",
+					zap.Int64("order_id", order.ID),
+					zap.Int64("api_id", relation.APIID))
+				break
+			}
+		}
+		if !alreadyUsed {
+			s.logger.Info("发现可用API",
+				zap.Int64("order_id", order.ID),
+				zap.Int64("api_id", relation.APIID))
+			hasAvailableAPI = true
+			break
+		}
+	}
+
+	s.logger.Info("API可用性检查结果",
+		zap.Int64("order_id", order.ID),
+		zap.Bool("has_available_api", hasAvailableAPI))
+
+	if hasAvailableAPI {
+		// 有可用通道，推送重试任务到消息队列
+		s.logger.Info("发现可用通道，推送重试任务到队列", zap.Int64("order_id", order.ID))
+		if err := s.pushRetryTaskToQueue(ctx, order.ID, 2, "统一订单服务失败，切换通道重试"); err != nil {
+			s.logger.Error("推送重试任务到队列失败", zap.Int64("order_id", order.ID), zap.Error(err))
+			return false, err
+		}
+		// 推送成功
+		s.logger.Info("重试任务推送成功，等待重试处理", zap.Int64("order_id", order.ID))
+		return true, nil
+	} else {
+		// 没有可用通道
+		s.logger.Info("没有可用通道，订单最终失败", zap.Int64("order_id", order.ID))
+		return false, nil
+	}
+}
+
+// pushRetryTaskToQueue 推送重试任务到队列
+func (s *UnifiedOrderService) pushRetryTaskToQueue(ctx context.Context, orderID int64, retryType int, reason string) error {
+	task := model.NewRetryTaskMessage(orderID, retryType, reason)
+
+	// 使用默认队列名称，也可以从配置中读取
+	queueName := "retry_queue"
+	if err := s.queue.Push(ctx, queueName, task); err != nil {
+		return fmt.Errorf("推送重试任务到队列失败: %v", err)
+	}
+
+	s.logger.Info("重试任务推送到队列成功",
+		zap.Int64("order_id", orderID),
+		zap.Int("retry_type", retryType),
+		zap.String("queue_name", queueName))
+	return nil
+}
+
+// SetRetryService 设置重试服务依赖（用于解决循环依赖）
+func (s *UnifiedOrderService) SetRetryService(retryService *RetryService) {
+	s.retryService = retryService
 }
 
 // ProcessOrderStatusChangeWithBalanceCheck 处理订单状态变更（供平台回调使用，包含余额验证）

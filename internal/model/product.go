@@ -42,6 +42,7 @@ type Product struct {
 	APIID           int64            `json:"api_id" gorm:"type:bigint;comment:接码接口ID"`                                     // API接口ID
 	APIParamID      int64            `json:"api_param_id" gorm:"type:bigint;comment:接码接口参数ID"`                             // API参数ID
 	IsApi           bool             `json:"is_api" gorm:"default:false;comment:是否接码"`                                     // 是否需要解码
+	DuplicateCheck  bool             `json:"duplicate_check" gorm:"default:false;comment:是否开启重复订单检查"`                    // 是否开启重复订单检查
 	CreatedAt       time.Time        `json:"created_at" gorm:"type:datetime;autoCreateTime"`                               // 创建时间
 	UpdatedAt       time.Time        `json:"updated_at" gorm:"type:datetime;autoUpdateTime"`                               // 更新时间
 	ProductType     *ProductType     `json:"product_type,omitempty" gorm:"foreignKey:Type;references:ID"`                  // 关联的商品类型

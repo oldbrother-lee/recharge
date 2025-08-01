@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"recharge-go/internal/model"
 	notificationModel "recharge-go/internal/model/notification"
@@ -123,6 +124,8 @@ func NewOrderService(
 		creditService:    creditService,
 	}
 }
+
+
 
 // CreateOrder 创建订单
 func (s *orderService) CreateOrder(ctx context.Context, order *model.Order) error {
@@ -255,27 +258,6 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		return fmt.Errorf("update order status failed: %v", err)
 	}
 
-	// 创建通知记录
-	notification := &notificationModel.NotificationRecord{
-		OrderID:          id,
-		PlatformCode:     order.PlatformCode,
-		NotificationType: "order_status_changed",
-		Content:          fmt.Sprintf("订单状态已更新为: %d", status),
-		Status:           1, // 待处理
-	}
-
-	// 保存通知记录到数据库
-	if err := s.notificationRepo.Create(ctx, notification); err != nil {
-		tx.Rollback()
-		logger.Error("创建通知记录失败",
-			"error", err,
-			"order_id", id,
-			"platform_code", order.PlatformCode,
-			"notification_type", notification.NotificationType,
-		)
-		return fmt.Errorf("create notification record failed: %v", err)
-	}
-
 	// 提交事务
 	if err := tx.Commit().Error; err != nil {
 		logger.Error("提交事务失败",
@@ -291,34 +273,43 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		"new_status", status,
 	)
 
-	// 事务提交成功后，重新获取订单信息并推送通知到队列
+	// 事务提交成功后，获取更新后的订单信息并创建通知记录
 	updatedOrder, getErr := s.orderRepo.GetByID(ctx, id)
 	if getErr != nil {
 		logger.Error("获取更新后的订单信息失败", "order_id", id, "error", getErr)
 		return nil // 订单状态已更新成功，通知推送失败不影响主流程
 	}
 
-	// 重新创建通知记录，确保包含最新的订单信息
-	updatedNotification := &notificationModel.NotificationRecord{
+	// 序列化订单快照
+	orderData, err := json.Marshal(updatedOrder)
+	if err != nil {
+		logger.Error("序列化订单快照失败", "order_id", id, "error", err)
+		return nil // 订单状态已更新成功，通知推送失败不影响主流程
+	}
+
+	// 创建通知记录（包含订单快照）
+	notification := &notificationModel.NotificationRecord{
 		OrderID:          id,
 		PlatformCode:     updatedOrder.PlatformCode,
 		NotificationType: "order_status_changed",
 		Content:          fmt.Sprintf("订单状态已更新为: %d", status),
-		Status:           1, // 待处理
+		OrderSnapshot:    string(orderData), // 保存完整订单快照
+		TargetStatus:     int(status),       // 保存目标状态
+		Status:           1,                 // 待处理
 	}
 
-	// 保存新的通知记录到数据库
-	if createErr := s.notificationRepo.Create(ctx, updatedNotification); createErr != nil {
-		logger.Error("创建更新后的通知记录失败", "order_id", id, "error", createErr)
+	// 保存通知记录到数据库
+	if createErr := s.notificationRepo.Create(ctx, notification); createErr != nil {
+		logger.Error("创建通知记录失败", "order_id", id, "error", createErr)
 		return nil // 订单状态已更新成功，通知推送失败不影响主流程
 	}
 
 	// 推送通知到队列
-	logger.Info("准备推送通知到队列", "order_id", id, "new_status", status)
-	if pushErr := s.queue.Push(ctx, "notification_queue", updatedNotification); pushErr != nil {
-		logger.Error("推送通知到队列失败", "order_id", id, "error", pushErr)
+	logger.Info("准备推送通知到队列", "order_id", id, "new_status", status, "notification_id", notification.ID)
+	if pushErr := s.queue.Push(ctx, "notification_queue", notification); pushErr != nil {
+		logger.Error("推送通知到队列失败", "order_id", id, "notification_id", notification.ID, "error", pushErr)
 	} else {
-		logger.Info("推送通知到队列成功", "order_id", id, "status", status)
+		logger.Info("推送通知到队列成功", "order_id", id, "notification_id", notification.ID, "status", status)
 	}
 	return nil
 }
@@ -964,11 +955,15 @@ func (s *orderService) CleanupOrders(ctx context.Context, start, end string) (in
 	if len(orderIDs) == 0 {
 		return 0, nil
 	}
-	// 2. 删除 balance_logs
+	// 2. 删除 notification_records
+	if err := s.notificationRepo.DeleteByOrderIDs(ctx, orderIDs); err != nil {
+		return 0, fmt.Errorf("删除通知记录失败: %w", err)
+	}
+	// 3. 删除 balance_logs
 	if err := s.rechargeService.GetBalanceService().DeleteByOrderIDs(ctx, orderIDs); err != nil {
 		return 0, err
 	}
-	// 3. 删除 orders
+	// 4. 删除 orders
 	count, err := s.orderRepo.DeleteByIDs(ctx, orderIDs)
 	if err != nil {
 		return 0, err
@@ -1066,10 +1061,16 @@ func (s *orderService) SendNotification(ctx context.Context, orderID int64) erro
 		return fmt.Errorf("获取订单失败: %w", err)
 	}
 
+	// 确定平台代码
+	platformCode := order.PlatformCode
+	if platformCode == "" {
+		platformCode = "system" // 默认值
+	}
+
 	// 创建通知任务
 	notification := &notificationModel.NotificationRecord{
 		OrderID:          orderID,
-		PlatformCode:     "system",
+		PlatformCode:     platformCode,
 		NotificationType: "order_callback",
 		Content:          fmt.Sprintf("订单 %s 回调通知", order.OrderNumber),
 		Status:           1, // 待处理
@@ -1089,7 +1090,7 @@ func (s *orderService) SendNotification(ctx context.Context, orderID int64) erro
 		return fmt.Errorf("推送到通知队列失败: %w", err)
 	}
 
-	logger.Info("订单回调通知已推送到队列", "order_id", orderID, "order_number", order.OrderNumber)
+	logger.Info("订单回调通知已推送到队列", "order_id", orderID, "order_number", order.OrderNumber, "platform_code", platformCode)
 	return nil
 }
 

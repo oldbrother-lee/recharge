@@ -19,6 +19,7 @@ export interface Product {
   allow_city: string
   forbid_province: string
   forbid_city: string
+  duplicate_check: boolean
   created_at: string
   updated_at: string
   category?: {
@@ -50,4 +51,4 @@ export interface UserInfo {
   userName: string;
   roles: string[];
   buttons: string[];
-} 
+}

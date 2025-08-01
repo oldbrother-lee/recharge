@@ -172,6 +172,9 @@
           </NFormItemGi> 
           <NFormItemGi :span="8" label="接码api套餐" path="decode_api_package">
             <NInput v-model:value="formModel.decode_api_package" placeholder="请输入接码api套餐" />
+          </NFormItemGi>
+          <NFormItemGi :span="12" label="重复检查" path="duplicate_check">
+            <NSwitch v-model:value="formModel.duplicate_check" />
           </NFormItemGi> 
         </NGrid>
       </NForm>
@@ -457,6 +460,21 @@ const columns: DataTableColumns<Product> = [
       return <NTag type={tagMap[row.status]}>{row.status === 1 ? '启用' : '禁用'}</NTag>;
     }
   },
+  {
+    key: 'duplicate_check',
+    title: '重复检查',
+    align: 'center',
+    width: 120,
+    render(row) {
+      return (
+        <NSwitch
+          value={row.duplicate_check}
+          onUpdateValue={(value) => handleDuplicateCheckChange(row, value)}
+          disabled={!hasRole('SUPER_ADMIN')}
+        />
+      );
+    }
+  },
   ...(hasRole('SUPER_ADMIN') ? [{
     key: 'operate',
     title: '操作',
@@ -584,9 +602,28 @@ const fetchProducts = async () => {
 const handleEdit = (row: Product) => {
   formModel.value = { 
     ...row,
-    isp: row.isp ? row.isp.split(',').map(Number) : [] // 将字符串转换为数字数组
+    isp: row.isp ? row.isp.split(',').map(Number) : [], // 将字符串转换为数字数组
+    duplicate_check: row.duplicate_check || false // 确保重复检查字段有默认值
   };
   showModal();
+};
+
+// 处理重复检查开关变更
+const handleDuplicateCheckChange = async (row: Product, value: boolean) => {
+  try {
+    await request({
+      url: `/product/${row.id}/duplicate-check`,
+      method: 'PUT',
+      data: {
+        duplicate_check: value
+      }
+    });
+    message.success('重复检查设置更新成功');
+    // 更新本地数据
+    row.duplicate_check = value;
+  } catch (error) {
+    message.error('重复检查设置更新失败');
+  }
 };
 
 // 删除商品
@@ -656,6 +693,7 @@ const handleAdd = () => {
   resetForm();
   // 设置默认值
   formModel.value.status = 1; // 默认启用状态
+  formModel.value.duplicate_check = false; // 默认关闭重复检查
   showModal();
 };
 

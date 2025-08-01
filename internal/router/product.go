@@ -27,6 +27,7 @@ func RegisterProductRoutes(r *gin.RouterGroup, productController *controller.Pro
 			adminProduct.POST("/category", productController.CreateCategory)
 			adminProduct.PUT("/category/:id", productController.UpdateCategory)
 			adminProduct.DELETE("/category/:id", productController.DeleteCategory)
+			adminProduct.PUT("/:id/duplicate-check", productController.UpdateDuplicateCheck)
 		}
 	}
 }

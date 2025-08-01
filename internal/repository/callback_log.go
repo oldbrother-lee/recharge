@@ -15,6 +15,8 @@ type CallbackLogRepository interface {
 	GetByOrderID(ctx context.Context, orderID string) ([]*model.CallbackLog, error)
 	// GetByOrderIDAndType 根据订单号和回调类型获取回调日志
 	GetByOrderIDAndType(ctx context.Context, orderID, callbackType string) (*model.CallbackLog, error)
+	// GetByOrderIDTypeAndPlatformID 根据订单号、回调类型和平台交易ID获取回调日志
+	GetByOrderIDTypeAndPlatformID(ctx context.Context, orderID, callbackType, platformID string) (*model.CallbackLog, error)
 }
 
 // CallbackLogRepositoryImpl 回调日志仓库实现
@@ -43,6 +45,16 @@ func (r *CallbackLogRepositoryImpl) GetByOrderID(ctx context.Context, orderID st
 func (r *CallbackLogRepositoryImpl) GetByOrderIDAndType(ctx context.Context, orderID, callbackType string) (*model.CallbackLog, error) {
 	var log model.CallbackLog
 	err := r.db.WithContext(ctx).Where("order_id = ? AND callback_type = ?", orderID, callbackType).First(&log).Error
+	if err != nil {
+		return nil, err
+	}
+	return &log, nil
+}
+
+// GetByOrderIDTypeAndPlatformID 根据订单号、回调类型和平台交易ID获取回调日志
+func (r *CallbackLogRepositoryImpl) GetByOrderIDTypeAndPlatformID(ctx context.Context, orderID, callbackType, platformID string) (*model.CallbackLog, error) {
+	var log model.CallbackLog
+	err := r.db.WithContext(ctx).Where("order_id = ? AND callback_type = ? AND platform_id = ?", orderID, callbackType, platformID).First(&log).Error
 	if err != nil {
 		return nil, err
 	}

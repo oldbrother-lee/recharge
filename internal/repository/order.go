@@ -84,6 +84,10 @@ type OrderRepository interface {
 	CountByStatuses(ctx context.Context, statuses []model.OrderStatus) (int64, error)
 	// CountProcessingOrders 统计处理中的订单数量（充值中和处理中状态）
 	CountProcessingOrders(ctx context.Context) (int64, error)
+	// UpdateHasException 更新订单的异常标记
+	UpdateHasException(ctx context.Context, orderID int64, hasException bool) error
+	// FindDuplicateOrder 查找重复订单
+	FindDuplicateOrder(ctx context.Context, mobile string, denom float64, isp int, productID int64, statuses []model.OrderStatus) (*model.Order, error)
 }
 
 // OrderRepositoryImpl 订单仓库实现
@@ -633,4 +637,20 @@ func (r *OrderRepositoryImpl) CountProcessingOrders(ctx context.Context) (int64,
 		model.OrderStatusProcessing,  // 处理中 (10)
 	}
 	return r.CountByStatuses(ctx, processingStatuses)
+}
+
+// UpdateHasException 更新订单的异常标记
+func (r *OrderRepositoryImpl) UpdateHasException(ctx context.Context, orderID int64, hasException bool) error {
+	return r.db.Model(&model.Order{}).Where("id = ?", orderID).Update("has_exception", hasException).Error
+}
+
+// FindDuplicateOrder 查找重复订单
+func (r *OrderRepositoryImpl) FindDuplicateOrder(ctx context.Context, mobile string, denom float64, isp int, productID int64, statuses []model.OrderStatus) (*model.Order, error) {
+	var order model.Order
+	err := r.db.Where("mobile = ? AND denom = ? AND isp = ? AND product_id = ? AND status IN ? AND is_del = 0", 
+		mobile, denom, isp, productID, statuses).First(&order).Error
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
 }

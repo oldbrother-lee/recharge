@@ -86,7 +86,11 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 	systemConfigRepo := repository.NewSystemConfigRepository(database.DB)
 	systemConfigService := service.NewSystemConfigService(systemConfigRepo)
 
-	// 创建统一订单处理服务
+	// 创建订单异常服务
+	orderExceptionRepo := repository.NewOrderExceptionRepository(database.DB)
+	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, logger.Log)
+
+	// 创建统一订单处理服务（暂时不传入retryService）
 	unifiedOrderService := service.NewUnifiedOrderService(
 		orderRepo,
 		balanceQueryRecordRepo,
@@ -97,6 +101,9 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 		database.DB,
 		logger.Log,
 		systemConfigService,
+		productRepo,
+		nil, // retryService 稍后设置
+		orderExceptionService,
 	)
 	
 	rechargeService := service.NewRechargeService(

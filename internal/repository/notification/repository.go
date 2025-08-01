@@ -17,6 +17,7 @@ type Repository interface {
 	GetPendingRecords(ctx context.Context, limit int) ([]*notification.NotificationRecord, error)
 	List(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*notification.NotificationRecord, int64, error)
 	Update(ctx context.Context, record *notification.NotificationRecord) error
+	DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error
 }
 
 // RepositoryImpl 通知记录仓库实现
@@ -113,4 +114,12 @@ func (r *RepositoryImpl) List(ctx context.Context, params map[string]interface{}
 // Update 更新通知记录
 func (r *RepositoryImpl) Update(ctx context.Context, record *notification.NotificationRecord) error {
 	return r.db.WithContext(ctx).Save(record).Error
+}
+
+// DeleteByOrderIDs 根据订单ID列表删除通知记录
+func (r *RepositoryImpl) DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error {
+	if len(orderIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("order_id IN ?", orderIDs).Delete(&notification.NotificationRecord{}).Error
 }

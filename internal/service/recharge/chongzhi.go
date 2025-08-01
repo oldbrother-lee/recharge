@@ -316,7 +316,7 @@ func (p *ChongzhiPlatform) ParseCallbackData(data []byte) (*model.CallbackData, 
 		CallbackType:  "order_status",
 		Amount:        callbackReq.ParValue,
 		Timestamp:     callbackReq.MerchantSubmitTime,
-		TransactionID: callbackReq.OrderID,
+		TransactionID: "chongzhi_" + callbackReq.OrderID,
 	}, nil
 }
 

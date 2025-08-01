@@ -331,23 +331,34 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		logger.Error(fmt.Sprintf("解析回调数据失败: %v", err))
 		return fmt.Errorf("parse callback data failed service 层: %v", err)
 	}
-	logger.Info(fmt.Sprintf("收到秘史回调，解析回调数据成功: %+v", callbackData))
+	logger.Info(fmt.Sprintf("收到%s回调，解析回调数据成功: %+v", platformName, callbackData))
 
-	// 2. 检查是否已处理过该回调（使用订单号而不是平台交易ID）
-	exists, err := s.callbackLogRepo.GetByOrderIDAndType(ctx, callbackData.OrderNumber, callbackData.CallbackType)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
-		tx := s.db.Begin()
-		defer func() {
-			if r := recover(); r != nil {
-				tx.Rollback()
-			}
-		}()
-		return err
-	}
-	if exists != nil {
-		logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s", callbackData.OrderNumber, callbackData.CallbackType))
-		return nil
+	// 2. 检查是否已处理过该回调（使用订单号、回调类型和平台交易ID进行精确匹配）
+	// 优先使用平台交易ID进行重复检查，避免换通道重试时的误判
+	var exists *model.CallbackLog
+
+	if callbackData.TransactionID != "" {
+		// 如果有平台交易ID，使用更精确的检查
+		exists, err = s.callbackLogRepo.GetByOrderIDTypeAndPlatformID(ctx, callbackData.OrderNumber, callbackData.CallbackType, callbackData.TransactionID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
+			return err
+		}
+		if exists != nil {
+			logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s, platform_id: %s", callbackData.OrderNumber, callbackData.CallbackType, callbackData.TransactionID))
+			return nil
+		}
+	} else {
+		// 如果没有平台交易ID，使用原有的检查方式
+		exists, err = s.callbackLogRepo.GetByOrderIDAndType(ctx, callbackData.OrderNumber, callbackData.CallbackType)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
+			return err
+		}
+		if exists != nil {
+			logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s", callbackData.OrderNumber, callbackData.CallbackType))
+			return nil
+		}
 	}
 
 	// 3. 开启事务
@@ -370,7 +381,11 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	switch callbackData.Status {
 	case "success":
 		orderState = model.OrderStatusSuccess
+	case "4":
+		orderState = model.OrderStatusSuccess
 	case "failed":
+		orderState = model.OrderStatusFailed
+	case "5":
 		orderState = model.OrderStatusFailed
 	case "processing":
 		orderState = model.OrderStatusRecharging
@@ -388,34 +403,172 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		return fmt.Errorf("get order failed: %v", err)
 	}
 
-	// === 新增：订单失败自动退款 ===
+	// 检查订单当前状态，如果已经是最终状态，忽略后续回调
+	// if order.Status == model.OrderStatusSuccess || order.Status == model.OrderStatusFailed {
+	// 	tx.Rollback()
+	// 	logger.Info(fmt.Sprintf("订单已处于最终状态，忽略回调: 订单号%s, 当前状态%s, 回调状态%s, 平台%s",
+	// 		order.OrderNumber, order.Status, orderState, platformName))
+	// 	return nil
+	// }
+
+	// === 处理失败回调：检查是否还有其他通道可用 ===
+	// 根据订单状态分别处理
 	if orderState == model.OrderStatusFailed {
-		// 检查是否为外部订单
-		if order.Client == 2 {
-			// 外部订单直接退款到用户余额
-			// 注意：这里需要通过依赖注入获取余额服务，暂时记录日志
-			logger.Info("外部订单失败，需要退款到用户余额",
+		// 失败订单处理逻辑
+		return s.handleFailedOrderCallback(ctx, tx, order, callbackData, data, platformName)
+	} else {
+		// 成功订单处理逻辑
+		return s.handleSuccessOrderCallback(ctx, tx, order, callbackData, data, platformName, model.OrderStatus(orderState))
+	}
+
+}
+
+// handleFailedOrderCallback 处理失败订单回调
+func (s *rechargeService) handleFailedOrderCallback(ctx context.Context, tx *gorm.DB, order *model.Order, callbackData *model.CallbackData, data []byte, platformName string) error {
+	// 处理失败订单回调日志
+	
+	// 检查是否还有其他通道可以重试
+	if s.unifiedOrderService != nil {
+		hasAvailableChannel, err := s.unifiedOrderService.CheckAndHandleFailedOrderRetry(ctx, order)
+		if err != nil {
+			logger.Error("检查可用通道失败", "order_id", order.ID, "error", err)
+			// 继续处理，不因为检查失败而中断
+		} else if hasAvailableChannel {
+			// 有可用通道，记录回调但不更新订单状态，等待重试完成
+			tx.Rollback()
+			logger.Info("发现可用通道，已推送重试任务，暂不更新订单状态",
 				"order_id", order.ID,
-				"customer_id", order.CustomerID,
-				"amount", order.Price)
-			// TODO: 实现外部订单退款逻辑
-		} else {
-			// 平台订单使用原有的退款方法
-			err := s.balanceService.RefundBalance(ctx, order.CustomerID, order.Price, order.ID, "订单失败退还余额")
-			if err != nil {
-				tx.Rollback()
-				logger.Error("订单失败退款失败: %v", err)
-				return fmt.Errorf("订单失败退款失败: %v", err)
+				"order_number", order.OrderNumber,
+				"platform", platformName)
+
+			// 记录回调日志但不触发状态更新
+			platformID := callbackData.TransactionID
+			if platformID == "" {
+				platformID = callbackData.OrderID
 			}
+			log := &model.CallbackLog{
+				OrderID:      callbackData.OrderNumber,
+				PlatformID:   platformID,
+				CallbackType: callbackData.CallbackType,
+				Status:       2, // 标记为中间状态，等待重试
+				RequestData:  string(data),
+				ResponseData: "retry_pending",
+				CreateTime:   time.Now(),
+				UpdateTime:   time.Now(),
+			}
+			if err := s.callbackLogRepo.Create(ctx, log); err != nil {
+				logger.Error("记录回调日志失败", "error", err)
+			}
+			return nil
 		}
 	}
-	// === 新增 END ===
 
+	// 没有可用通道或检查失败，进行最终失败处理
+	logger.Info("没有可用通道，进行最终失败处理",
+		"order_id", order.ID,
+		"order_number", order.OrderNumber,
+		"platform", platformName)
+
+	// 更新订单状态为失败
+	if s.unifiedOrderService != nil {
+		logger.Info("使用统一订单服务处理失败状态更新", "order_id", order.ID)
+		if err := s.unifiedOrderService.ProcessOrderStatusChangeWithBalanceCheck(ctx, order.ID, model.OrderStatusFailed, "platform", true); err != nil {
+			tx.Rollback()
+			logger.Error("统一订单状态更新失败", "order_id", order.ID, "error", err)
+			return fmt.Errorf("unified order status update failed: %v", err)
+		}
+	} else {
+		// 降级处理：手动退款和更新状态
+		logger.Warn("统一订单服务未初始化，使用手动退款和状态更新", "order_id", order.ID)
+		
+		// 退款
+		err := s.balanceService.RefundBalance(ctx, order.CustomerID, order.Price, order.ID, "订单失败退还余额")
+		if err != nil {
+			tx.Rollback()
+			logger.Error("订单失败退款失败", "order_id", order.ID, "error", err)
+			return fmt.Errorf("订单失败退款失败: %v", err)
+		}
+		
+		// 更新订单状态
+		if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
+			tx.Rollback()
+			logger.Error("更新订单状态失败", "order_id", order.ID, "error", err)
+			return fmt.Errorf("update order status failed: %v", err)
+		}
+	}
+
+	// 创建通知记录
+	notification := &notificationModel.NotificationRecord{
+		OrderID:          order.ID,
+		PlatformCode:     order.PlatformCode,
+		NotificationType: "order_status_changed",
+		Content:          fmt.Sprintf("订单状态已更新为: %d", model.OrderStatusFailed),
+		Status:           1, // 待处理
+	}
+
+	// 保存通知记录到数据库
+	if err := s.notificationRepo.Create(ctx, notification); err != nil {
+		tx.Rollback()
+		logger.Error("创建通知记录失败",
+			"error", err,
+			"order_id", order.ID,
+			"platform_code", order.PlatformCode,
+			"notification_type", notification.NotificationType,
+		)
+		return fmt.Errorf("create notification record failed: %v", err)
+	}
+	logger.Info(fmt.Sprintf("%s创建失败通知记录成功: 订单号%s, 订单id%d", platformName, order.OrderNumber, order.ID))
+
+	// 推送通知到队列
+	logger.Info("准备推送失败通知到队列", "order_id", order.ID)
+	err := s.queue.Push(ctx, "notification_queue", notification)
+	if err != nil {
+		tx.Rollback()
+		logger.Error("推送通知到队列失败", "order_id", order.ID, "error", err)
+		return fmt.Errorf("push notification to queue failed: %v", err)
+	}
+	logger.Info("订单失败推送通知到队列成功", "order_id", order.ID)
+
+	// 记录回调日志
+	platformID := callbackData.TransactionID
+	if platformID == "" {
+		platformID = callbackData.OrderID
+	}
+
+	log := &model.CallbackLog{
+		OrderID:      callbackData.OrderNumber,
+		PlatformID:   platformID,
+		CallbackType: callbackData.CallbackType,
+		Status:       1,
+		RequestData:  string(data),
+		ResponseData: "failed_processed",
+		CreateTime:   time.Now(),
+		UpdateTime:   time.Now(),
+	}
+	if err := s.callbackLogRepo.Create(ctx, log); err != nil {
+		tx.Rollback()
+		logger.Error("记录回调日志失败", "order_id", order.ID, "error", err)
+		return fmt.Errorf("create callback log failed: %v", err)
+	}
+
+	// 提交事务
+	if err := tx.Commit().Error; err != nil {
+		logger.Error("提交事务失败", "order_id", order.ID, "error", err)
+		return fmt.Errorf("commit transaction failed: %v", err)
+	}
+
+	logger.Info("失败订单回调处理完成", "order_id", order.ID, "order_number", order.OrderNumber)
+	return nil
+}
+
+// handleSuccessOrderCallback 处理成功订单回调
+func (s *rechargeService) handleSuccessOrderCallback(ctx context.Context, tx *gorm.DB, order *model.Order, callbackData *model.CallbackData, data []byte, platformName string, orderState model.OrderStatus) error {
+	// 处理成功订单回调日志
+	
 	// 使用统一订单处理服务更新订单状态
 	logger.Info(fmt.Sprintf("准备更新订单状态: 订单号%s, 订单id%d, 当前状态%s, 目标状态%s", order.OrderNumber, order.ID, order.Status, orderState))
 	if s.unifiedOrderService != nil {
 		logger.Info("使用统一订单服务处理状态更新", "order_id", order.ID, "target_status", orderState)
-		// 使用统一服务处理订单状态更新（包含余额验证和退款逻辑）
 		if err := s.unifiedOrderService.ProcessOrderStatusChangeWithBalanceCheck(ctx, order.ID, orderState, "platform", true); err != nil {
 			tx.Rollback()
 			logger.Error("统一订单状态更新失败", "order_id", order.ID, "error", err)
@@ -453,11 +606,11 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		)
 		return fmt.Errorf("create notification record failed: %v", err)
 	}
-	logger.Info(fmt.Sprintf("秘史创建通知记录成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
+	logger.Info(fmt.Sprintf("%s创建通知记录成功: 订单号%s, 订单id%d, 状态%s", platformName, order.OrderNumber, order.ID, orderState))
 
 	// 推送通知到队列
 	logger.Info("准备推送通知到队列", "order_id", order.ID, "status", orderState)
-	err = s.queue.Push(ctx, "notification_queue", notification)
+	err := s.queue.Push(ctx, "notification_queue", notification)
 	if err != nil {
 		tx.Rollback()
 		logger.Error("推送通知到队列失败", "order_id", order.ID, "error", err)
@@ -465,10 +618,15 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	}
 	logger.Info("订单推送通知到队列成功", "order_id", order.ID)
 
-	// 5. 记录回调日志
+	// 记录回调日志
+	platformID := callbackData.TransactionID
+	if platformID == "" {
+		platformID = callbackData.OrderID
+	}
+
 	log := &model.CallbackLog{
-		OrderID:      callbackData.OrderNumber, // 使用订单号而不是平台交易ID
-		PlatformID:   callbackData.OrderID,     // 平台交易ID存储在PlatformID字段
+		OrderID:      callbackData.OrderNumber,
+		PlatformID:   platformID,
 		CallbackType: callbackData.CallbackType,
 		Status:       1,
 		RequestData:  string(data),
@@ -478,16 +636,17 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	}
 	if err := s.callbackLogRepo.Create(ctx, log); err != nil {
 		tx.Rollback()
-		logger.Error("记录回调日志失败: %v", err)
-		return err
+		logger.Error("记录回调日志失败", "order_id", order.ID, "error", err)
+		return fmt.Errorf("create callback log failed: %v", err)
 	}
 
-	// 6. 提交事务
+	// 提交事务
 	if err := tx.Commit().Error; err != nil {
-		logger.Error("提交事务失败: %v", err)
+		logger.Error("提交事务失败", "order_id", order.ID, "error", err)
 		return fmt.Errorf("commit transaction failed: %v", err)
 	}
 
+	logger.Info("成功订单回调处理完成", "order_id", order.ID, "order_number", order.OrderNumber, "status", orderState)
 	return nil
 }
 
@@ -588,7 +747,66 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		"order_number", order.OrderNumber,
 		"mobile", order.Mobile)
 
-	// 1. 充值前查询余额并记录
+	// 1. 获取商品信息，检查是否开启重复检查
+	product, err := s.productRepo.GetByID(ctx, order.ProductID)
+	if err != nil {
+		logger.Error("【获取商品信息失败】",
+			"order_id", order.ID,
+			"product_id", order.ProductID,
+			"error", err)
+		return fmt.Errorf("获取商品信息失败: %v", err)
+	}
+
+	// 2. 防重复充值检查（仅在商品开启重复检查时执行）
+	if product.DuplicateCheck {
+		logger.Info("【商品已开启重复检查，开始执行重复订单检查】",
+			"order_id", order.ID,
+			"product_id", order.ProductID)
+
+		// 查询相同手机号、金额、运营商、商品ID的进行中订单（排除当前订单）
+		processingStatuses := []model.OrderStatus{
+			model.OrderStatusPendingPayment,
+			model.OrderStatusPendingRecharge,
+			model.OrderStatusRecharging,
+			model.OrderStatusProcessing,
+		}
+
+		existingOrder, err := s.orderRepo.FindDuplicateOrder(ctx, order.Mobile, order.Denom, order.ISP, order.ProductID, processingStatuses)
+		if err != nil && err != gorm.ErrRecordNotFound {
+			logger.Error("【检查重复订单失败】",
+				"order_id", order.ID,
+				"error", err)
+			return fmt.Errorf("检查重复订单失败: %v", err)
+		}
+
+		if existingOrder != nil && existingOrder.ID != order.ID {
+			logger.Error("【检测到重复充值，设置订单为失败】",
+				"order_id", order.ID,
+				"mobile", order.Mobile,
+				"denom", order.Denom,
+				"isp", order.ISP,
+				"product_id", order.ProductID,
+				"existing_order_id", existingOrder.ID,
+				"existing_order_number", existingOrder.OrderNumber)
+
+			// 直接设置订单为失败
+			errorMsg := fmt.Sprintf("检测到重复充值：手机号 %s，金额 %.2f，运营商 %d，商品ID %d 存在进行中的订单 %s",
+				order.Mobile, order.Denom, order.ISP, order.ProductID, existingOrder.OrderNumber)
+			if failErr := s.orderService.ProcessOrderFail(ctx, order.ID, errorMsg); failErr != nil {
+				logger.Error("【设置订单失败状态失败】",
+					"order_id", order.ID,
+					"error", failErr)
+				return failErr
+			}
+			return nil // 返回nil表示任务处理完成，不需要重试
+		}
+	} else {
+		logger.Info("【商品未开启重复检查，跳过重复订单检查】",
+			"order_id", order.ID,
+			"product_id", order.ProductID)
+	}
+
+	// 3. 充值前查询余额并记录
 	// 检查余额验证开关
 	balanceVerificationEnabled, err := s.systemConfigService.GetBoolValue(ctx, "balance_verification_enabled")
 	if err != nil {

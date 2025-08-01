@@ -296,13 +296,14 @@ func (p *DayuanrenPlatform) ParseCallbackData(data []byte) (*model.CallbackData,
 	_, statusStr := p.mapOrderState(state, params["out_trade_num"])
 
 	callbackData := &model.CallbackData{
-		OrderID:     params["out_trade_num"],
-		Status:      statusStr,
-		Message:     params["remark"],
-		Amount:      params["charge_amount"],
-		Sign:        params["sign"],
-		Timestamp:   params["otime"],
-		OrderNumber: params["out_trade_num"],
+		OrderID:       params["out_trade_num"],
+		Status:        statusStr,
+		Message:       params["remark"],
+		Amount:        params["charge_amount"],
+		Sign:          params["sign"],
+		Timestamp:     params["otime"],
+		OrderNumber:   params["out_trade_num"],
+		TransactionID: "dayuanren_" + params["out_trade_num"], // 使用平台前缀+订单号作为TransactionID
 	}
 	logger.Info("大猿人回调解析完成", "callbackData", callbackData)
 	return callbackData, nil

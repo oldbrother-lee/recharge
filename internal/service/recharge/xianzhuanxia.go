@@ -328,7 +328,7 @@ func (p *XianzhuanxiaPlatform) ParseCallbackData(data []byte) (*model.CallbackDa
 		Amount:        strconv.FormatFloat(callback.Amount, 'f', 2, 64),
 		Sign:          callback.Sign,
 		Timestamp:     callback.Timestamp,
-		TransactionID: callback.OrderID,
+		TransactionID: "xianzhuanxia_" + callback.OrderID,
 	}, nil
 }
 

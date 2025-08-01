@@ -94,6 +94,7 @@ func (s *ProductService) Create(ctx context.Context, req *model.ProductCreateReq
 		APIID:           req.APIID,
 		APIParamID:      req.APIParamID,
 		IsApi:           req.IsApi,
+		DuplicateCheck:  req.DuplicateCheck,
 	}
 
 	err := s.productRepo.Create(ctx, product)
@@ -136,6 +137,7 @@ func (s *ProductService) Update(ctx context.Context, req *model.ProductUpdateReq
 	product.APIID = req.APIID
 	product.APIParamID = req.APIParamID
 	product.IsApi = req.IsApi
+	product.DuplicateCheck = req.DuplicateCheck
 
 	fmt.Println("更新商品分类ID：", req.CategoryID)
 
@@ -183,4 +185,21 @@ func (s *ProductService) DeleteCategory(ctx context.Context, id int64) error {
 // ListTypes 获取商品类型列表
 func (s *ProductService) ListTypes(ctx context.Context) ([]model.ProductType, error) {
 	return s.productRepo.ListTypes(ctx)
+}
+
+// UpdateDuplicateCheck 更新商品重复检查开关
+func (s *ProductService) UpdateDuplicateCheck(ctx context.Context, id int64, duplicateCheck bool) error {
+	product, err := s.productRepo.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	product.DuplicateCheck = duplicateCheck
+
+	err = s.productRepo.Update(ctx, product)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

@@ -280,3 +280,35 @@ func (c *ProductController) ListTypes(ctx *gin.Context) {
 
 	utils.Success(ctx, types)
 }
+
+// UpdateDuplicateCheck 更新商品重复检查开关
+// @Summary 更新商品重复检查开关
+// @Description 更新商品重复检查开关
+// @Tags 商品管理
+// @Accept json
+// @Produce json
+// @Param id path int true "商品ID"
+// @Param request body model.ProductDuplicateCheckRequest true "重复检查开关"
+// @Success 200 {object} response.Response
+// @Router /api/v1/product/{id}/duplicate-check [put]
+func (c *ProductController) UpdateDuplicateCheck(ctx *gin.Context) {
+	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	if err != nil {
+		utils.Error(ctx, http.StatusBadRequest, "invalid id")
+		return
+	}
+
+	var req model.ProductDuplicateCheckRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	err = c.productService.UpdateDuplicateCheck(ctx.Request.Context(), id, req.DuplicateCheck)
+	if err != nil {
+		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.Success(ctx, gin.H{"message": "重复检查开关更新成功"})
+}

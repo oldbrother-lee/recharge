@@ -56,7 +56,11 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	systemConfigRepo := repository.NewSystemConfigRepository(db)
 	systemConfigService := service.NewSystemConfigService(systemConfigRepo)
 
-	// 创建统一订单服务
+	// 创建订单异常服务
+	orderExceptionRepo := repository.NewOrderExceptionRepository(db)
+	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, logger.Log)
+
+	// 创建统一订单服务（暂时不传入retryService）
 	unifiedOrderService := service.NewUnifiedOrderService(
 		orderRepo,
 		balanceQueryRecordRepo,
@@ -67,6 +71,9 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		db,
 		logger.Log,
 		systemConfigService,
+		productRepo,
+		nil, // retryService 稍后设置
+		orderExceptionService,
 	)
 	
 	// 先创建充值服务（因为订单服务需要它）

@@ -5,13 +5,14 @@ import (
 	"time"
 
 	"recharge-go/internal/controller"
+	"recharge-go/internal/middleware"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
 	"recharge-go/internal/service/platform"
 	"recharge-go/pkg/database"
 	"recharge-go/pkg/logger"
 	"recharge-go/pkg/metrics"
-	"recharge-go/pkg/middleware"
+	pkgMiddleware "recharge-go/pkg/middleware"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -19,7 +20,7 @@ import (
 
 // SetupRouterV2 使用优化后的依赖注入设置路由
 func SetupRouterV2(
-	securityMiddleware *middleware.SecurityMiddleware,
+	securityMiddleware *pkgMiddleware.SecurityMiddleware,
 	metricsManager *metrics.MetricsManager,
 	controllersInterface interface{}, // 控制器接口，避免循环导入
 	userService interface{}, // 用户服务
@@ -125,9 +126,11 @@ func SetupRouterV2(
 		}
 
 		// Protected routes
-		auth := v1.Group("")
-		auth.Use(securityMiddleware.JWTAuth())
-		{
+	// 创建新的认证中间件实例
+	authMiddleware := middleware.NewAuthMiddleware(db)
+	auth := v1.Group("")
+	auth.Use(authMiddleware.Auth())
+	{
 			// Protected user routes
 			if uc := assertUserController(userController); uc != nil {
 				RegisterProtectedUserRoutes(auth, uc, userSvc, userLogCtrl)
@@ -243,6 +246,9 @@ func SetupRouterV2(
 			if pqc := assertPhoneQueryController(phoneQueryController); pqc != nil {
 				RegisterPhoneQueryRoutes(auth, pqc, userSvc)
 			}
+
+			// Order Exception routes
+			RegisterOrderExceptionRoutes(auth, userSvc)
 
 			// TODO: 以下路由对应的控制器暂未初始化，需要对应的服务支持
 			// 只允许管理员访问

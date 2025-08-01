@@ -234,18 +234,22 @@ func (p *MishiPlatform) ParseCallbackData(data []byte) (*model.CallbackData, err
 	// 先尝试 url.ParseQuery 解析表单格式
 	form, err := url.ParseQuery(string(data))
 	if err == nil && len(form) > 0 {
-		_, statusStr := p.mapOrderState(form["nFlag"][0], form["szOrderId"][0], form["szOrderId"][0])
-		callbackData := &model.CallbackData{
-			OrderID:     form["szOrderId"][0],
-			Status:      statusStr,
-			Message:     form["szRtnMsg"][0],
-			Amount:      form["fSalePrice"][0],
-			Sign:        form["szVerifyString"][0],
-			OrderNumber: form["szOrderId"][0],
-			Timestamp:   "",
+		// 检查必要字段是否存在
+		if len(form["szOrderId"]) > 0 && len(form["nFlag"]) > 0 {
+			_, statusStr := p.mapOrderState(form["nFlag"][0], form["szOrderId"][0], form["szOrderId"][0])
+			callbackData := &model.CallbackData{
+				OrderID:       form["szOrderId"][0],
+				Status:        statusStr,
+				Message:       getFormValue(form, "szRtnMsg"),
+				Amount:        getFormValue(form, "fSalePrice"),
+				Sign:          getFormValue(form, "szVerifyString"),
+				OrderNumber:   form["szOrderId"][0],
+				Timestamp:     "",
+				TransactionID: "mishi_" + form["szOrderId"][0], // 使用平台前缀+订单号作为TransactionID
+			}
+			logger.Info("mishi回调解析完成(form)", "callbackData", callbackData)
+			return callbackData, nil
 		}
-		logger.Info("mishi回调解析完成(form)", "callbackData", callbackData)
-		return callbackData, nil
 	}
 	// 如果不是表单格式，尝试 json 解析
 	var req struct {
@@ -261,16 +265,25 @@ func (p *MishiPlatform) ParseCallbackData(data []byte) (*model.CallbackData, err
 	}
 	_, statusStr := p.mapOrderState(req.NFlag, req.SzOrderId, req.SzOrderId)
 	callbackData := &model.CallbackData{
-		OrderID:     req.SzOrderId,
-		Status:      statusStr,
-		Message:     req.SzRtnMsg,
-		Amount:      req.FSalePrice,
-		Sign:        req.SzVerifyString,
-		OrderNumber: req.SzOrderId,
-		Timestamp:   "",
+		OrderID:       req.SzOrderId,
+		Status:        statusStr,
+		Message:       req.SzRtnMsg,
+		Amount:        req.FSalePrice,
+		Sign:          req.SzVerifyString,
+		OrderNumber:   req.SzOrderId,
+		Timestamp:     "",
+		TransactionID: "mishi_" + req.SzOrderId, // 使用平台前缀+订单号作为TransactionID
 	}
 	logger.Info("mishi回调解析完成(json)", "callbackData", callbackData)
 	return callbackData, nil
+}
+
+// getFormValue 安全地获取表单值
+func getFormValue(form url.Values, key string) string {
+	if values, exists := form[key]; exists && len(values) > 0 {
+		return values[0]
+	}
+	return ""
 }
 
 // sendRequest 发送请求

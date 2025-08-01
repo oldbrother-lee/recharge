@@ -107,8 +107,9 @@ type Order struct {
 	PlatformCallbackURL string         `json:"platform_callback_url" gorm:"size:255;comment:平台回调URL"`
 	APIID               int64          `json:"api_id" gorm:"index"`                          // 当前订单使用的 API ID
 	UsedAPIs            string         `json:"used_apis" gorm:"type:text;comment:已使用的API列表"` // 已使用的API列表，JSON格式
+	HasException        int            `json:"has_exception" gorm:"default:0;index;comment:是否有异常:0-无异常,1-有异常"` // 是否有异常
 	CreatedAt           time.Time      `json:"created_at" gorm:"index"`
-	DeletedAt           gorm.DeletedAt `json:"deleted_at" gorm:"index"`
+	DeletedAt           gorm.DeletedAt `json:"deleted_at" gorm:"index"` 
 }
 
 type StatisticsQuery struct {

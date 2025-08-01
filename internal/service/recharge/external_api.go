@@ -207,7 +207,7 @@ func (p *ExternalAPIPlatform) ParseCallbackData(data []byte) (*model.CallbackDat
 		CallbackType:  "order_status",
 		Sign:          callbackData.Sign,
 		Timestamp:     timestampStr,
-		TransactionID: orderID,
+		TransactionID: "external_api_" + orderID,
 	}, nil
 }
 

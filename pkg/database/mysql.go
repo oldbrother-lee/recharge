@@ -90,6 +90,7 @@ func InitDB() error {
 		&model.ExternalAPIKey{},
 		&model.ExternalOrderLog{},
 		&model.BalanceQueryRecord{},
+		&model.OrderException{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate tables: %v", err)
 	}

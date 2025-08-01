@@ -72,7 +72,8 @@ func InitLogger(serviceName ...string) error {
 
 	// 创建日志记录器
 	core := zapcore.NewTee(consoleCore, fileCore)
-	Log = zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	// 使用AddCallerSkip(1)跳过包装函数层级，显示实际调用代码的位置
+	Log = zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1), zap.AddStacktrace(zapcore.ErrorLevel))
 
 	return nil
 }
@@ -89,7 +90,8 @@ func init() {
 	// 创建一个基本的控制台 logger
 	config := zap.NewDevelopmentConfig()
 	config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	logger, err := config.Build()
+	// 添加caller skip以显示实际调用代码的位置
+	logger, err := config.Build(zap.AddCallerSkip(1))
 	if err != nil {
 		// 如果创建失败，使用一个 no-op logger
 		Log = zap.NewNop()

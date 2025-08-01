@@ -199,6 +199,16 @@ func (s *UserService) UpdateUser(ctx context.Context, userID int64, req *model.U
 		user.Phone = *req.Phone
 	}
 
+	if req.Username != nil && *req.Username != oldInfo.Username {
+		changes = append(changes, fmt.Sprintf("用户名: %s -> %s", oldInfo.Username, *req.Username))
+		user.Username = *req.Username
+	}
+
+	if req.Status != nil && *req.Status != oldInfo.Status {
+		changes = append(changes, fmt.Sprintf("状态: %d -> %d", oldInfo.Status, *req.Status))
+		user.Status = *req.Status
+	}
+
 	user.UpdatedAt = time.Now()
 	if err := s.userRepo.Update(ctx, user); err != nil {
 		return err

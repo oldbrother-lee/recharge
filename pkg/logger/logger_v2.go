@@ -96,7 +96,7 @@ func NewLoggerV2(config *LoggerConfigV2) (*LoggerV2, error) {
 	}
 
 	if config.Caller {
-		options = append(options, zap.AddCaller())
+		options = append(options, zap.AddCaller(), zap.AddCallerSkip(1))
 	}
 
 	if config.Stacktrace {

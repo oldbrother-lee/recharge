@@ -94,6 +94,7 @@ type orderService struct {
 	lockManager      *lock.RefundLockManager
 	db               *gorm.DB
 	creditService    *CreditService
+	balanceQueryRecordRepo repository.BalanceQueryRecordRepository
 }
 
 // NewOrderService 创建订单服务实例
@@ -109,6 +110,7 @@ func NewOrderService(
 	db *gorm.DB,
 	productRepo repository.ProductRepository,
 	creditService *CreditService,
+	balanceQueryRecordRepo repository.BalanceQueryRecordRepository,
 ) OrderService {
 	return &orderService{
 		orderRepo:        orderRepo,
@@ -122,6 +124,7 @@ func NewOrderService(
 		lockManager:      lockManager,
 		db:               db,
 		creditService:    creditService,
+		balanceQueryRecordRepo: balanceQueryRecordRepo,
 	}
 }
 
@@ -955,15 +958,20 @@ func (s *orderService) CleanupOrders(ctx context.Context, start, end string) (in
 	if len(orderIDs) == 0 {
 		return 0, nil
 	}
-	// 2. 删除 notification_records
-	if err := s.notificationRepo.DeleteByOrderIDs(ctx, orderIDs); err != nil {
+	// 2. 删除 balance_query_records
+	if err := s.balanceQueryRecordRepo.DeleteByOrderIDs(ctx, orderIDs); err != nil {
+		return 0, fmt.Errorf("删除余额查询记录失败: %w", err)
+	}
+
+	// 3. 删除 notification_records（仅删除已完成或失败的通知记录，避免删除待处理的记录）
+	if err := s.notificationRepo.DeleteCompletedByOrderIDs(ctx, orderIDs); err != nil {
 		return 0, fmt.Errorf("删除通知记录失败: %w", err)
 	}
-	// 3. 删除 balance_logs
+	// 4. 删除 balance_logs
 	if err := s.rechargeService.GetBalanceService().DeleteByOrderIDs(ctx, orderIDs); err != nil {
 		return 0, err
 	}
-	// 4. 删除 orders
+	// 5. 删除 orders
 	count, err := s.orderRepo.DeleteByIDs(ctx, orderIDs)
 	if err != nil {
 		return 0, err

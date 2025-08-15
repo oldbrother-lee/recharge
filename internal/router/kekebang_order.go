@@ -54,6 +54,9 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 	creditLogRepo := repository.NewCreditLogRepository(db)
 	creditService := service.NewCreditService(userRepo, creditLogRepo)
 
+	// 创建余额查询记录仓库
+	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(database.DB)
+
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
@@ -67,6 +70,7 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 		database.DB,
 		productRepo,
 		creditService,
+		balanceQueryRecordRepo,
 	)
 
 	// 初始化充值服务需要的额外仓库
@@ -78,9 +82,6 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 
 	// 创建手机查询服务
 	phoneQueryService := service.NewPhoneQueryService(configs.GetConfig())
-	
-	// 创建余额查询记录仓库
-	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(database.DB)
 	
 	// 创建系统配置服务
 	systemConfigRepo := repository.NewSystemConfigRepository(database.DB)

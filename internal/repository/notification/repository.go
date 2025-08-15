@@ -18,6 +18,7 @@ type Repository interface {
 	List(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*notification.NotificationRecord, int64, error)
 	Update(ctx context.Context, record *notification.NotificationRecord) error
 	DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error
+	DeleteCompletedByOrderIDs(ctx context.Context, orderIDs []int64) error
 }
 
 // RepositoryImpl 通知记录仓库实现
@@ -122,4 +123,13 @@ func (r *RepositoryImpl) DeleteByOrderIDs(ctx context.Context, orderIDs []int64)
 		return nil
 	}
 	return r.db.WithContext(ctx).Where("order_id IN ?", orderIDs).Delete(&notification.NotificationRecord{}).Error
+}
+
+// DeleteCompletedByOrderIDs 根据订单ID列表删除已完成或失败的通知记录
+// 只删除状态为已完成(2)或失败(3)的记录，避免删除待处理(1)的记录
+func (r *RepositoryImpl) DeleteCompletedByOrderIDs(ctx context.Context, orderIDs []int64) error {
+	if len(orderIDs) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Where("order_id IN ? AND status IN ?", orderIDs, []int{2, 3}).Delete(&notification.NotificationRecord{}).Error
 }

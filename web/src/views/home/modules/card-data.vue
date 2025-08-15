@@ -29,6 +29,9 @@ const props = defineProps<{
       costAmount: number;
       profitAmount: number;
     };
+    exception: {
+      today_count: number;
+    };
   };
 }>();
 
@@ -89,6 +92,12 @@ const cardData = computed<CardData[]>(() => [
     value: props.statisticsData.status.failed,
     icon: 'mdi:close-circle-outline',
     color: '#f56c6c'
+  },
+  {
+    title: '今日异常订单',
+    value: props.statisticsData.exception.today_count,
+    icon: 'mdi:alert-circle-outline',
+    color: '#ff9800'
   }
 ]);
 

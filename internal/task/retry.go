@@ -34,8 +34,9 @@ func (t *RetryTask) Start() {
 		queueName = "retry_queue" // 默认队列名称
 	}
 	pollInterval := time.Duration(t.config.RetryTask.PollInterval) * time.Second
-	if pollInterval == 0 {
+	if pollInterval <= 0 {
 		pollInterval = 1 * time.Second // 默认轮询间隔
+		logger.Warn("【重试任务】配置的轮询间隔无效，使用默认值: %v", pollInterval)
 	}
 
 	logger.Info("【重试任务启动】开始从队列消费重试任务", "queue_name", queueName, "poll_interval", pollInterval)
@@ -127,6 +128,11 @@ func (t *RetryTask) startConsumer(consumerID int, queueName string, pollInterval
 // startPeriodicRetry 启动定时重试（作为备用机制）
 func (t *RetryTask) startPeriodicRetry() {
 	interval := time.Duration(t.config.RetryTask.Interval) * time.Second
+	// 如果配置的间隔为0或负数，使用默认值30秒
+	if interval <= 0 {
+		interval = 30 * time.Second
+		logger.Warn("【定时重试任务】配置的间隔无效，使用默认值: %v", interval)
+	}
 	logger.Info("【定时重试任务启动】作为备用机制，执行间隔: %v", interval)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

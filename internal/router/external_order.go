@@ -129,6 +129,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		db,
 		productRepo,
 		creditService,
+		balanceQueryRecordRepo,
 	)
 
 	// 设置相互依赖

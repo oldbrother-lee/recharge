@@ -359,7 +359,7 @@ func (s *UnifiedOrderService) performBalanceCheck(ctx context.Context, order *mo
 
 	// 计算余额变化
 	balanceChange := postBalance - preBalance
-	expectedChange := order.Price
+	expectedChange := order.Denom
 	balanceChanged := math.Abs(balanceChange-expectedChange) < 0.01 // 允许0.01的误差
 
 	s.logger.Info("余额对比结果",
@@ -717,61 +717,26 @@ func (s *UnifiedOrderService) checkAndHandleFailedOrderRetry(ctx context.Context
 		zap.String("used_apis", order.UsedAPIs))
 
 	// 检查依赖是否可用
-	if s.productRepo == nil || s.retryService == nil || s.queue == nil {
+	if s.retryService == nil || s.queue == nil {
 		s.logger.Warn("重试逻辑依赖未初始化，跳过重试检查",
 			zap.Int64("order_id", order.ID),
-			zap.Bool("product_repo_nil", s.productRepo == nil),
 			zap.Bool("retry_service_nil", s.retryService == nil),
 			zap.Bool("queue_nil", s.queue == nil))
 		return false, nil
 	}
 
-	// 获取商品的所有API关系
-	relations, err := s.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
+	// 使用retryService获取可用的API关系，确保API状态检查的一致性
+	availableRelations, err := s.retryService.GetAvailableAPIRelations(ctx, order.ID, order.ProductID)
 	if err != nil {
-		s.logger.Error("获取API关系失败", zap.Int64("order_id", order.ID), zap.Error(err))
+		s.logger.Error("获取可用API关系失败", zap.Int64("order_id", order.ID), zap.Error(err))
 		return false, err
 	}
-
-	s.logger.Info("获取到的API关系列表",
+	
+	hasAvailableAPI := len(availableRelations) > 0
+	s.logger.Info("检查可用API结果",
 		zap.Int64("order_id", order.ID),
-		zap.Int("relations_count", len(relations)))
-
-	// 解析已使用的API列表
-	var usedAPIs []map[string]interface{}
-	if order.UsedAPIs != "" {
-		if err := json.Unmarshal([]byte(order.UsedAPIs), &usedAPIs); err != nil {
-			s.logger.Error("解析已使用API列表失败", zap.Int64("order_id", order.ID), zap.Error(err))
-			usedAPIs = []map[string]interface{}{}
-		}
-	}
-
-	// 检查是否还有未使用的API
-	hasAvailableAPI := false
-	s.logger.Info("开始检查可用API",
-		zap.Int64("order_id", order.ID),
-		zap.Int("total_relations", len(relations)),
-		zap.Int("used_apis_count", len(usedAPIs)))
-
-	for _, relation := range relations {
-		alreadyUsed := false
-		for _, usedAPI := range usedAPIs {
-			if apiID, ok := usedAPI["api_id"].(float64); ok && int64(apiID) == relation.APIID {
-				alreadyUsed = true
-				s.logger.Info("API已被使用",
-					zap.Int64("order_id", order.ID),
-					zap.Int64("api_id", relation.APIID))
-				break
-			}
-		}
-		if !alreadyUsed {
-			s.logger.Info("发现可用API",
-				zap.Int64("order_id", order.ID),
-				zap.Int64("api_id", relation.APIID))
-			hasAvailableAPI = true
-			break
-		}
-	}
+		zap.Int("available_count", len(availableRelations)),
+		zap.Bool("has_available", hasAvailableAPI))
 
 	s.logger.Info("API可用性检查结果",
 		zap.Int64("order_id", order.ID),

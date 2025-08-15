@@ -35,6 +35,7 @@ func (n *NotificationApp) Initialize() error {
 	queueInstance := queue.NewRedisQueue()
 	n.notificationTask = task.NewNotificationTask(
 		n.container.GetServices().Notification,
+		n.container.GetServices().Order,
 		n.container.GetServices().Platform,
 		queueInstance,
 		3, // 最大重试次数

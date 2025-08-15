@@ -92,3 +92,14 @@ api:
       - "X-Request-ID"
     allow_credentials: true
     max_age: 86400  # 24 hours
+
+# 重试任务专用配置
+retry_task:
+  interval: 30           # 重试任务执行间隔（秒）
+  max_retries: 3         # 最大重试次数
+  retry_delay: 3         # 重试延迟（秒）
+  batch_size: 10         # 批量处理数量
+  timeout: 30            # 超时时间（秒）
+  queue_name: "retry_queue"  # 重试队列名称
+  consumer_count: 1      # 消费者数量
+  poll_interval: 1       # 队列轮询间隔（秒）

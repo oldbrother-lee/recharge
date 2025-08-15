@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -55,9 +56,9 @@ type BeeProduct struct {
 	CardPendingNum         int                         `json:"card_pending_num"`
 	UserQuoteStockInfo     *BeeUserQuoteStockInfo      `json:"user_quote_stock_info"`
 	UserQuoteStockProvInfo []BeeUserQuoteStockProvInfo `json:"user_quote_stock_prov_info"`
-	// ProvCodeConfig []BeeProvCodeConfig `json:"prov_code_config"`
-	// OrderLimitConfig       *BeeOrderLimitConfig     `json:"order_limit_config"`
-	// OrderLimitConfigFilm   *BeeOrderLimitConfigFilm `json:"order_limit_config_film"`
+	ProvCodeConfig         []BeeProvCodeConfig         `json:"prov_code_config"`
+	OrderLimitConfig       *BeeOrderLimitConfig        `json:"order_limit_config"`
+	OrderLimitConfigFilm   *BeeOrderLimitConfigFilm    `json:"order_limit_config_film"`
 }
 
 // BeeProvince 蜜蜂平台省份信息
@@ -114,6 +115,34 @@ type BeeUpdateProvinceRequest struct {
 	Provs   []string `json:"provs"`
 }
 
+// BeeEditSupplyGoodRequest 修改商品报价请求
+type BeeEditSupplyGoodRequest struct {
+	Goods []BeeEditSupplyGoodItem `json:"goods"`
+}
+
+// BeeEditSupplyGoodItem 修改商品报价单项
+type BeeEditSupplyGoodItem struct {
+	GoodsID          int64   `json:"goods_id"`
+	Status           int     `json:"status"`
+	UserQuotePayment float64 `json:"user_quote_payment,omitempty"`
+	UserQuoteStock   int     `json:"user_quote_stock,omitempty"`
+}
+
+// BeeEditSupplyGoodResponse 修改商品报价响应
+type BeeEditSupplyGoodResponse struct {
+	Code    int                        `json:"code"`
+	Message string                     `json:"message"`
+	Stime   float64                    `json:"stime"`
+	Etime   float64                    `json:"etime"`
+	Data    BeeEditSupplyGoodData      `json:"data"`
+}
+
+// BeeEditSupplyGoodData 修改商品报价响应数据
+type BeeEditSupplyGoodData struct {
+	SuccessMsgs interface{} `json:"successMsgs"`
+	ErrorMsgs   interface{} `json:"errorMsgs"`
+}
+
 // GetProductList 获取商品列表
 func (s *BeeService) GetProductList(account *model.PlatformAccount, page, pageSize int) (*BeeProductListResponse, error) {
 	// 构造data参数
@@ -150,16 +179,17 @@ func (s *BeeService) GetProductList(account *model.PlatformAccount, page, pageSi
 func ParseProductListData(rawData []byte) (*BeeProductListData, error) {
 	// 首先尝试解析为包含goods_info的对象格式
 	var objData struct {
-		GoodsInfo            []BeeProduct             `json:"goods_info"`
-		StatInfo             *BeeStatInfo             `json:"stat_info"`
-		UserVenderConfigInfo *BeeUserVenderConfigInfo `json:"user_vender_config_info"`
+		GoodsInfo []BeeProduct `json:"goods_info"`
+		StatInfo  *BeeStatInfo `json:"stat_info"`
+		// UserVenderConfigInfo *BeeUserVenderConfigInfo `json:"user_vender_config_info"`
+		// OrderLimitConfig     *BeeOrderLimitConfig     `json:"order_limit_config"`
 	}
 	err := json.Unmarshal(rawData, &objData)
 	if err == nil && objData.GoodsInfo != nil {
 		// 对象格式解析成功
 		result := &BeeProductListData{
-			GoodsInfo:            objData.GoodsInfo,
-			UserVenderConfigInfo: objData.UserVenderConfigInfo,
+			GoodsInfo: objData.GoodsInfo,
+			// UserVenderConfigInfo: objData.UserVenderConfigInfo,
 		}
 
 		// 如果有统计信息则使用，否则生成默认统计信息
@@ -242,7 +272,7 @@ func (s *BeeService) UpdateProductPrice(account *model.PlatformAccount, req *Bee
 	params := map[string]string{
 		"data": string(dataJSON),
 	}
-	logger.Info("bee update price", "params", params)
+
 	_, err = s.makeRequest("/userapi/sgd/editSupplyGoodManageStockWithProv", params, account)
 	return err
 }
@@ -259,6 +289,32 @@ func (s *BeeService) UpdateProductProvince(account *model.PlatformAccount, req *
 
 	_, err := s.makeRequest("/userapi/sgd/editSupplyGoodManageProvCode", params, account)
 	return err
+}
+
+// EditSupplyGoodManageStock 修改商品报价（已供应）
+func (s *BeeService) EditSupplyGoodManageStock(account *model.PlatformAccount, req *BeeEditSupplyGoodRequest) (*BeeEditSupplyGoodResponse, error) {
+	// 构造data参数，直接使用请求结构
+	dataJSON, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("构造data参数失败: %v", err)
+	}
+
+	params := map[string]string{
+		"data": string(dataJSON),
+	}
+
+	respBody, err := s.makeRequest("/userapi/sgd/editSupplyGoodManageStock", params, account)
+	if err != nil {
+		return nil, err
+	}
+
+	// 解析响应
+	var response BeeEditSupplyGoodResponse
+	if err := json.Unmarshal(respBody, &response); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %v", err)
+	}
+
+	return &response, nil
 }
 
 // makeRequest 发起API请求
@@ -279,7 +335,7 @@ func (s *BeeService) makeRequest(endpoint string, params map[string]string, acco
 
 	// 构建请求URL
 	requestURL := s.baseURL + endpoint
-
+	logger.Info("bee update price", "params", params)
 	// 构建POST数据
 	data := url.Values{}
 	for k, v := range params {
@@ -329,21 +385,23 @@ type BeeUserQuoteStockProvInfo struct {
 
 // BeeProvCodeConfig 省份配置信息
 type BeeProvCodeConfig struct {
-	Prov              string      `json:"prov"`
-	ProvID            int         `json:"prov_id"`
-	UserQuotePayment  string      `json:"user_quote_payment"`
-	UserQuoteDiscount interface{} `json:"user_quote_discount"`
-	ExternalCode      string      `json:"external_code"`
-	Status            string      `json:"status"`
+	Prov              string `json:"prov"`
+	ProvID            int    `json:"prov_id"`
+	UserQuotePayment  string `json:"user_quote_payment"`
+	UserQuoteDiscount int    `json:"user_quote_discount"`
+	ExternalCode      string `json:"external_code"`
+	Status            int    `json:"status"`
 }
 
 // BeeOrderLimitConfig 订单限制配置
 type BeeOrderLimitConfig struct {
-	SourceLimit    int         `json:"source_limit"`
-	SourceLimitTxt string      `json:"source_limit_txt"`
-	PriceLimit     interface{} `json:"price_limit"`
-	ExternalCode   string      `json:"external_code"`
-	UserRejectTime interface{} `json:"user_reject_time"`
+	SourceLimit      IntOrString `json:"source_limit"`
+	SourceLimitTxt   string      `json:"source_limit_txt"`
+	PriceLimit       string      `json:"price_limit"`
+	ExternalCode     string      `json:"external_code"`
+	UserRejectTime   *string     `json:"user_reject_time"`
+	CoinNumRange     []any       `json:"coin_num_range"`
+	CoinNumRangeType int         `json:"coin_num_range_type"`
 }
 
 // BeeOrderLimitConfigFilm 订单限制配置影片
@@ -354,4 +412,36 @@ type BeeOrderLimitConfigFilm struct {
 	Cinema     string `json:"cinema"`
 	ChangeSeat string `json:"change_seat"`
 	TicketNum  string `json:"ticket_num"`
+}
+type IntOrString struct {
+	IntValue int
+	StrValue string
+	IsString bool
+}
+
+func (t *IntOrString) UnmarshalJSON(b []byte) error {
+	bb := bytes.TrimSpace(b)
+	if len(bb) == 0 || bytes.Equal(bb, []byte("null")) {
+		*t = IntOrString{}
+		return nil
+	}
+	if bb[0] == '"' { // string
+		var s string
+		if err := json.Unmarshal(bb, &s); err != nil {
+			return err
+		}
+		t.StrValue = s
+		t.IsString = true
+		t.IntValue = 0
+		return nil
+	}
+	// number
+	var i int
+	if err := json.Unmarshal(bb, &i); err != nil {
+		return err
+	}
+	t.IntValue = i
+	t.IsString = false
+	t.StrValue = ""
+	return nil
 }

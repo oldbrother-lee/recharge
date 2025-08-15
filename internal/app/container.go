@@ -376,6 +376,7 @@ func (c *Container) initServices() error {
 		c.db,
 		c.repositories.Product,
 		c.services.Credit,
+		c.repositories.BalanceQueryRecord,
 	)
 
 	// 设置相互依赖

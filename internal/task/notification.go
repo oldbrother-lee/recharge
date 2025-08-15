@@ -18,6 +18,7 @@ import (
 // NotificationTask 通知任务处理器
 type NotificationTask struct {
 	notificationService notificationService.NotificationService
+	orderService        service.OrderService
 	platformService     *service.PlatformService
 	queue               queue.Queue
 	queueName           string
@@ -31,6 +32,7 @@ type NotificationTask struct {
 // NewNotificationTask 创建通知任务处理器
 func NewNotificationTask(
 	notificationService notificationService.NotificationService,
+	orderService service.OrderService,
 	platformService *service.PlatformService,
 	queue queue.Queue,
 	maxRetries int,
@@ -38,6 +40,7 @@ func NewNotificationTask(
 ) *NotificationTask {
 	return &NotificationTask{
 		notificationService: notificationService,
+		orderService:        orderService,
 		platformService:     platformService,
 		queue:               queue,
 		queueName:           "notification_queue",
@@ -134,6 +137,19 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 	// 处理前查数据库最新状态，只有status=1才处理
 	dbRecord, err := t.notificationService.GetNotification(ctx, record.ID)
 	if err != nil {
+		// 如果通知记录不存在（可能被清理任务删除），使用队列中的记录信息继续发送通知
+		if strings.Contains(err.Error(), "record not found") {
+			t.logger.Warn("通知记录已被删除，使用队列记录继续发送通知",
+				zap.Int64("notification_id", record.ID),
+				zap.Int64("order_id", record.OrderID),
+				zap.Int("retry_count", record.RetryCount),
+				zap.String("platform_code", record.PlatformCode),
+				zap.String("reason", "可能被数据清理任务删除"),
+			)
+			// 使用队列中的记录信息发送通知
+			return t.sendNotificationWithQueueRecord(ctx, record, workerID)
+		}
+		// 其他类型的错误才记录ERROR日志
 		t.logger.Error("获取通知记录失败",
 			zap.Error(err),
 			zap.Int64("notification_id", record.ID),
@@ -419,6 +435,56 @@ func (t *NotificationTask) startRetryTask(ctx context.Context) {
 			}
 		}
 	}
+}
+
+// sendNotificationWithQueueRecord 使用队列中的记录信息发送通知（当数据库记录不存在时）
+func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, record *notificationModel.NotificationRecord, workerID int) error {
+	// 根据订单ID查询订单信息
+	order, err := t.orderService.GetOrderByID(ctx, record.OrderID)
+	if err != nil {
+		if strings.Contains(err.Error(), "record not found") {
+			t.logger.Error("订单记录不存在，无法发送通知",
+				zap.Int64("notification_id", record.ID),
+				zap.Int64("order_id", record.OrderID),
+				zap.String("platform_code", record.PlatformCode),
+				zap.Int("retry_count", record.RetryCount),
+			)
+			return nil // 订单不存在，直接跳过
+		}
+		t.logger.Error("查询订单信息失败",
+			zap.Error(err),
+			zap.Int64("notification_id", record.ID),
+			zap.Int64("order_id", record.OrderID),
+			zap.String("platform_code", record.PlatformCode),
+			zap.Int("retry_count", record.RetryCount),
+		)
+		return err
+	}
+
+	// 发送通知
+	if err := t.platformService.SendNotification(ctx, order); err != nil {
+		t.logger.Error("通知发送失败（使用队列记录）",
+			zap.Error(err),
+			zap.Int64("notification_id", record.ID),
+			zap.Int64("order_id", record.OrderID),
+			zap.String("order_number", order.OrderNumber),
+			zap.String("platform_code", record.PlatformCode),
+			zap.String("notification_type", record.NotificationType),
+			zap.Int("retry_count", record.RetryCount),
+			zap.String("callback_url", order.PlatformCallbackURL),
+		)
+		return err // 发送失败，返回错误
+	}
+
+	t.logger.Info("发送通知成功（使用队列记录）",
+		zap.Int64("notification_id", record.ID),
+		zap.Int64("order_id", record.OrderID),
+		zap.String("order_number", order.OrderNumber),
+		zap.String("platform_code", record.PlatformCode),
+		zap.String("notification_type", record.NotificationType),
+		zap.Int("retry_count", record.RetryCount),
+	)
+	return nil
 }
 
 // Stop 停止通知任务处理器

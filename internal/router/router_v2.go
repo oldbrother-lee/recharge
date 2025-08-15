@@ -102,16 +102,16 @@ func SetupRouterV2(
 		RegisterExternalOrderRoutes(v1, db)
 
 		// 回调接口 - 不需要认证
-		if cc := assertCallbackController(callbackController); cc != nil {
-			callback := v1.Group("/callback")
-			{
-				callback.POST("/kekebang/:userid", cc.HandleKekebangCallback)
-				callback.POST("/mishi/:userid", cc.HandleMishiCallback)
-				callback.POST("/dayuanren/:userid", cc.HandleDayuanrenCallback)
-				callback.POST("/chongzhi/:userid", cc.HandleChongzhiCallback)
-				callback.POST("/payc2/:userid", cc.HandlePayc2Callback)
-			}
+	if cc := assertCallbackController(callbackController); cc != nil {
+		callback := v1.Group("/callback")
+		{
+			callback.POST("/kekebang/:userid", cc.HandleKekebangCallback)
+			callback.POST("/mishi/:userid", cc.HandleMishiCallback)
+			callback.POST("/dayuanren/:userid", cc.HandleDayuanrenCallback)
+			callback.POST("/chongzhi/:userid", cc.HandleChongzhiCallback)
+			callback.POST("/payc2/:userid", cc.HandlePayc2Callback)
 		}
+	}
 
 		// 平台账号相关接口
 		RegisterPlatformAccountRoutes(v1)

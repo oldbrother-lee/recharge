@@ -162,10 +162,11 @@ const handleCleanup = async () => {
       params: {
         start: formatLocalDatetime(cleanupRange.value.startTime),
         end: formatLocalDatetime(cleanupRange.value.endTime)
-      }
+      },
+      timeout: 600000 // 30秒超时，因为清理操作可能需要较长时间
     });
 
-    message.success(`清理成功，删除了 ${res.data.deleted} 条订单`);
+    message.success(`清理成功，删除了 ${res.data?.deleted || 0} 条订单`);
     showCleanupModal.value = false;
     fetchOrders();
   } catch (error: any) {

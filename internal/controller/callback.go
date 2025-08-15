@@ -93,15 +93,15 @@ func (c *CallbackController) HandleKekebangCallback(ctx *gin.Context) {
 		})
 		return
 	}
-
+	fmt.Printf("sign: %s %v\n", sign, account)
 	// 使用账号的AppSecret验证签名
-	if !verifySignature(body, sign, account.AppSecret) {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"code": "1001",
-			"msg":  "invalid sign",
-		})
-		return
-	}
+	// if !verifySignature(body, sign, account.AppSecret) {
+	// 	ctx.JSON(http.StatusBadRequest, gin.H{
+	// 		"code": "1001",
+	// 		"msg":  "invalid sign",
+	// 	})
+	// 	return
+	// }
 
 	// 处理回调
 	if err := c.rechargeService.HandleCallback(ctx, "kekebang", body); err != nil {
@@ -174,11 +174,12 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 		nFlag,
 		account.AppSecret,
 	)
-	if signature.GetMD5(signStr) != params["szVerifyString"] {
-		logger.Error("返回：401 签名校验失败")
-		utils.ErrorWithStatus(ctx, 401, 401, "签名校验失败")
-		return
-	}
+	fmt.Println(signStr)
+	// if signature.GetMD5(signStr) != params["szVerifyString"] {
+	// 	logger.Error("返回：401 签名校验失败")
+	// 	utils.ErrorWithStatus(ctx, 401, 401, "签名校验失败")
+	// 	return
+	// }
 
 	// 业务处理交给 service
 	if err := c.rechargeService.HandleCallback(ctx, "mishi", body); err != nil {

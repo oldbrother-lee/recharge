@@ -373,3 +373,42 @@ func (c *PlatformController) UpdateBeeProductProvince(ctx *gin.Context) {
 
 	utils.Success(ctx, nil)
 }
+
+// EditBeeSupplyGoodManageStock 修改蜜蜂平台商品报价（已供应）
+func (c *PlatformController) EditBeeSupplyGoodManageStock(ctx *gin.Context) {
+	accountID, err := strconv.ParseInt(ctx.Param("accountId"), 10, 64)
+	if err != nil {
+		utils.Error(ctx, http.StatusBadRequest, "invalid account id")
+		return
+	}
+
+	// 获取平台账号信息
+	account, err := c.service.GetPlatformAccountByID(accountID)
+	if err != nil {
+		utils.Error(ctx, http.StatusNotFound, "平台账号不存在")
+		return
+	}
+
+	// 验证是否为蜜蜂平台
+	platform, err := c.service.GetPlatformByID(account.PlatformID)
+	if err != nil || platform.Code != "mifeng" {
+		utils.Error(ctx, http.StatusBadRequest, "该账号不是蜜蜂平台账号")
+		return
+	}
+
+	// 解析请求参数
+	var req service.BeeEditSupplyGoodRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// 调用蜜蜂平台API
+	resp, err := c.beeService.EditSupplyGoodManageStock(account, &req)
+	if err != nil {
+		utils.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("修改商品报价失败: %v", err))
+		return
+	}
+
+	utils.Success(ctx, resp)
+}

@@ -10,6 +10,7 @@ import PieChart from './modules/pie-chart.vue';
 import ProjectNews from './modules/project-news.vue';
 import CreativityBanner from './modules/creativity-banner.vue';
 import { getOperatorStatistics } from '@/api/statistics';
+import { fetchOrderExceptionStatistics } from '@/api/order-exception';
 import { useAuthStore } from '@/store/modules/auth';
 
 const appStore = useAppStore();
@@ -39,6 +40,9 @@ const statisticsData = ref({
   profit: {
     costAmount: 0,
     profitAmount: 0
+  },
+  exception: {
+    today_count: 0
   }
 });
 
@@ -78,11 +82,29 @@ const fetchOrderStatistics = async () => {
       method: 'GET'
     });
     if (data && !error) {
-      statisticsData.value = data;
+      statisticsData.value = { ...statisticsData.value, ...data };
     }
   } catch (error) {
     message.error('获取订单统计数据失败');
     console.error('获取订单统计数据失败:', error);
+  }
+};
+
+// 获取今天异常订单统计
+const fetchTodayExceptionStatistics = async () => {
+  try {
+    const today = new Date().toISOString().split('T')[0]; // 格式化为 YYYY-MM-DD
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().split('T')[0]; // 结束时间为明天
+    const { data, error } = await fetchOrderExceptionStatistics(today, tomorrowStr);
+    if (data && !error) {
+      // 计算所有异常类型的总数
+      const totalCount = Object.values(data).reduce((sum, count) => sum + (count || 0), 0);
+      statisticsData.value.exception.today_count = totalCount;
+    }
+  } catch (error) {
+    console.error('获取异常订单统计失败:', error);
   }
 };
 
@@ -100,6 +122,7 @@ onMounted(async () => {
     totalOrders: item.totalOrders
   }));
   fetchOrderStatistics();
+  fetchTodayExceptionStatistics();
 });
 </script>
 

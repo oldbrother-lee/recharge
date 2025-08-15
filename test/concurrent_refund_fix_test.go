@@ -142,7 +142,10 @@ func TestConcurrentOrderFailRefund(t *testing.T) {
 	creditLogRepo := repository.NewCreditLogRepository(db)
 	creditService := service.NewCreditService(userRepo, creditLogRepo)
 
-	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, rechargeService, unifiedRefundService, refundLockManager, notificationRepo, queueInstance, db, nil, creditService)
+	// 创建余额查询记录仓库
+	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
+
+	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, rechargeService, unifiedRefundService, refundLockManager, notificationRepo, queueInstance, db, nil, creditService, balanceQueryRecordRepo)
 
 	// 5. 并发执行订单失败处理
 	var wg sync.WaitGroup
@@ -287,6 +290,7 @@ func (m *MockNotificationRepo) List(ctx context.Context, params map[string]inter
 func (m *MockNotificationRepo) GetPendingRecords(ctx context.Context, limit int) ([]*notificationModel.NotificationRecord, error) { return nil, nil }
 func (m *MockNotificationRepo) UpdateStatus(ctx context.Context, id int64, status int) error { return nil }
 func (m *MockNotificationRepo) IncrementRetryCount(ctx context.Context, id int64) error { return nil }
+func (m *MockNotificationRepo) DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error { return nil }
 
 // MockQueue 模拟队列
 type MockQueue struct{}

@@ -112,8 +112,8 @@
 <script setup lang="ts">
 import { ref, computed, nextTick, h } from 'vue';
 import type { DataTableColumns } from 'naive-ui';
-import { NButton, NTag, NSpace, NSelect, NCard, NGrid, NGridItem, NStatistic, NIcon, NInput, NModal } from 'naive-ui';
-import { getBeeProductList, type BeeProduct } from '@/api/bee-platform';
+import { NButton, NTag, NSpace, NSelect, NCard, NGrid, NGridItem, NStatistic, NIcon, NInput, NModal, NSwitch } from 'naive-ui';
+import { getBeeProductList, type BeeProduct, editBeeSupplyGoodManageStock } from '@/api/bee-platform';
 import ProductPriceForm from './ProductPriceForm.vue';
 import type { ComponentPublicInstance } from 'vue';
 
@@ -167,7 +167,7 @@ const filteredProductList = computed(() => {
   });
   
   // 展开有多个省份的商品为多行
-  const expandedList: (BeeProduct & { _isExpanded?: boolean; _provinceName?: string; _provinceData?: any; _isSummaryRow?: boolean })[] = [];
+  const expandedList: (BeeProduct & { _isExpanded?: boolean; _provinceName?: string; _provinceData?: any; _isSummaryRow?: boolean; _status?: number })[] = [];
   
   filtered.forEach(product => {
     const provInfo = product.user_quote_stock_prov_info;
@@ -190,10 +190,11 @@ const filteredProductList = computed(() => {
     } else {
       // 多个省份，先添加汇总行，再展开为多行
       // 添加汇总行
+      
       expandedList.push({
         ...product,
         _isExpanded: false,
-        _provinceName: '支持2个省份',
+        _provinceName: `支持${provInfo.length}个省份`,
         _isSummaryRow: true
       });
       
@@ -205,6 +206,7 @@ const filteredProductList = computed(() => {
           _provinceName: prov.prov,
           _provinceData: prov,
           _isSummaryRow: false,
+          _status: prov.status,
           // 省份详细行不显示商品ID和商品名称
           goods_id: product.goods_id,
           goods_name: ''
@@ -213,6 +215,7 @@ const filteredProductList = computed(() => {
     }
   });
   
+  console.log('过滤后的数据:', expandedList);
   return expandedList;
 });
 
@@ -256,23 +259,23 @@ const columns: DataTableColumns<BeeProduct> = [
   },
   {
     title: '渠道名称',
-    key: 'goods_name',
+    key: 'vender_name',
     width: 200,
     render(row: any) {
       // 只有多省份商品的详细行不显示渠道名称，其他都显示
-      return (!row._isExpanded || row._isSummaryRow) ? row.goods_name : '';
+      return (!row._isExpanded || row._isSummaryRow) ? row.vender_name : '';
     },
     ellipsis: {
       tooltip: true
     }
   },
   {
-    title: '商品名称',
+    title: '商品名称1',
     key: 'goods_name',
     width: 100,
     render(row: any) {
       // 只有多省份商品的详细行不显示商品名称，其他都显示
-      return (!row._isExpanded || row._isSummaryRow) ? row.goods_name : '';
+      return (!row._isExpanded || row._isSummaryRow) ? row.goods_name+'|'+row.spec_name : '';
     }
   },
   {
@@ -299,7 +302,7 @@ const columns: DataTableColumns<BeeProduct> = [
       }
       
       if (!lastPrice || lastPrice === null || lastPrice === undefined || lastPrice === 0) {
-        return '-';
+        return '暂无数据';
       }
       const price = parseFloat(lastPrice);
       if (isNaN(price)) {
@@ -338,16 +341,36 @@ const columns: DataTableColumns<BeeProduct> = [
   },
 
   {
-    title: '状态',
+    title: '供应状态',
     key: 'status',
-    width: 80,
+    width: 100,
     render(row: any) {
-      // 展开行显示省份数据的状态，其他显示商品状态
-      let status = row.supply_status;
-      if (row._provinceData && row._provinceData.status !== undefined) {
+      // 获取当前状态
+      let status;
+      
+      // 如果是展开的省份行，使用省份数据中的状态
+      if (row._isExpanded && row._provinceData) {
         status = row._provinceData.status;
+      } else if (row._isExpanded && row._status !== undefined) {
+        // 使用展开行的状态
+        status = row._status;
+      } else {
+        // 非展开行，使用商品本身的状态
+        status = row.status || row.supply_status;
       }
-      return h(NTag, { type: status === 1 ? 'success' : 'error' }, status === 1 ? '上架' : '下架');
+      
+      const isChecked = status === 1;
+      
+      return h(NSwitch, {
+        value: isChecked,
+        checkedValue: true,
+        uncheckedValue: false,
+        'onUpdate:value': (value: boolean) => handleStatusChange(row, value),
+        size: 'small'
+      }, {
+        checked: () => row._isExpanded ? '上架' : '供应中',
+        unchecked: () => row._isExpanded ? '下架' : '未供应'
+      });
     }
   },
 
@@ -361,7 +384,7 @@ const columns: DataTableColumns<BeeProduct> = [
       if (row._provinceData && row._provinceData.external_code) {
         externalCode = row._provinceData.external_code;
       } else {
-        externalCode = row.external_code;
+        externalCode = row.order_limit_config.external_code;
       }
       
       return externalCode || '-';
@@ -377,7 +400,7 @@ const columns: DataTableColumns<BeeProduct> = [
     width: 200,
     fixed: 'right',
     render(row: any) {
-      // 汇总行或非展开行显示操作按钮，多省份详细行不显示
+      // 只在汇总行或非展开行显示操作按钮，多省份详细行不显示
       if (!row._isSummaryRow && row._isExpanded) {
         return '';
       }
@@ -451,15 +474,109 @@ const handleRefresh = () => {
 };
 
 // 编辑价格
-const handleEditPrice = (product: BeeProduct) => {
+const handleEditPrice = (row: any) => {
   const accountId = currentAccountId.value || props.accountId;
-  priceFormRef.value?.open(accountId!, product, 'price');
+  
+  // 无论点击哪一行（汇总/普通），都从原始列表中找到未改动的商品数据
+  const originalProduct = productList.value.find(p => p.goods_id === row.goods_id);
+  
+  if (originalProduct) {
+    // 确保传给表单的商品对象包含 prov_info
+    // 如果后端返回字段是 user_quote_stock_prov_info，则做一次兼容映射
+    let provInfo = (originalProduct as any).prov_info;
+    if ((!provInfo || provInfo.length === 0) && (originalProduct as any).user_quote_stock_prov_info) {
+      const stockProv = (originalProduct as any).user_quote_stock_prov_info as any[];
+      provInfo = stockProv.map((it: any) => ({
+        prov: it.prov,
+        user_quote_payment: it.user_quote_discount,
+        external_code: it.external_code || '',
+        status: it.status
+      }));
+    }
+
+    // 如果 prov_info 已存在但缺少 external_code，尝试从 user_quote_stock_prov_info 中补齐
+    if (provInfo && provInfo.length > 0 && (originalProduct as any).user_quote_stock_prov_info) {
+      const stockProv = (originalProduct as any).user_quote_stock_prov_info as any[];
+      const externalMap = new Map<string, string>();
+      stockProv.forEach((it: any) => {
+        if (it && typeof it.prov !== 'undefined') {
+          externalMap.set(it.prov, it.external_code || '');
+        }
+      });
+      provInfo = provInfo.map((item: any) => ({
+        ...item,
+        external_code: item.external_code ?? externalMap.get(item.prov) ?? ''
+      }));
+    }
+
+    const editProduct: any = {
+      ...originalProduct,
+      // 用规范化后的 prov_info 覆盖/补充，保证表单能识别
+      ...(provInfo ? { prov_info: provInfo } : {})
+    };
+
+    priceFormRef.value?.open(accountId!, editProduct, 'price');
+  } else {
+    console.error('Failed to find the original product for editing.', row);
+    priceFormRef.value?.open(accountId!, row, 'price');
+  }
 };
 
 // 编辑省份配置
 const handleEditProvince = (product: BeeProduct) => {
   const accountId = currentAccountId.value || props.accountId;
   priceFormRef.value?.open(accountId!, product, 'province');
+};
+
+// 处理供应状态变更
+const handleStatusChange = async (row: any, newStatus: boolean) => {
+  try {
+    const accountId = currentAccountId.value || props.accountId;
+    if (!accountId) {
+      window.$message?.error('账户ID不能为空');
+      return;
+    }
+
+    const status = newStatus ? 1 : 2; // 1开启供应，2关闭供应
+    const requestData = {
+      goods: [{
+        goods_id: row.goods_id,
+        status: status
+      }]
+    };
+
+    await editBeeSupplyGoodManageStock(accountId, requestData);
+    window.$message?.success('供应状态修改成功');
+    
+    // 更新本地数据
+    if (row._isExpanded && row._provinceData) {
+      // 如果是展开的省份行，更新省份数据的状态
+      row._provinceData.status = status;
+      row._status = status;
+      
+      // 同时更新原始商品数据中对应省份的状态
+      const originalProduct = productList.value.find(p => p.goods_id === row.goods_id);
+      if (originalProduct && originalProduct.user_quote_stock_prov_info) {
+        const provInfo = originalProduct.user_quote_stock_prov_info.find(p => p.prov === row._provinceName);
+        if (provInfo) {
+          provInfo.status = status;
+        }
+      }
+    } else {
+      // 非展开行，更新商品本身的状态
+      row.status = status;
+      if (row.user_quote_stock_prov_info && row.user_quote_stock_prov_info.length > 0) {
+         // 更新所有省份的状态
+         row.user_quote_stock_prov_info.forEach((item: any) => {
+           item.status = status;
+         });
+      }
+    }
+  } catch (error: any) {
+    window.$message?.error(error.message || '供应状态修改失败');
+    // 恢复原状态
+    fetchProductList();
+  }
 };
 
 // 打开弹窗

@@ -1,5 +1,23 @@
 import { request } from '@/service/request';
 
+// IntOrString 类型定义
+export interface IntOrString {
+  IntValue: number;
+  StrValue: string;
+  IsString: boolean;
+}
+
+// 蜜蜂平台订单限制配置接口
+export interface BeeOrderLimitConfig {
+  source_limit: IntOrString;
+  source_limit_txt: string;
+  price_limit: string;
+  external_code: string;
+  user_reject_time: string | null;
+  coin_num_range: any[];
+  coin_num_range_type: number;
+}
+
 // 蜜蜂平台用户报价库存信息接口
 export interface BeeUserQuoteStockInfo {
   id: number;
@@ -37,9 +55,12 @@ export interface BeeProduct {
   user_quote_type: number;
   external_code_link_type: number;
   external_code: string;
+  // 新增：商品基价（用户支付面值）
+  user_payment?: number;
   prov_info: BeeProvince[];
   user_quote_stock_info?: BeeUserQuoteStockInfo | null;
   user_quote_stock_prov_info?: BeeUserQuoteStockProvInfo[];
+  order_limit_config?: BeeOrderLimitConfig | null;
 }
 
 // 蜜蜂平台省份信息接口
@@ -78,6 +99,30 @@ export interface BeeUpdateProvinceRequest {
   provs: string[];
 }
 
+export interface BeeEditSupplyGoodRequest {
+  goods: BeeEditSupplyGoodItem[];
+}
+
+export interface BeeEditSupplyGoodItem {
+  goods_id: number;
+  status: number;
+  user_quote_payment?: number;
+  user_quote_stock?: number;
+}
+
+export interface BeeEditSupplyGoodResponse {
+  code: number;
+  message: string;
+  stime: number;
+  etime: number;
+  data: BeeEditSupplyGoodData;
+}
+
+export interface BeeEditSupplyGoodData {
+  successMsgs: any;
+  errorMsgs: any;
+}
+
 export function getBeeProductList(accountId: number, params: any) {
   return request({ url: `/platform/bee/accounts/${accountId}/products`, method: 'get', params: params });
 }
@@ -88,4 +133,8 @@ export function updateBeeProductPrice(accountId: number, data: BeeUpdatePriceReq
 
 export function updateBeeProductProvince(accountId: number, data: BeeUpdateProvinceRequest) {
   return request({ url: `/platform/bee/accounts/${accountId}/products/province`, method: 'put', data });
+}
+
+export function editBeeSupplyGoodManageStock(accountId: number, data: BeeEditSupplyGoodRequest) {
+  return request({ url: `/platform/bee/accounts/${accountId}/products/stock`, method: 'put', data });
 }

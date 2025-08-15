@@ -163,11 +163,6 @@ const local: App.I18n.Schema = {
     500: '服务器错误',
     'iframe-page': '外链页面',
     home: '首页',
-    document: '文档',
-    document_project: '项目文档',
-    'document_project-link': '项目文档(外链)',
-    document_vue: 'Vue文档',
-    document_vite: 'Vite文档',
     document_unocss: 'UnoCSS文档',
     document_naive: 'Naive UI文档',
     document_antd: 'Ant Design Vue文档',
@@ -242,6 +237,7 @@ const local: App.I18n.Schema = {
     'system_user-grade':"用户等级",
     'order':'订单管理',
     'order_all':"所有订单",
+    'order_exception':"异常订单",
     'order_mf178':"蜜蜂订单",
     'order_kekebang':"客客帮订单",
     'order_xianzhuanxia':"闲赚侠订单",
@@ -334,6 +330,7 @@ const local: App.I18n.Schema = {
       failedOrders: '失败订单',
       costAmount: '成本金额',
       profit: '利润金额',
+      successRate: '成功率',
       projectNews: {
         title: '项目动态',
         moreNews: '更多动态',
@@ -424,7 +421,7 @@ const local: App.I18n.Schema = {
       },
       user: {
         title: '用户列表',
-        user_name: '用户名',
+        userName: '用户名',
         userGender: '性别',
         nickName: '昵称',
         phone: '手机号',
@@ -520,7 +517,7 @@ const local: App.I18n.Schema = {
   },
   form: {
     required: '不能为空',
-    user_name: {
+    userName: {
       required: '请输入用户名',
       invalid: '用户名格式不正确'
     },

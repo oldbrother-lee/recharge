@@ -9,6 +9,7 @@ import (
 	"recharge-go/internal/signature"
 	"recharge-go/pkg/logger"
 	"sort"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -64,7 +65,7 @@ func NewRetryService(
 // HandleRetry 处理重试
 func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retryType int) error {
 	// 1. 获取可用的API关系列表
-	relations, err := s.getAvailableAPIRelations(ctx, order.ID, order.ProductID)
+	relations, err := s.GetAvailableAPIRelations(ctx, order.ID, order.ProductID)
 	if err != nil {
 		return fmt.Errorf("获取可用API失败: %v", err)
 	}
@@ -201,6 +202,20 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 		logger.Info("【所有重试通道均已失败，更新订单状态为失败】order_id: %d", order.ID)
 		if err := s.orderService.ProcessOrderFail(ctx, order.ID, "所有通道重试失败，自动失败"); err != nil {
 			logger.Error("【订单失败处理失败】order_id: %d, error: %v", order.ID, err)
+			// 如果是获取锁失败，创建一个延迟重试任务
+			if strings.Contains(err.Error(), "获取分布式锁超时") || strings.Contains(err.Error(), "获取退款锁失败") {
+				logger.Info("【因锁获取失败，创建延迟重试任务】order_id: %d", order.ID)
+				retryRecord := &model.OrderRetryRecord{
+					OrderID:       order.ID,
+					RetryType:     model.RetryTypeOrderFail,
+					Status:        0, // 待处理
+					RetryCount:    0,
+					NextRetryTime: time.Now().Add(30 * time.Second), // 30秒后重试
+				}
+				if createErr := s.retryRepo.Create(ctx, retryRecord); createErr != nil {
+					logger.Error("【创建延迟重试任务失败】order_id: %d, error: %v", order.ID, createErr)
+				}
+			}
 		} else {
 			logger.Info("【订单状态已更新为失败并已发送通知】order_id: %d", order.ID)
 		}
@@ -348,7 +363,13 @@ func (s *RetryService) ProcessRetries(ctx context.Context) error {
 
 // executeRetry 执行重试
 func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetryRecord) error {
-	logger.Info(fmt.Sprintf("【开始执行重试】record_id: %d, order_id: %d", record.ID, record.OrderID))
+	logger.Info(fmt.Sprintf("【开始执行重试】record_id: %d, order_id: %d, retry_type: %s", record.ID, record.OrderID, record.RetryType))
+
+	// 检查重试类型，如果是订单失败重试，直接调用ProcessOrderFail
+	if record.RetryType == model.RetryTypeOrderFail {
+		logger.Info(fmt.Sprintf("【执行订单失败重试】record_id: %d, order_id: %d", record.ID, record.OrderID))
+		return s.orderService.ProcessOrderFail(ctx, record.OrderID, "重试处理订单失败")
+	}
 
 	// 1. 获取订单信息
 	order, err := s.orderRepo.GetByID(ctx, record.OrderID)
@@ -361,7 +382,7 @@ func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetr
 		record.ID, record.OrderID, order.Status, order.OrderNumber))
 	fmt.Println(order, "order+@@@@@@!!!!!!!!!!!!!!!!!!1+++++++")
 	// 2. 获取可用的API关系列表
-	relations, err := s.getAvailableAPIRelations(ctx, record.OrderID, order.ProductID)
+	relations, err := s.GetAvailableAPIRelations(ctx, record.OrderID, order.ProductID)
 	if err != nil {
 		logger.Error(fmt.Sprintf("【获取可用API关系失败】record_id: %d, order_id: %d, error: %v",
 			record.ID, record.OrderID, err))
@@ -472,7 +493,7 @@ func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetr
 }
 
 // getAvailableAPIRelations 获取可用的API关系列表
-func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int64, productID int64) ([]*model.ProductAPIRelation, error) {
+func (s *RetryService) GetAvailableAPIRelations(ctx context.Context, orderID int64, productID int64) ([]*model.ProductAPIRelation, error) {
 	logger.Info("开始获取可用的API关系列表",
 		"order_id", orderID,
 		"product_id", productID,
@@ -488,9 +509,25 @@ func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int
 		return nil, fmt.Errorf("获取已使用API失败: %v", err)
 	}
 
-	// 收集已使用的API ID
+	logger.Info("DEBUG: 获取到的重试记录",
+		"order_id", orderID,
+		"records_count", len(records),
+	)
+
+	// 收集已使用的API ID（统计所有已尝试过的API，无论成功还是失败）
 	usedAPIs := make([]int64, 0)
 	for _, record := range records {
+		// 统计所有已尝试过的API，避免重复使用失败的API
+		// 状态说明：0: 待处理, 1: 处理中, 2: 重试成功, 3: 重试失败/已取消
+		
+		logger.Info("DEBUG: 处理重试记录",
+			"record_id", record.ID,
+			"order_id", record.OrderID,
+			"api_id", record.APIID,
+			"status", record.Status,
+			"used_apis_raw", record.UsedAPIs,
+		)
+		
 		// 解析 UsedAPIs 字段，兼容两种格式
 		var usedAPIList []struct {
 			APIID   int64 `json:"api_id"`
@@ -506,8 +543,10 @@ func (s *RetryService) getAvailableAPIRelations(ctx context.Context, orderID int
 				)
 				return nil, fmt.Errorf("解析已使用API失败: %v", err)
 			}
+			logger.Info("DEBUG: 解析为简单数组", "simple_apis", simpleAPIList)
 			usedAPIs = append(usedAPIs, simpleAPIList...)
 		} else {
+			logger.Info("DEBUG: 解析为对象数组", "object_apis", usedAPIList)
 			for _, u := range usedAPIList {
 				usedAPIs = append(usedAPIs, u.APIID)
 			}

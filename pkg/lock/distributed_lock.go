@@ -116,7 +116,8 @@ func NewRefundLockManager(lock DistributedLock) *RefundLockManager {
 // LockUserRefund 锁定用户退款操作
 func (r *RefundLockManager) LockUserRefund(ctx context.Context, userID int64) (string, error) {
 	lockKey := fmt.Sprintf("refund:user:%d", userID)
-	return r.lock.LockWithRetry(ctx, lockKey, 30*time.Second, 3, 100*time.Millisecond)
+	// 增加重试次数和间隔时间，提高锁获取成功率
+	return r.lock.LockWithRetry(ctx, lockKey, 30*time.Second, 10, 200*time.Millisecond)
 }
 
 // UnlockUserRefund 解锁用户退款操作
@@ -128,7 +129,8 @@ func (r *RefundLockManager) UnlockUserRefund(ctx context.Context, userID int64, 
 // LockOrderRefund 锁定订单退款操作
 func (r *RefundLockManager) LockOrderRefund(ctx context.Context, orderID int64) (string, error) {
 	lockKey := fmt.Sprintf("refund:order:%d", orderID)
-	return r.lock.LockWithRetry(ctx, lockKey, 30*time.Second, 3, 100*time.Millisecond)
+	// 增加重试次数和间隔时间，提高锁获取成功率
+	return r.lock.LockWithRetry(ctx, lockKey, 30*time.Second, 10, 200*time.Millisecond)
 }
 
 // UnlockOrderRefund 解锁订单退款操作

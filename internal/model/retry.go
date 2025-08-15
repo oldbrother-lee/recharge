@@ -4,6 +4,12 @@ import (
 	"time"
 )
 
+// 重试类型常量
+const (
+	RetryTypeNormal    = 0 // 普通重试
+	RetryTypeOrderFail = 1 // 订单失败重试
+)
+
 // OrderRetryRecord 订单重试记录
 type OrderRetryRecord struct {
 	ID            int64     `json:"id" gorm:"primaryKey"`

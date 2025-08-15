@@ -103,7 +103,7 @@
                 >
                   <div class="flex items-center gap-4 mb-2 flex-wrap">
                     <span class="bg-green-100 text-green-800 px-3 py-1 rounded text-sm min-w-16 text-center flex-shrink-0">
-                      {{ allProvinces.find(p => p.code === provinceCode)?.name }}
+                      {{ getProvinceName(provinceCode) }}
                     </span>
                     
                     <NInput
@@ -187,7 +187,7 @@
               class="flex items-center gap-4 flex-wrap"
             >
               <span class="bg-green-100 text-green-800 px-3 py-1 rounded text-sm flex-shrink-0 min-w-16">
-                {{ allProvinces.find(p => p.code === provinceCode)?.name }}
+                {{ getProvinceName(provinceCode) }}
               </span>
               <NInput
                 v-model:value="provinceExternalCodes[provinceCode]"
@@ -281,6 +281,7 @@ import { ref, computed, reactive, h, watch } from 'vue';
 import type { DataTableColumns, FormInst } from 'naive-ui';
 import { NButton, NInputNumber, NPopconfirm, NInput, NRadio, NRadioGroup, NCard, NGrid, NGridItem, NSpace, NSwitch, NCheckbox, NModal, NForm, NFormItem, NSelect, NDataTable } from 'naive-ui';
 import { updateBeeProductPrice, updateBeeProductProvince, type BeeProduct, type BeeProvince, type BeeUpdatePriceRequest, type BeeUpdateProvinceRequest } from '@/api/bee-platform';
+import { status } from 'nprogress';
 
 interface Emits {
   success: [];
@@ -306,6 +307,7 @@ const formData = reactive<BeeUpdatePriceRequest>({
   external_code_link_type: 1,
   user_quote_payment: 0,
   external_code: '',
+  // 移除不存在的属性
   prov_info: []
 });
 
@@ -358,6 +360,7 @@ const calculatedPrice = computed(() => {
 
 // 计算属性：为每个省份计算价格
 const getProvinceCalculatedPrice = (provinceCode: string) => {
+  console.log('provinceCode', provinceCode)
   const quote = provinceQuotes.value[provinceCode];
   if (!quote) return '0.000';
   const price = parseFloat(quote) || 0;
@@ -373,6 +376,14 @@ const handleProvinceChange = (provinceCode: string, checked: boolean) => {
       provinceQuotes.value[provinceCode] = '';
       provinceStatus.value[provinceCode] = true;
       provinceExternalCodes.value[provinceCode] = '';
+      
+      // 同步到 formData.prov_info
+      formData.prov_info.push({
+        prov: provinceCode,
+        user_quote_payment: 0,
+        external_code: '',
+        status: 1
+      });
     }
   } else {
     const index = selectedProvinces.value.indexOf(provinceCode);
@@ -382,6 +393,12 @@ const handleProvinceChange = (provinceCode: string, checked: boolean) => {
       delete provinceQuotes.value[provinceCode];
       delete provinceStatus.value[provinceCode];
       delete provinceExternalCodes.value[provinceCode];
+      
+      // 同步删除 formData.prov_info 中的对应项
+      const provIndex = formData.prov_info.findIndex(item => item.prov === provinceCode);
+      if (provIndex > -1) {
+        formData.prov_info.splice(provIndex, 1);
+      }
     }
   }
 };
@@ -419,6 +436,24 @@ const resetForm = () => {
   batchPrice.value = '';
 };
 
+// 监听 prov_limit_type 变化，实现联动
+watch(() => formData.prov_limit_type, (newValue) => {
+  if (newValue === 1) {
+    // 当 prov_limit_type 为 1 时，user_quote_type 和 external_code_link_type 必须都为 1
+    formData.user_quote_type = 1;
+    formData.external_code_link_type = 1;
+  } else if (newValue === 2) {
+    // 当 prov_limit_type 为 2 时，user_quote_type 和 external_code_link_type 必须都为 2
+    formData.user_quote_type = 2;
+    formData.external_code_link_type = 2;
+  }
+});
+
+// 监听 nationalPrice 变化，同步到 formData.user_quote_payment
+watch(nationalPrice, (newValue) => {
+  formData.user_quote_payment = parseFloat(newValue) || 0;
+});
+
 // 所有省份列表
 const allProvinces = [
   { code: 'beijing', name: '北京' },
@@ -454,6 +489,18 @@ const allProvinces = [
   { code: 'xinjiang', name: '新疆' }
 ];
 
+// 根据省份编码或名称返回显示名称
+const getProvinceName = (prov: string) => {
+  // 先按 code 匹配
+  const byCode = allProvinces.find(p => p.code === prov);
+  if (byCode) return byCode.name;
+  // 再按中文名称匹配（后端可能已返回中文名）
+  const byName = allProvinces.find(p => p.name === prov);
+  if (byName) return byName.name;
+  // 兜底直接返回原值
+  return prov;
+};
+
 // 可选省份列表
 const availableProvinces = computed(() => {
   const usedProvinces = formData.prov_info.map(item => item.prov);
@@ -473,8 +520,7 @@ const provinceColumns: DataTableColumns<BeeProvince> = [
     title: '省份',
     key: 'prov',
     render(row) {
-      const province = allProvinces.find(p => p.code === row.prov);
-      return province?.name || row.prov;
+      return getProvinceName(row.prov);
     }
   },
   {
@@ -499,20 +545,20 @@ const provinceColumns: DataTableColumns<BeeProvince> = [
     title: '外部编码',
     key: 'external_code',
     render(row, index) {
-      if (formData.external_code_link_type === 1) {
-        return formData.external_code;
-      }
-      return h(NInput, {
-        value: row.external_code,
-        size: 'small',
-        onUpdateValue: (value) => {
-          formData.prov_info[index].external_code = value;
-        }
-      });
+      
+      // return formData.external_code;
+     
+      // return h(NInput, {
+      //   value: row.external_code,
+      //   size: 'small',
+      //   onUpdateValue: (value) => {
+      //     formData.prov_info[index].external_code = value;
+      //   }
+      // });
     }
   },
   {
-    title: '状态',
+    title: '供应状态',
     key: 'status',
     render(row, index) {
       return h(NRadioGroup, {
@@ -523,7 +569,7 @@ const provinceColumns: DataTableColumns<BeeProvince> = [
       }, {
         default: () => [
           h(NRadio, { value: 1 }, '启用'),
-          h(NRadio, { value: 0 }, '禁用')
+          h(NRadio, { value: 2 }, '禁用')
         ]
       });
     }
@@ -589,12 +635,61 @@ const handleSubmit = async () => {
     submitting.value = true
     await formRef.value?.validate()
     
+    // 在提交前，按选中省份同步 formData.prov_info
+    if (formData.prov_limit_type === 2) {
+      // 仅保留选中的省份
+      formData.prov_info = formData.prov_info
+        .filter(item => selectedProvinces.value.includes(item.prov))
+        .map(item => ({
+          ...item,
+          // 将输入框里的万分比和状态同步回 prov_info，状态改为1上架，3下架
+          user_quote_payment: parseFloat(provinceQuotes.value[item.prov] || '0') || 0,
+          status: provinceStatus.value[item.prov] ? 1 : 3
+        }));
+      
+      // 对于选中但 prov_info 里不存在的省份，补全默认项（此处先保留 code，稍后统一转中文名）
+      selectedProvinces.value.forEach(code => {
+        if (!formData.prov_info.find(i => i.prov === code)) {
+          formData.prov_info.push({
+            prov: code,
+            user_quote_payment: parseFloat(provinceQuotes.value[code] || '0') || 0,
+            external_code: '',
+            status: provinceStatus.value[code] ? 1 : 3 // 状态改为1上架，3下架
+          });
+        }
+      });
+    } else {
+      // 支持全国时清空省份详细项
+      formData.prov_info = [];
+    }
+
+    // 将外部编码从 provinceExternalCodes 同步回 prov_info，并在最后将 prov 转为中文名称
+    if (formData.prov_limit_type === 2) {
+      // 先用 code 作为键同步 external_code
+      formData.prov_info = formData.prov_info.map(item => ({
+        ...item,
+        external_code: provinceExternalCodes.value[item.prov] || ''
+      }));
+      // 再将 prov 统一转换为中文名称
+      formData.prov_info = formData.prov_info.map(item => ({
+        ...item,
+        prov: getProvinceName(item.prov)
+      }));
+    }
+
+    // 关键：根据 prov_limit_type 强制设置 user_quote_type 和 external_code_link_type，避免未传或数值不正确
+    if (formData.prov_limit_type === 1) {
+      formData.user_quote_type = 1;
+      formData.external_code_link_type = 1;
+    } else if (formData.prov_limit_type === 2) {
+      formData.user_quote_type = 2;
+      formData.external_code_link_type = 2;
+    }
+
     // 构建提交数据
     const submitData = {
       ...formData,
-      user_quote_payment: parseFloat(nationalPrice.value) || 0,
-      user_quote_type: 1,
-      statsu :2
+      status: 1
     }
     
     console.log('提交数据:', submitData)
@@ -608,7 +703,7 @@ const handleSubmit = async () => {
         goods_id: formData.goods_id,
         provs: selectedProvinces.value,
         user_quote_type: 1,
-        statsu :2
+        status :2
       }
       await updateBeeProductProvince(accountId.value, provinceData)
     }
@@ -639,26 +734,62 @@ const open = (id: number, product: BeeProduct, type: 'price' | 'province') => {
   productName.value = product.goods_name;
   
   if (type === 'price') {
+    console.log('product:',  product.order_limit_config)
     Object.assign(formData, {
       goods_id: product.goods_id,
       status: product.status,
-      prov_limit_type: product.prov_limit_type,
+      prov_limit_type: product.user_quote_stock_info?.prov_limit_type,
       user_quote_type: product.user_quote_type,
       external_code_link_type: product.external_code_link_type,
-      user_quote_payment: product.user_quote_payment,
-      external_code: product.external_code,
+      user_quote_payment: product.user_quote_stock_info?.user_quote_discount,
+      external_code: product.order_limit_config?.external_code,
       prov_info: product.prov_info ? [...product.prov_info] : []
     });
-    // 初始化选中的省份
-    selectedProvinces.value = product.prov_info ? product.prov_info.map(item => item.prov) : [];
+
+    // 关键：根据 prov_limit_type 纠正 user_quote_type 与 external_code_link_type，避免未变化时 watcher 不触发
+    if (formData.prov_limit_type === 1) {
+      formData.user_quote_type = 1;
+      formData.external_code_link_type = 1;
+    } else if (formData.prov_limit_type === 2) {
+      formData.user_quote_type = 2;
+      formData.external_code_link_type = 2;
+    }
     
-    // 初始化省份报价和状态数据
+    // 设置参考价格为商品的用户支付面值（user_payment），而不是固定的 10 元
+    referencePrice.value = Number((product as any).user_payment );
+    
+    // 初始化nationalPrice
+    nationalPrice.value = product.user_quote_stock_info?.user_quote_discount?.toString() || '';
+    
+    // 规范化 prov 为 code，并初始化选中的省份
+    const normalizeProvToCode = (prov: string) => {
+      // 与 getProvinceName 的反向映射：支持中文或 code
+      const byCode = allProvinces.find(p => p.code === prov);
+      if (byCode) return byCode.code;
+      const byName = allProvinces.find(p => p.name === prov);
+      if (byName) return byName.code;
+      return prov; // 保底返回原值
+    };
+
+    if (formData.prov_info && formData.prov_info.length > 0) {
+      formData.prov_info = formData.prov_info.map(item => ({
+        ...item,
+        prov: normalizeProvToCode(item.prov)
+      }));
+    }
+
+    // 初始化选中的省份（使用规范化后的 code）
+    selectedProvinces.value = formData.prov_info ? formData.prov_info.map(item => item.prov) : [];
+    
+    // 初始化省份报价、状态和外部编码数据（键使用 code）
     provinceQuotes.value = {};
     provinceStatus.value = {};
-    if (product.prov_info) {
-      product.prov_info.forEach(item => {
+    provinceExternalCodes.value = {};
+    if (formData.prov_info) {
+      formData.prov_info.forEach(item => {
         provinceQuotes.value[item.prov] = item.user_quote_payment?.toString() || '';
         provinceStatus.value[item.prov] = item.status === 1;
+        provinceExternalCodes.value[item.prov] = item.external_code || '';
       });
     }
   } else {

@@ -41,5 +41,6 @@ func RegisterPlatformRoutes(r *gin.RouterGroup, platformController *controller.P
 		bee.GET("/accounts/:accountId/products", platformController.GetBeeProductList)
 		bee.PUT("/accounts/:accountId/products/price", platformController.UpdateBeeProductPrice)
 		bee.PUT("/accounts/:accountId/products/province", platformController.UpdateBeeProductProvince)
+		bee.PUT("/accounts/:accountId/products/stock", platformController.EditBeeSupplyGoodManageStock)
 	}
 }

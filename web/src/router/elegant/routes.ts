@@ -97,6 +97,16 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       },
       {
+        name: 'order_exception',
+        path: '/order/exception',
+        component: 'view.order_exception',
+        meta: {
+          title: 'order_exception',
+          icon: 'mdi:alert-circle-outline',
+          i18nKey: 'route.order_exception'
+        }
+      },
+      {
         name: 'order_kekebang',
         path: '/order/kekebang',
         component: 'view.order_kekebang',

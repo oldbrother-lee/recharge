@@ -212,6 +212,34 @@ func (s *rechargeService) Recharge(ctx context.Context, orderID int64) error {
 	}
 	logger.Info("【提交订单到平台成功】order_id: %d", orderID)
 
+	// 3.1 记录使用的API（成功提交后立即记录）
+	usedAPIs := []map[string]interface{}{
+		{
+			"api_id": api.ID,
+		},
+	}
+	usedAPIsJSON, _ := json.Marshal(usedAPIs)
+
+	retryRecord := &model.OrderRetryRecord{
+		OrderID:       orderID,
+		APIID:         api.ID,
+		ParamID:       apiParam.ID,
+		RetryType:     1, // 1: 平台切换
+		RetryCount:    0, // 首次提交
+		LastError:     "", // 成功提交，无错误
+		RetryParams:   "{}",
+		UsedAPIs:      string(usedAPIsJSON),
+		Status:        1, // 1: 已处理（成功提交）
+		NextRetryTime: time.Now(),
+	}
+
+	if err := s.retryRepo.Create(ctx, retryRecord); err != nil {
+		logger.Error("【记录使用API失败】order_id: %d, error: %v", orderID, err)
+		// 不影响主流程，继续执行
+	} else {
+		logger.Info("【记录使用API成功】order_id: %d, api_id: %d", orderID, api.ID)
+	}
+
 	// 4. 开启事务
 	logger.Info("【开始更新订单状态和平台信息】order_id: %d", orderID)
 	tx := s.orderRepo.(*repository.OrderRepositoryImpl).DB().Begin()
@@ -337,28 +365,33 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	// 优先使用平台交易ID进行重复检查，避免换通道重试时的误判
 	var exists *model.CallbackLog
 
-	if callbackData.TransactionID != "" {
-		// 如果有平台交易ID，使用更精确的检查
-		exists, err = s.callbackLogRepo.GetByOrderIDTypeAndPlatformID(ctx, callbackData.OrderNumber, callbackData.CallbackType, callbackData.TransactionID)
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
-			return err
-		}
-		if exists != nil {
-			logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s, platform_id: %s", callbackData.OrderNumber, callbackData.CallbackType, callbackData.TransactionID))
-			return nil
+	// 只有当OrderNumber不为空时才进行重复检查，避免空字符串匹配到错误的记录
+	if callbackData.OrderNumber != "" {
+		if callbackData.TransactionID != "" {
+			// 如果有平台交易ID，使用更精确的检查
+			exists, err = s.callbackLogRepo.GetByOrderIDTypeAndPlatformID(ctx, callbackData.OrderNumber, callbackData.CallbackType, callbackData.TransactionID)
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
+				return err
+			}
+			if exists != nil {
+				logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s, platform_id: %s", callbackData.OrderNumber, callbackData.CallbackType, callbackData.TransactionID))
+				return nil
+			}
+		} else {
+			// 如果没有平台交易ID，使用原有的检查方式
+			exists, err = s.callbackLogRepo.GetByOrderIDAndType(ctx, callbackData.OrderNumber, callbackData.CallbackType)
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
+				return err
+			}
+			if exists != nil {
+				logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s", callbackData.OrderNumber, callbackData.CallbackType))
+				return nil
+			}
 		}
 	} else {
-		// 如果没有平台交易ID，使用原有的检查方式
-		exists, err = s.callbackLogRepo.GetByOrderIDAndType(ctx, callbackData.OrderNumber, callbackData.CallbackType)
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
-			return err
-		}
-		if exists != nil {
-			logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s", callbackData.OrderNumber, callbackData.CallbackType))
-			return nil
-		}
+		logger.Warn("回调数据中OrderNumber为空，跳过重复检查")
 	}
 
 	// 3. 开启事务
@@ -385,6 +418,8 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		orderState = model.OrderStatusSuccess
 	case "failed":
 		orderState = model.OrderStatusFailed
+	case "3": // kekebang平台充值中状态
+		orderState = model.OrderStatusRecharging
 	case "5":
 		orderState = model.OrderStatusFailed
 	case "processing":
@@ -396,12 +431,14 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	}
 
 	// 获取订单信息
+	logger.Info("【查询订单】正在查询订单号: %s", callbackData.OrderNumber)
 	order, err := s.orderRepo.GetByOrderID(ctx, callbackData.OrderNumber)
 	if err != nil {
 		tx.Rollback()
 		logger.Error("获取订单信息失败: %v", err)
 		return fmt.Errorf("get order failed: %v", err)
 	}
+	logger.Info("【查询订单结果】订单ID: %d, 订单号: %s, 状态: %d, 产品ID: %d", order.ID, order.OrderNumber, order.Status, order.ProductID)
 
 	// 检查订单当前状态，如果已经是最终状态，忽略后续回调
 	// if order.Status == model.OrderStatusSuccess || order.Status == model.OrderStatusFailed {

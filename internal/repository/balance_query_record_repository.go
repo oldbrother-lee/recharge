@@ -17,6 +17,7 @@ type BalanceQueryRecordRepository interface {
 	Update(ctx context.Context, record *model.BalanceQueryRecord) error
 	ListByMobile(ctx context.Context, mobile string, offset, limit int) ([]model.BalanceQueryRecord, int64, error)
 	ListByMobileAndType(ctx context.Context, mobile string, queryType string, offset, limit int) ([]model.BalanceQueryRecord, int64, error)
+	DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error
 }
 
 // balanceQueryRecordRepository 余额查询记录仓储实现
@@ -98,6 +99,15 @@ func (r *balanceQueryRecordRepository) ListByMobile(ctx context.Context, mobile 
 	
 	err = db.Preload("Order").Order("created_at desc").Offset(offset).Limit(limit).Find(&records).Error
 	return records, total, err
+}
+
+// DeleteByOrderIDs 根据订单ID列表删除余额查询记录
+func (r *balanceQueryRecordRepository) DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error {
+	if len(orderIDs) == 0 {
+		return nil
+	}
+	// 使用Unscoped()进行硬删除，避免外键约束问题
+	return r.db.WithContext(ctx).Unscoped().Where("order_id IN ?", orderIDs).Delete(&model.BalanceQueryRecord{}).Error
 }
 
 // ListByMobileAndType 根据手机号和查询类型分页查询余额查询记录

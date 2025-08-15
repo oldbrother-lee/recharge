@@ -55,6 +55,9 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 	creditLogRepo := repository.NewCreditLogRepository(db)
 	creditService := service.NewCreditService(userRepo, creditLogRepo)
 
+	// 创建余额查询记录仓库
+	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(database.DB)
+
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
@@ -68,6 +71,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		database.DB,
 		productRepo,
 		creditService,
+		balanceQueryRecordRepo,
 	)
 
 	userBalanceService := service.NewBalanceService(balanceLogRepo, userRepo)
@@ -79,9 +83,6 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 
 	// 创建手机查询服务
 	phoneQueryService := service.NewPhoneQueryService(configs.GetConfig())
-	
-	// 创建余额查询记录仓库
-	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(database.DB)
 	
 	// 创建系统配置服务
 	systemConfigRepo := repository.NewSystemConfigRepository(database.DB)

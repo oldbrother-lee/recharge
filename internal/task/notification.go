@@ -208,7 +208,7 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 			)
 			// 如果是 record not found，可以直接标记为失败，避免无意义重试
 			if strings.Contains(err.Error(), "record not found") {
-				err2 := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 3)
+				err2 := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 4)
 				if err2 != nil {
 					t.logger.Error("更新通知状态失败", zap.Error(err2), zap.Int64("notification_id", dbRecord.ID), zap.Int64("order_id", dbRecord.OrderID), zap.Int("retry_count", dbRecord.RetryCount), zap.String("platform_code", dbRecord.PlatformCode))
 				}
@@ -248,59 +248,47 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 				zap.Int("retry_count", dbRecord.RetryCount),
 			)
 			// 标记为失败
-			if err := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 3); err != nil {
+			if err := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 4); err != nil {
 				t.logger.Error("更新通知状态失败", zap.Error(err), zap.Int64("notification_id", dbRecord.ID), zap.Int64("order_id", dbRecord.OrderID), zap.String("order_number", order.OrderNumber), zap.Int("retry_count", dbRecord.RetryCount), zap.String("platform_code", dbRecord.PlatformCode))
 			}
 			return nil
 		}
 		// 如果处理失败且未超过最大重试次数，则重试
 		if dbRecord.RetryCount < t.maxRetries {
-			// 使用指数退避策略计算重试间隔
-			retryInterval := time.Duration(1<<uint(dbRecord.RetryCount)) * time.Minute
+			// 固定重试间隔为1分钟
+			retryInterval := 1 * time.Minute
 			nextRetryTime := time.Now().Add(retryInterval)
 			t.logger.Info("准备重试通知",
-				zap.Int64("notification_id", dbRecord.ID),
-				zap.Int64("order_id", dbRecord.OrderID),
-				zap.String("order_number", order.OrderNumber),
-				zap.Int("retry_count", dbRecord.RetryCount),
-				zap.Time("next_retry_time", nextRetryTime),
-				zap.Duration("retry_interval", retryInterval),
-				zap.String("platform_code", dbRecord.PlatformCode),
+			    zap.Int64("notification_id", dbRecord.ID),
+			    zap.Int64("order_id", dbRecord.OrderID),
+			    zap.String("order_number", order.OrderNumber),
+			    zap.Int("retry_count", dbRecord.RetryCount),
+			    zap.Time("next_retry_time", nextRetryTime),
+			    zap.Duration("retry_interval", retryInterval),
+			    zap.String("platform_code", dbRecord.PlatformCode),
 			)
 			// 更新通知记录状态和重试时间
 			if err := t.notificationService.RetryFailedNotification(ctx, dbRecord.ID); err != nil {
-				t.logger.Error("重试通知失败",
-					zap.Error(err),
-					zap.Int64("notification_id", dbRecord.ID),
-					zap.Int64("order_id", dbRecord.OrderID),
-					zap.String("order_number", order.OrderNumber),
-					zap.Int("retry_count", dbRecord.RetryCount),
-					zap.String("platform_code", dbRecord.PlatformCode),
-				)
-				return err
+			    t.logger.Error("重试通知失败",
+			        zap.Error(err),
+			        zap.Int64("notification_id", dbRecord.ID),
+			        zap.Int64("order_id", dbRecord.OrderID),
+			        zap.String("order_number", order.OrderNumber),
+			        zap.Int("retry_count", dbRecord.RetryCount),
+			        zap.String("platform_code", dbRecord.PlatformCode),
+			    )
+			    return err
 			}
-			// 重新入队
-			if err := t.queue.Push(ctx, t.queueName, dbRecord); err != nil {
-				t.logger.Error("重新入队失败",
-					zap.Error(err),
-					zap.Int64("notification_id", dbRecord.ID),
-					zap.Int64("order_id", dbRecord.OrderID),
-					zap.String("order_number", order.OrderNumber),
-					zap.Int("retry_count", dbRecord.RetryCount),
-					zap.String("platform_code", dbRecord.PlatformCode),
-					zap.String("queue_name", t.queueName),
-				)
-				return err
-			}
-			t.logger.Info("通知已重新入队",
-				zap.Int64("notification_id", dbRecord.ID),
-				zap.Int64("order_id", dbRecord.OrderID),
-				zap.String("order_number", order.OrderNumber),
-				zap.Int("retry_count", dbRecord.RetryCount),
-				zap.String("queue_name", t.queueName),
-				zap.Time("next_retry_time", nextRetryTime),
-				zap.String("platform_code", dbRecord.PlatformCode),
-			)
+			// 由服务层进行延迟入队，这里只记录日志
+		t.logger.Info("已安排1分钟后重试（服务层延迟入队）",
+		    zap.Int64("notification_id", dbRecord.ID),
+		    zap.Int64("order_id", dbRecord.OrderID),
+		    zap.String("order_number", order.OrderNumber),
+		    zap.Int("retry_count", dbRecord.RetryCount),
+		    zap.Time("next_retry_time", nextRetryTime),
+		    zap.Duration("retry_interval", retryInterval),
+		    zap.String("platform_code", dbRecord.PlatformCode),
+		)
 		} else {
 			t.logger.Info("通知已达到最大重试次数，不再重试",
 				zap.Int64("notification_id", dbRecord.ID),
@@ -311,7 +299,7 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 				zap.String("platform_code", dbRecord.PlatformCode),
 			)
 			// 更新通知状态为失败
-			if err := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 3); err != nil {
+			if err := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 4); err != nil {
 				t.logger.Error("更新通知状态失败",
 					zap.Error(err),
 					zap.Int64("notification_id", dbRecord.ID),

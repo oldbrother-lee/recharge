@@ -31,6 +31,12 @@ func (n *NotificationApp) Initialize() error {
 		n.container.GetServices().Notification,
 	)
 
+	// 读取配置中的通知最大重试次数
+	maxRetries := n.container.GetConfig().Notification.MaxRetries
+	if maxRetries <= 0 {
+		maxRetries = 3 // 兜底，避免配置缺失导致不可用
+	}
+
 	// 创建通知任务处理器
 	queueInstance := queue.NewRedisQueue()
 	n.notificationTask = task.NewNotificationTask(
@@ -38,7 +44,7 @@ func (n *NotificationApp) Initialize() error {
 		n.container.GetServices().Order,
 		n.container.GetServices().Platform,
 		queueInstance,
-		3, // 最大重试次数
+		maxRetries, // 从配置读取最大重试次数
 		logger.Log, // 添加 logger 参数
 	)
 

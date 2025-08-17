@@ -23,6 +23,7 @@ type Config struct {
 	API           APIConfig           `mapstructure:"api"`
 	Redis         RedisConfig         `mapstructure:"redis"`
 	ThirdPartyAPI ThirdPartyAPIConfig `mapstructure:"third_party_api"`
+	Notification  NotificationConfig  `mapstructure:"notification"`
 }
 
 type ServerConfig struct {
@@ -62,16 +63,22 @@ type TaskConfig struct {
 	ResumeThreshold    int `mapstructure:"resume_threshold"`
 }
 
+// NotificationConfig 通知相关配置（新增）
+type NotificationConfig struct {
+	MaxRetries int `mapstructure:"max_retries"`
+	BatchSize  int `mapstructure:"batch_size"`
+}
+
 // RetryTaskConfig 重试任务专用配置
 type RetryTaskConfig struct {
-	Interval       int    `mapstructure:"interval"`        // 重试任务执行间隔（秒）
-	MaxRetries     int    `mapstructure:"max_retries"`     // 最大重试次数
-	RetryDelay     int    `mapstructure:"retry_delay"`     // 重试延迟（秒）
-	BatchSize      int    `mapstructure:"batch_size"`      // 批量处理数量
-	Timeout        int    `mapstructure:"timeout"`         // 超时时间（秒）
-	QueueName      string `mapstructure:"queue_name"`      // 重试队列名称
-	ConsumerCount  int    `mapstructure:"consumer_count"`  // 消费者数量
-	PollInterval   int    `mapstructure:"poll_interval"`   // 队列轮询间隔（秒）
+	Interval      int    `mapstructure:"interval"`       // 重试任务执行间隔（秒）
+	MaxRetries    int    `mapstructure:"max_retries"`    // 最大重试次数
+	RetryDelay    int    `mapstructure:"retry_delay"`    // 重试延迟（秒）
+	BatchSize     int    `mapstructure:"batch_size"`     // 批量处理数量
+	Timeout       int    `mapstructure:"timeout"`        // 超时时间（秒）
+	QueueName     string `mapstructure:"queue_name"`     // 重试队列名称
+	ConsumerCount int    `mapstructure:"consumer_count"` // 消费者数量
+	PollInterval  int    `mapstructure:"poll_interval"`  // 队列轮询间隔（秒）
 }
 
 type APIConfig struct {

@@ -5,6 +5,7 @@ import (
 	"recharge-go/internal/model/notification"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/pkg/queue"
+	"recharge-go/pkg/logger"
 	"time"
 )
 
@@ -62,19 +63,24 @@ func (s *notificationService) RetryFailedNotification(ctx context.Context, id in
 		return err
 	}
 
-	// 更新重试次数和下次重试时间
+	// 更新重试次数和下次重试时间（固定1分钟后）
 	record.RetryCount++
-	record.NextRetryTime = time.Now().Add(time.Minute * 5) // 5分钟后重试
-	record.Status = 1                                      // 重置为待处理状态
+	record.NextRetryTime = time.Now().Add(1 * time.Minute)
+	record.Status = 1 // 重置为待处理状态
 
 	if err := s.recordRepo.Update(ctx, record); err != nil {
 		return err
 	}
 
-	// 推送到队列，确保异步任务能处理
-	if err := s.queue.Push(ctx, "notification_queue", record); err != nil {
-		return err
-	}
+	// 使用 time.AfterFunc 在1分钟后重新入队（保持与现有消费者兼容）
+	delay := 1 * time.Minute
+	time.AfterFunc(delay, func() {
+		if err := s.queue.Push(context.Background(), "notification_queue", record); err != nil {
+			logger.Error("通知延迟重新入队失败", "error", err, "notification_id", record.ID)
+			return
+		}
+		logger.Info("通知已延迟重新入队", "notification_id", record.ID, "delay", delay.String())
+	})
 
 	return nil
 }

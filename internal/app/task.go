@@ -42,16 +42,16 @@ func (t *TaskApp) Start(ctx context.Context) error {
 
 	// 创建并设置配置监听器
 	redisClient := t.container.GetRedis()
-	configListener := service.NewTaskConfigListener(redisClient, t.taskService)
+	configListener := service.NewTaskConfigListener(ctx, redisClient, t.taskService)
 	t.taskService.SetConfigListener(configListener)
 
 	// 启动配置监听器
 	t.taskService.StartConfigListener()
 
-	// 无论是否有配置都启动任务服务
-	t.taskService.StartTask()
-	// 启动订单详情查询任务
-	t.taskService.StartOrderDetailsTask()
+	// 无论是否有配置都启动任务服务，传递上下文以确保可以正常退出
+	t.taskService.StartTask(ctx)
+	// 启动订单详情查询任务，传递上下文以确保可以正常退出
+	t.taskService.StartOrderDetailsTask(ctx)
 
 	log.Println("任务应用已启动，正在处理启用的任务配置和订单详情查询")
 	return nil

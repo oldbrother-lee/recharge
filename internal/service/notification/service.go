@@ -75,7 +75,15 @@ func (s *notificationService) RetryFailedNotification(ctx context.Context, id in
 	// 使用 time.AfterFunc 在1分钟后重新入队（保持与现有消费者兼容）
 	delay := 1 * time.Minute
 	time.AfterFunc(delay, func() {
-		if err := s.queue.Push(context.Background(), "notification_queue", record); err != nil {
+		// 在回调中使用调用方的ctx可能已经超时/取消，这里创建一个可取消的派生ctx，尊重上层取消但避免使用全局Background
+		select {
+		case <-ctx.Done():
+			// 上下文已取消，不再入队
+			logger.Info("跳过已取消上下文的通知重试入队", "notification_id", record.ID)
+			return
+		default:
+		}
+		if err := s.queue.Push(ctx, "notification_queue", record); err != nil {
 			logger.Error("通知延迟重新入队失败", "error", err, "notification_id", record.ID)
 			return
 		}

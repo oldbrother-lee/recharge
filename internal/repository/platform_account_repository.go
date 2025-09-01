@@ -62,6 +62,16 @@ func (r *PlatformAccountRepository) GetByID(id int64) (*model.PlatformAccount, e
 	return &account, nil
 }
 
+// GetByIDWithContext 查询单个账号（支持上下文取消）
+func (r *PlatformAccountRepository) GetByIDWithContext(ctx context.Context, id int64) (*model.PlatformAccount, error) {
+	var account model.PlatformAccount
+	err := r.db.WithContext(ctx).Preload("Platform").Where("id = ?", id).First(&account).Error
+	if err != nil {
+		return nil, err
+	}
+	return &account, nil
+}
+
 // GetByAccount 根据账号获取平台账号
 func (r *PlatformAccountRepository) GetByAccount(ctx context.Context, account string) (*model.PlatformAccount, error) {
 	var platformAccount model.PlatformAccount

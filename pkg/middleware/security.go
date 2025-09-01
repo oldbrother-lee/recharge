@@ -65,6 +65,9 @@ type SecurityMiddleware struct {
 	logger   *loggerV2.LoggerV2
 	limiters map[string]*rate.Limiter
 	mu       sync.RWMutex // 保护limiters map的并发访问
+	stopCh   chan struct{}
+	wg       sync.WaitGroup
+	stopOnce sync.Once
 }
 
 // NewSecurityMiddleware 创建安全中间件
@@ -73,9 +76,11 @@ func NewSecurityMiddleware(config *SecurityConfig, logger *loggerV2.LoggerV2) *S
 		config:   config,
 		logger:   logger,
 		limiters: make(map[string]*rate.Limiter),
+		stopCh:   make(chan struct{}),
 	}
 
 	// 启动后台清理goroutine
+	sm.wg.Add(1)
 	go sm.startCleanupRoutine()
 
 	return sm
@@ -329,11 +334,14 @@ func (sm *SecurityMiddleware) getLimiter(clientID string) *rate.Limiter {
 func (sm *SecurityMiddleware) startCleanupRoutine() {
 	ticker := time.NewTicker(time.Hour) // 每小时清理一次
 	defer ticker.Stop()
+	defer sm.wg.Done()
 	
 	for {
 		select {
 		case <-ticker.C:
 			sm.cleanupLimiters()
+		case <-sm.stopCh:
+			return
 		}
 	}
 }
@@ -421,4 +429,16 @@ func (sm *SecurityMiddleware) RequireRole(roles ...string) gin.HandlerFunc {
 
 		appErrors.HandleError(c, appErrors.ErrForbidden.WithDetails("Insufficient permissions"))
 	}
+}
+
+// Stop 停止后台清理协程
+func (sm *SecurityMiddleware) Stop() {
+	if sm == nil {
+		return
+	}
+	sm.stopOnce.Do(func() {
+		close(sm.stopCh)
+	})
+	// 等待清理协程退出
+	sm.wg.Wait()
 }

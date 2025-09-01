@@ -36,7 +36,17 @@ func (w *RechargeWorker) Stop() {
 
 // processQueue 处理队列
 func (w *RechargeWorker) processQueue() {
-	ctx := context.Background()
+	// 使用可取消的上下文，随 stopChan 关闭而取消
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-w.stopChan:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	for {
 		select {
 		case <-w.stopChan:
@@ -46,7 +56,12 @@ func (w *RechargeWorker) processQueue() {
 			orderID, err := w.rechargeService.PopFromRechargeQueue(ctx)
 			if err != nil {
 				logger.Error("从队列获取订单失败: %v", err)
-				time.Sleep(time.Second)
+				// time.Sleep(time.Second)
+				select {
+				case <-w.stopChan:
+					return
+				case <-time.After(time.Second):
+				}
 				continue
 			}
 
@@ -64,7 +79,12 @@ func (w *RechargeWorker) processQueue() {
 				if err := w.rechargeService.PushToRechargeQueue(ctx, orderID); err != nil {
 					logger.Error("重新放入队列失败, order_id: %d, error: %v", orderID, err)
 				}
-				time.Sleep(time.Second)
+				// time.Sleep(time.Second)
+				select {
+				case <-w.stopChan:
+					return
+				case <-time.After(time.Second):
+				}
 				continue
 			}
 
@@ -79,6 +99,17 @@ func (w *RechargeWorker) checkRechargingOrders() {
 	ticker := time.NewTicker(3 * time.Minute)
 	defer ticker.Stop()
 
+	// 使用可取消的上下文，随 stopChan 关闭而取消
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-w.stopChan:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
 	for {
 		select {
 		case <-w.stopChan:
@@ -86,7 +117,7 @@ func (w *RechargeWorker) checkRechargingOrders() {
 			return
 		case <-ticker.C:
 			logger.Info("【充值中订单检查器】定时器触发，开始新一轮检查")
-			if err := w.rechargeService.CheckRechargingOrders(context.Background()); err != nil {
+			if err := w.rechargeService.CheckRechargingOrders(ctx); err != nil {
 				logger.Error("【充值中订单检查器】检查失败: %v", err)
 			}
 		}

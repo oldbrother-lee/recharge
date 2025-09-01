@@ -117,19 +117,41 @@ func (r *RepositoryImpl) Update(ctx context.Context, record *notification.Notifi
 	return r.db.WithContext(ctx).Save(record).Error
 }
 
-// DeleteByOrderIDs 根据订单ID列表删除通知记录
+// DeleteByOrderIDs 根据订单ID列表删除通知记录（分批避免占位符过多导致 1390 错误）
 func (r *RepositoryImpl) DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error {
 	if len(orderIDs) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Where("order_id IN ?", orderIDs).Delete(&notification.NotificationRecord{}).Error
+	const batchSize = 1000
+	for start := 0; start < len(orderIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(orderIDs) {
+			end = len(orderIDs)
+		}
+		ids := orderIDs[start:end]
+		if err := r.db.WithContext(ctx).Where("order_id IN ?", ids).Delete(&notification.NotificationRecord{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-// DeleteCompletedByOrderIDs 根据订单ID列表删除已完成或失败的通知记录
+// DeleteCompletedByOrderIDs 根据订单ID列表删除已完成或失败的通知记录（分批避免占位符过多导致 1390 错误）
 // 只删除状态为已完成(2)或失败(3)的记录，避免删除待处理(1)的记录
 func (r *RepositoryImpl) DeleteCompletedByOrderIDs(ctx context.Context, orderIDs []int64) error {
 	if len(orderIDs) == 0 {
 		return nil
 	}
-	return r.db.WithContext(ctx).Where("order_id IN ? AND status IN ?", orderIDs, []int{2, 3}).Delete(&notification.NotificationRecord{}).Error
+	const batchSize = 1000
+	for start := 0; start < len(orderIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(orderIDs) {
+			end = len(orderIDs)
+		}
+		ids := orderIDs[start:end]
+		if err := r.db.WithContext(ctx).Where("order_id IN ? AND status IN ?", ids, []int{2, 3}).Delete(&notification.NotificationRecord{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

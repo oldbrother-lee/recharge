@@ -15,6 +15,7 @@ import (
 	"recharge-go/pkg/redis"
 	"recharge-go/pkg/signature"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -105,14 +106,14 @@ func NewService(tokenRepo *repository.PlatformTokenRepository, platformRepo repo
 	return &Service{
 		apiKey:       cfg.API.Key,
 		userID:       cfg.API.UserID,
-		baseURL:      cfg.API.BaseURL,
+		baseURL:      strings.TrimRight(cfg.API.BaseURL, "/"),
 		tokenRepo:    tokenRepo,
 		platformRepo: platformRepo,
 	}
 }
 
 // SubmitTask 申请做单
-func (s *Service) SubmitTask(channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
+func (s *Service) SubmitTask(ctx context.Context, channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
 	params := map[string]string{
 		"channelId":        strconv.Itoa(channelID),
 		"productIds":       productID,
@@ -126,7 +127,7 @@ func (s *Service) SubmitTask(channelID int, productID string, provinces string, 
 	if err != nil {
 		return "", fmt.Errorf("生成签名失败: %v", err)
 	}
-	url := fmt.Sprintf("%s/api/task/recharge/submit", apiURL)
+	url := fmt.Sprintf("%s/api/task/recharge/submit", strings.TrimRight(apiURL, "/"))
 
 	//添加请求头
 	// 创建请求体
@@ -135,7 +136,7 @@ func (s *Service) SubmitTask(channelID int, productID string, provinces string, 
 	if err != nil {
 		return "", fmt.Errorf("创建请求体失败: %v", err)
 	}
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -187,7 +188,7 @@ func (s *Service) SubmitTask(channelID int, productID string, provinces string, 
 }
 
 // QueryTask 查询申请做单是否匹配到订单
-func (s *Service) QueryTask(token string, apiURL string, apiKey, userID string) (*PlatformOrder, error) {
+func (s *Service) QueryTask(ctx context.Context, token string, apiURL string, apiKey, userID string) (*PlatformOrder, error) {
 	params := map[string]string{
 		"token": token,
 	}
@@ -201,15 +202,16 @@ func (s *Service) QueryTask(token string, apiURL string, apiKey, userID string) 
 		return nil, err
 	}
 
-	url := fmt.Sprintf("%s/api/task/recharge/query", apiURL)
+	url := fmt.Sprintf("%s/api/task/recharge/query", strings.TrimRight(apiURL, "/"))
 	// url := "http://ip.jikelab.com:5000/api/orders"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		logger.Error("创建HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth_Token", authToken)
+	req.Header.Set("Auth-Token", authToken)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -270,7 +272,7 @@ func (s *Service) QueryTask(token string, apiURL string, apiKey, userID string) 
 }
 
 // ReportTask 上报做单订单结果
-func (s *Service) ReportTask(orderNumber string, status int, remark, payVoucher, verifyData string) error {
+func (s *Service) ReportTask(ctx context.Context, orderNumber string, status int, remark, payVoucher, verifyData string) error {
 	params := map[string]string{
 		"orderNumber": orderNumber,
 		"status":      strconv.Itoa(status),
@@ -285,7 +287,7 @@ func (s *Service) ReportTask(orderNumber string, status int, remark, payVoucher,
 	}
 
 	url := fmt.Sprintf("%s/api/task/recharge/reported", s.baseURL)
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
 		return fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -327,7 +329,7 @@ func (s *Service) ReportTask(orderNumber string, status int, remark, payVoucher,
 }
 
 // GetOrderDetail 查询做单订单详情（单个）
-func (s *Service) GetOrderDetail(orderNumber string) (*PlatformOrder, error) {
+func (s *Service) GetOrderDetail(ctx context.Context, orderNumber string) (*PlatformOrder, error) {
 	params := map[string]string{
 		"orderNumber": orderNumber,
 	}
@@ -338,7 +340,7 @@ func (s *Service) GetOrderDetail(orderNumber string) (*PlatformOrder, error) {
 	}
 
 	url := fmt.Sprintf("%s/api/task/recharge/orderDetail", s.baseURL)
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
 		logger.Error("创建HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
@@ -382,7 +384,7 @@ func (s *Service) GetOrderDetail(orderNumber string) (*PlatformOrder, error) {
 }
 
 // GetOrderList 查询做单订单详情（分页）
-func (s *Service) GetOrderList(orderNumber string, orderStatus, settlementStatus, pageNum, pageSize int, apiurl string, account *model.PlatformAccount) ([]PlatformOrder, *PageResult, error) {
+func (s *Service) GetOrderList(ctx context.Context, orderNumber string, orderStatus, settlementStatus, pageNum, pageSize int, apiurl string, account *model.PlatformAccount) ([]PlatformOrder, *PageResult, error) {
 	params := map[string]string{
 		// "orderNumber":      orderNumber,
 		"orderStatus": strconv.Itoa(orderStatus),
@@ -403,13 +405,14 @@ func (s *Service) GetOrderList(orderNumber string, orderStatus, settlementStatus
 	}
 
 	logger.Info(fmt.Sprintf("获取订单列表url: %s", url))
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth_Token", authToken)
+	req.Header.Set("Auth-Token", authToken)
 	req.Header.Set("Query-Time", queryTime)
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -447,11 +450,10 @@ func (s *Service) GetOrderList(orderNumber string, orderStatus, settlementStatus
 }
 
 // GetChannelList 查询所有渠道及对应运营商编码
-func (s *Service) GetChannelList(appkey string, userid string, apiUrl string) ([]Channel, error) {
+func (s *Service) GetChannelList(ctx context.Context, appkey string, userid string, apiUrl string) ([]Channel, error) {
 	//accoutname
 
 	cacheKey := "xzx:channel_list"
-	ctx := context.Background()
 	var cached []Channel
 	if val, err := redis.GetClient().Get(ctx, cacheKey).Result(); err == nil && val != "" {
 		if err := json.Unmarshal([]byte(val), &cached); err == nil {
@@ -467,9 +469,9 @@ func (s *Service) GetChannelList(appkey string, userid string, apiUrl string) ([
 		return nil, fmt.Errorf("生成签名失败: %v", err)
 	}
 
-	url := fmt.Sprintf("%s/api/task/recharge/taskChannelList", apiUrl)
+	url := fmt.Sprintf("%s/api/task/recharge/taskChannelList", strings.TrimRight(apiUrl, "/"))
 	fmt.Println(url, "************")
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
 		logger.Error("创建HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
@@ -477,6 +479,7 @@ func (s *Service) GetChannelList(appkey string, userid string, apiUrl string) ([
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth_Token", authToken)
+	req.Header.Set("Auth-Token", authToken)
 	req.Header.Set("Query-Time", queryTime)
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -520,7 +523,7 @@ func (s *Service) GetChannelList(appkey string, userid string, apiUrl string) ([
 }
 
 // GetStockInfo 查询库存信息
-func (s *Service) GetStockInfo(channelID, productID int, provinces string) ([]StockInfo, error) {
+func (s *Service) GetStockInfo(ctx context.Context, channelID, productID int, provinces string) ([]StockInfo, error) {
 	params := map[string]string{
 		"channelId": strconv.Itoa(channelID),
 		"productId": strconv.Itoa(productID),
@@ -533,7 +536,7 @@ func (s *Service) GetStockInfo(channelID, productID int, provinces string) ([]St
 	}
 
 	url := fmt.Sprintf("%s/api/task/recharge/stock", s.baseURL)
-	req, err := http.NewRequest("POST", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
 		logger.Error("创建HTTP请求失败", "url", url, "error", err)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
@@ -541,6 +544,7 @@ func (s *Service) GetStockInfo(channelID, productID int, provinces string) ([]St
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth-Token", authToken)
+	req.Header.Set("Auth_Token", authToken)
 	req.Header.Set("Query-Time", queryTime)
 
 	client := &http.Client{Timeout: 10 * time.Second}
@@ -578,7 +582,8 @@ func (s *Service) GetStockInfo(channelID, productID int, provinces string) ([]St
 
 // GetToken 获取或申请 token，带重试机制
 func (s *Service) GetToken(taskConfigID int64, channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
-	return s.GetTokenWithContext(context.Background(), taskConfigID, channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+	// 为兼容保留此方法，默认使用无超时的背景上下文不安全，改为返回错误提示调用方改用WithContext版本
+	return "", fmt.Errorf("GetToken 已废弃，请使用 GetTokenWithContext 传入上下文")
 }
 
 // GetTokenWithContext 获取或申请 token，带重试机制和context支持
@@ -615,7 +620,8 @@ func (s *Service) GetTokenWithContext(ctx context.Context, taskConfigID int64, c
 
 // submitTaskWithRetry 带重试机制的申请token方法
 func (s *Service) submitTaskWithRetry(channelID int, productID string, provinces string, faceValues, minSettleAmounts string, apiKey, userID, apiURL string) (string, error) {
-	return s.submitTaskWithRetryContext(context.Background(), channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+	// 为兼容保留此方法，默认使用无超时的背景上下文不安全，改为返回错误提示调用方改用Context版本
+	return "", fmt.Errorf("submitTaskWithRetry 已废弃，请使用 submitTaskWithRetryContext 传入上下文")
 }
 
 // submitTaskWithRetryContext 带重试机制和context支持的申请token方法
@@ -633,7 +639,7 @@ func (s *Service) submitTaskWithRetryContext(ctx context.Context, channelID int,
 		default:
 		}
 
-		token, err := s.SubmitTask(channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
+		token, err := s.SubmitTask(ctx, channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
 		if err == nil {
 			return token, nil
 		}
@@ -657,7 +663,7 @@ func (s *Service) InvalidateToken(taskConfigID int64) error {
 }
 
 // PushToThirdParty 推送订单到第三方平台
-func (s *Service) PushToThirdParty(order *PlatformOrder, notifyUrl string) error {
+func (s *Service) PushToThirdParty(ctx context.Context, order *PlatformOrder, notifyUrl string) error {
 	params := map[string]interface{}{
 		"orderNumber":      order.OrderNumber,
 		"channelName":      order.ChannelName,
@@ -675,7 +681,7 @@ func (s *Service) PushToThirdParty(order *PlatformOrder, notifyUrl string) error
 		return fmt.Errorf("参数序列化失败: %v", err)
 	}
 
-	req, err := http.NewRequest("POST", notifyUrl, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", notifyUrl, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("创建请求失败: %v", err)
 	}

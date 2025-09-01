@@ -54,8 +54,8 @@ func (p *Payc2Platform) GetName() string {
 }
 
 // getAPIConfig 获取API配置信息
-func (p *Payc2Platform) getAPIConfig(accountID int64) (string, string, error) {
-	account, err := p.platformRepo.GetAccountByID(context.Background(), accountID)
+func (p *Payc2Platform) getAPIConfig(ctx context.Context, accountID int64) (string, string, error) {
+	account, err := p.platformRepo.GetAccountByID(ctx, accountID)
 	if err != nil {
 		return "", "", fmt.Errorf("获取平台账号信息失败: %v", err)
 	}
@@ -67,7 +67,7 @@ func (p *Payc2Platform) SubmitOrder(ctx context.Context, order *model.Order, api
 	logger.Info(fmt.Sprintf("【payc2开始提交订单】order_number: %s", order.OrderNumber))
 
 	// 获取API配置
-	merchID, secretKey, err := p.getAPIConfig(api.AccountID)
+	merchID, secretKey, err := p.getAPIConfig(ctx, api.AccountID)
 	if err != nil {
 		return fmt.Errorf("获取API配置失败: %v", err)
 	}
@@ -144,7 +144,7 @@ func (p *Payc2Platform) SubmitOrder(ctx context.Context, order *model.Order, api
 }
 
 // QueryOrderStatus 查询订单状态
-func (p *Payc2Platform) QueryOrderStatus(order *model.Order) (model.OrderStatus, error) {
+func (p *Payc2Platform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
 	// payc2平台通常通过回调通知订单状态，这里可以实现主动查询逻辑
 	// 如果平台提供查询接口，可以在这里实现
 	logger.Info("payc2查询订单状态", "order_number", order.OrderNumber)
@@ -154,16 +154,14 @@ func (p *Payc2Platform) QueryOrderStatus(order *model.Order) (model.OrderStatus,
 }
 
 // verifyCallbackSignature 验证回调签名
-func (p *Payc2Platform) verifyCallbackSignature(params map[string]interface{}, orderNo string) bool {
-	// 1. 根据订单号获取订单信息
-	order, err := p.orderRepo.GetByOrderNumber(context.Background(), orderNo)
+func (p *Payc2Platform) verifyCallbackSignature(ctx context.Context, params map[string]interface{}, orderNo string) bool {
+	order, err := p.orderRepo.GetByOrderNumber(ctx, orderNo)
 	if err != nil {
 		logger.Error("获取订单信息失败", "orderNo", orderNo, "error", err)
 		return false
 	}
 
-	// 2. 获取平台账号的AppSecret
-	account, err := p.platformRepo.GetAccountByID(context.Background(), order.PlatformAccountID)
+	account, err := p.platformRepo.GetAccountByID(ctx, order.PlatformAccountID)
 	if err != nil {
 		logger.Error("获取平台账号信息失败", "accountID", order.PlatformAccountID, "error", err)
 		return false

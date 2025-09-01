@@ -151,7 +151,7 @@ func (p *MishiPlatform) SubmitOrder(ctx context.Context, order *model.Order, api
 }
 
 // QueryOrderStatus 查询订单状态
-func (p *MishiPlatform) QueryOrderStatus(order *model.Order) (model.OrderStatus, error) {
+func (p *MishiPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
 	logger.Info("开始查询秘史订单状态",
 		"order_id", order.ID,
 		"order_number", order.OrderNumber,
@@ -176,7 +176,7 @@ func (p *MishiPlatform) QueryOrderStatus(order *model.Order) (model.OrderStatus,
 	params.Add("szVerifyString", sign)
 
 	// 发送请求
-	respStr, err := p.sendRequest(context.Background(), order.PlatformURL+"/query", params)
+	respStr, err := p.sendRequest(ctx, order.PlatformURL+"/query", params)
 	if err != nil {
 		return 0, fmt.Errorf("查询订单状态失败: %v", err)
 	}

@@ -13,6 +13,7 @@ import (
 	"recharge-go/pkg/logger"
 	"recharge-go/pkg/queue"
 	"strconv"
+	"strings"
 	"time"
 	"gorm.io/gorm"
 )
@@ -95,6 +96,7 @@ type orderService struct {
 	db               *gorm.DB
 	creditService    *CreditService
 	balanceQueryRecordRepo repository.BalanceQueryRecordRepository
+	notificationHelper *NotificationHelper
 }
 
 // NewOrderService 创建订单服务实例
@@ -125,6 +127,7 @@ func NewOrderService(
 		db:               db,
 		creditService:    creditService,
 		balanceQueryRecordRepo: balanceQueryRecordRepo,
+		notificationHelper: NewNotificationHelper(db, notificationRepo, queue),
 	}
 }
 
@@ -283,6 +286,41 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		return nil // 订单状态已更新成功，通知推送失败不影响主流程
 	}
 
+	// 幂等性检查：是否已存在相同(order_id, type, target_status)的通知记录
+	existing, _, listErr := s.notificationRepo.List(ctx, map[string]interface{}{
+		"order_id":          id,
+		"notification_type": "order_status_changed",
+		"target_status":     int(status),
+	}, 1, 10)
+	if listErr == nil && len(existing) > 0 {
+		for _, n := range existing {
+			switch n.Status {
+			case 3: // 成功
+				logger.Info("已存在成功通知，跳过创建", "order_id", id, "notification_id", n.ID)
+				return nil
+			case 1, 2: // 待处理或处理中
+				logger.Info("已存在待处理/处理中通知，尝试重新推送到队列", "order_id", id, "notification_id", n.ID)
+				if pushErr := s.queue.Push(ctx, "notification_queue", n); pushErr != nil {
+					logger.Error("重新推送通知失败", "order_id", id, "notification_id", n.ID, "error", pushErr)
+				}
+				return nil
+			case 4: // 失败，重置后重推
+				logger.Info("存在失败通知，重置为待处理并重新推送", "order_id", id, "notification_id", n.ID)
+				if upErr := s.notificationRepo.UpdateStatus(ctx, n.ID, 1); upErr != nil {
+					logger.Error("重置通知状态失败", "order_id", id, "notification_id", n.ID, "error", upErr)
+				} else {
+					n.Status = 1
+					if pushErr := s.queue.Push(ctx, "notification_queue", n); pushErr != nil {
+						logger.Error("重新推送通知失败", "order_id", id, "notification_id", n.ID, "error", pushErr)
+					}
+				}
+				return nil
+			}
+		}
+	} else if listErr != nil {
+		logger.Warn("幂等检查查询通知记录失败，继续创建", "order_id", id, "error", listErr)
+	}
+
 	// 序列化订单快照
 	orderData, err := json.Marshal(updatedOrder)
 	if err != nil {
@@ -301,8 +339,12 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		Status:           1,                 // 待处理
 	}
 
-	// 保存通知记录到数据库
+	// 保存通知记录到数据库（容错处理唯一键冲突）
 	if createErr := s.notificationRepo.Create(ctx, notification); createErr != nil {
+		if strings.Contains(createErr.Error(), "Duplicate entry") || strings.Contains(createErr.Error(), "UNIQUE constraint") {
+			logger.Warn("通知记录已存在（唯一键冲突），可能并发创建", "order_id", id, "target_status", status)
+			return nil
+		}
 		logger.Error("创建通知记录失败", "order_id", id, "error", createErr)
 		return nil // 订单状态已更新成功，通知推送失败不影响主流程
 	}
@@ -365,7 +407,13 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 	}
 	logger.Info("获取订单信息成功", "order_id", orderID, "customer_id", order.CustomerID, "status", order.Status)
 
-	// 2. 获取用户级别的分布式锁
+	// 2. 如果订单已经是失败状态，直接调用 UpdateOrderStatus 确保通知发送的幂等性
+	if order.Status == model.OrderStatusFailed {
+		logger.Info("订单已经是失败状态，调用 UpdateOrderStatus 确保通知幂等性", "order_id", orderID)
+		return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusFailed)
+	}
+
+	// 3. 获取用户级别的分布式锁
 	lockValue, err := s.lockManager.LockUserRefund(ctx, order.CustomerID)
 	if err != nil {
 		logger.Error("获取用户退款锁失败", "user_id", order.CustomerID, "order_id", orderID, "error", err)
@@ -377,7 +425,7 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 		}
 	}()
 
-	// 3. 在锁保护下执行事务
+	// 4. 在锁保护下执行事务（只处理业务逻辑，不创建通知）
 	logger.Info("开始执行事务", "order_id", orderID)
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		logger.Info("事务内部开始执行", "order_id", orderID)
@@ -473,52 +521,24 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 			"order_id", orderID,
 			"status", model.OrderStatusFailed)
 
-		// 创建通知记录
-		notification := &notificationModel.NotificationRecord{
-			OrderID:          orderID,
-			PlatformCode:     lockedOrder.PlatformCode,
-			NotificationType: "order_status_changed",
-			Content:          fmt.Sprintf("订单失败: %s", remark),
-			Status:           1, // 待处理
-		}
-
-		// 保存通知记录到数据库
-		logger.Info("准备创建通知记录", "order_id", orderID, "platform_code", lockedOrder.PlatformCode)
-		if err := s.notificationRepo.Create(ctx, notification); err != nil {
-			logger.Error("创建通知记录失败",
-				"error", err,
-				"order_id", orderID,
-				"platform_code", lockedOrder.PlatformCode,
-				"notification_type", notification.NotificationType)
-			return fmt.Errorf("create notification record failed: %v", err)
-		}
-		logger.Info("创建通知记录成功", "order_id", orderID, "notification_id", notification.ID)
-
 		logger.Info("事务内部执行完成", "order_id", orderID)
 		return nil
 	})
 	
 	logger.Info("事务执行结果", "order_id", orderID, "error", err)
 
-	// 事务提交成功后，异步推送通知到队列
+	// 5. 事务提交成功后，使用 UpdateOrderStatus 统一处理状态变更通知（含幂等保护）
 	if err == nil {
-		logger.Info("事务提交成功，开始推送通知到队列", "order_id", orderID)
-		// 重新获取已创建的通知记录
-		notification, getErr := s.notificationRepo.GetByOrderID(ctx, orderID)
-		if getErr != nil {
-			logger.Error("获取通知记录失败", "error", getErr, "order_id", orderID)
+		logger.Info("事务提交成功，调用 UpdateOrderStatus 发送通知", "order_id", orderID)
+		// 使用 UpdateOrderStatus 方法统一处理状态变更通知，该方法已包含完善的幂等保护
+		if notifyErr := s.UpdateOrderStatus(ctx, orderID, model.OrderStatusFailed); notifyErr != nil {
+			logger.Error("调用 UpdateOrderStatus 发送通知失败", "order_id", orderID, "error", notifyErr)
+			// 通知失败不影响订单状态已成功更新的结果
 		} else {
-			logger.Info("成功获取通知记录", "order_id", orderID, "notification_id", notification.ID)
-			// 推送通知到队列
-			logger.Info("准备推送订单失败通知到队列", "order_id", orderID, "remark", remark)
-			if pushErr := s.queue.Push(ctx, "notification_queue", notification); pushErr != nil {
-				logger.Error("推送订单失败通知到队列失败", "order_id", orderID, "error", pushErr)
-			} else {
-				logger.Info("推送订单失败通知到队列成功", "order_id", orderID)
-			}
+			logger.Info("调用 UpdateOrderStatus 发送通知成功", "order_id", orderID)
 		}
 	} else {
-		logger.Error("事务执行失败，跳过推送通知", "order_id", orderID, "error", err)
+		logger.Error("事务执行失败，跳过通知发送", "order_id", orderID, "error", err)
 	}
 
 	return err
@@ -726,6 +746,14 @@ func (s *orderService) GetOrders(ctx context.Context, params map[string]interfac
 }
 
 // GetOrdersWithNotification 获取包含通知信息的订单列表
+
+
+// GetOrdersByUserID 根据用户ID获取订单列表
+func (s *orderService) GetOrdersByUserID(ctx context.Context, userID int64, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error) {
+	return s.orderRepo.GetByUserID(ctx, userID, params, page, pageSize)
+}
+
+// 修复 List 返回值赋值数量
 func (s *orderService) GetOrdersWithNotification(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.OrderWithNotification, int64, error) {
 	// 调用仓储层的新方法
 	return s.orderRepo.GetOrdersWithNotification(ctx, params, page, pageSize)
@@ -1061,6 +1089,7 @@ func (s *orderService) GetOrderStatistics(ctx context.Context, customerID int64)
 	}, nil
 }
 
+
 // SendNotification 发送订单回调通知
 func (s *orderService) SendNotification(ctx context.Context, orderID int64) error {
 	// 获取订单信息
@@ -1069,40 +1098,9 @@ func (s *orderService) SendNotification(ctx context.Context, orderID int64) erro
 		return fmt.Errorf("获取订单失败: %w", err)
 	}
 
-	// 确定平台代码
-	platformCode := order.PlatformCode
-	if platformCode == "" {
-		platformCode = "system" // 默认值
-	}
-
-	// 创建通知任务
-	notification := &notificationModel.NotificationRecord{
-		OrderID:          orderID,
-		PlatformCode:     platformCode,
-		NotificationType: "order_callback",
-		Content:          fmt.Sprintf("订单 %s 回调通知", order.OrderNumber),
-		Status:           1, // 待处理
-		RetryCount:       0,
-		NextRetryTime:    time.Now().Add(5 * time.Minute),
-		CreatedAt:        time.Now(),
-		UpdatedAt:        time.Now(),
-	}
-
-	// 保存通知记录
-	if err := s.notificationRepo.Create(ctx, notification); err != nil {
-		return fmt.Errorf("创建通知记录失败: %w", err)
-	}
-
-	// 推送到通知队列
-	if err := s.queue.Push(ctx, "notification_queue", notification); err != nil {
-		return fmt.Errorf("推送到通知队列失败: %w", err)
-	}
-
-	logger.Info("订单回调通知已推送到队列", "order_id", orderID, "order_number", order.OrderNumber, "platform_code", platformCode)
-	return nil
+	// 使用统一的通知辅助函数
+	return s.notificationHelper.SendOrderCallbackNotification(ctx, orderID, order)
 }
 
 // GetOrdersByUserID 根据用户ID获取订单列表
-func (s *orderService) GetOrdersByUserID(ctx context.Context, userID int64, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error) {
-	return s.orderRepo.GetByUserID(ctx, userID, params, page, pageSize)
-}
+// 删除：

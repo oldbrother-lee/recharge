@@ -88,7 +88,21 @@ func (r *BalanceLogRepository) SubBalance(ctx context.Context, userID int64, amo
 	})
 }
 
-// DeleteByOrderIDs 批量删除余额日志
+// DeleteByOrderIDs 批量删除余额日志（分批避免占位符过多导致 1390 错误）
 func (r *BalanceLogRepository) DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error {
-	return r.db.Where("order_id IN ?", orderIDs).Delete(&model.BalanceLog{}).Error
+	if len(orderIDs) == 0 {
+		return nil
+	}
+	const batchSize = 1000
+	for start := 0; start < len(orderIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(orderIDs) {
+			end = len(orderIDs)
+		}
+		ids := orderIDs[start:end]
+		if err := r.db.WithContext(ctx).Where("order_id IN ?", ids).Delete(&model.BalanceLog{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }

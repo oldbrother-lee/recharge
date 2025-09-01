@@ -35,6 +35,7 @@ func NewManager(db *gorm.DB) *Manager {
 			"internal_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 			"chongzhi":     reflect.TypeOf((*ChongzhiPlatform)(nil)).Elem(),
 			"payc2":        reflect.TypeOf((*Payc2Platform)(nil)).Elem(),
+			"lingshi":      reflect.TypeOf((*LingshiPlatform)(nil)).Elem(),
 		},
 	}
 }
@@ -86,6 +87,8 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewChongzhiPlatform(m.platformRepo.GetDB())
 	case "payc2":
 		platform = NewPayc2Platform(m.platformRepo.GetDB())
+	case "lingshi":
+		platform = NewLingshiPlatform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}
@@ -182,7 +185,7 @@ func (m *Manager) QueryOrderStatus(ctx context.Context, order *model.Order) erro
 	}
 
 	// 查询订单状态
-	status, err := platform.QueryOrderStatus(order)
+	status, err := platform.QueryOrderStatus(ctx, order)
 	if err != nil {
 		return err
 	}

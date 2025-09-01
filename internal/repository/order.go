@@ -356,8 +356,24 @@ func (r *OrderRepositoryImpl) GetIDsByTimeRange(ctx context.Context, start, end 
 
 // DeleteByIDs 批量删除订单
 func (r *OrderRepositoryImpl) DeleteByIDs(ctx context.Context, ids []int64) (int64, error) {
-	res := r.db.Unscoped().Where("id IN ?", ids).Delete(&model.Order{})
-	return res.RowsAffected, res.Error
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	var total int64
+	const batchSize = 1000
+	for start := 0; start < len(ids); start += batchSize {
+		end := start + batchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		batch := ids[start:end]
+		res := r.db.WithContext(ctx).Unscoped().Where("id IN ?", batch).Delete(&model.Order{})
+		if res.Error != nil {
+			return total, res.Error
+		}
+		total += res.RowsAffected
+	}
+	return total, nil
 }
 
 // FindProductByPriceAndISP 根据价格、ISP和状态获取产品

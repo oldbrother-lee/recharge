@@ -29,10 +29,10 @@ func NewFramework(app Application) *Framework {
 // Run 运行应用
 func (f *Framework) Run() error {
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// 启动应用
 	if err := f.app.Start(ctx); err != nil {
+		cancel()
 		return err
 	}
 
@@ -43,8 +43,12 @@ func (f *Framework) Run() error {
 
 	log.Println("正在优雅关闭应用...")
 
-	// 停止应用
-	if err := f.app.Stop(ctx); err != nil {
+	// 取消启动时的context，触发所有goroutine退出
+	cancel()
+
+	// 为停止操作创建新的context，避免被上面的cancel影响
+	stopCtx := context.Background()
+	if err := f.app.Stop(stopCtx); err != nil {
 		log.Printf("停止应用时出错: %v", err)
 		return err
 	}

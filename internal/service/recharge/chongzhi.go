@@ -59,8 +59,8 @@ func (p *ChongzhiPlatform) GetName() string {
 }
 
 // getAPIKeyAndSecret 获取API密钥和密钥
-func (p *ChongzhiPlatform) getAPIKeyAndSecret(accountID int64) (string, string, error) {
-	account, err := p.platformRepo.GetAccountByID(context.Background(), accountID)
+func (p *ChongzhiPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int64) (string, string, error) {
+	account, err := p.platformRepo.GetAccountByID(ctx, accountID)
 	if err != nil {
 		return "", "", fmt.Errorf("获取平台账号信息失败: %v", err)
 	}
@@ -72,7 +72,7 @@ func (p *ChongzhiPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 	logger.Info(fmt.Sprintf("【开始提交订单】order_number: %s", order.OrderNumber))
 
 	// 获取API密钥
-	userid, key, err := p.getAPIKeyAndSecret(api.AccountID)
+	userid, key, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
 	if err != nil {
 		return fmt.Errorf("get api key and secret failed: %v", err)
 	}
@@ -121,7 +121,7 @@ func (p *ChongzhiPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 
 	// 发送POST请求
 	logger.Info(fmt.Sprintf("请求URL: %s", api.URL))
-	req, err := http.NewRequest("POST", api.URL, bytes.NewReader(gbkBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", api.URL, bytes.NewReader(gbkBody))
 	if err != nil {
 		logger.Error(fmt.Sprintf("NewRequest error: %v", err))
 		return fmt.Errorf("NewRequest error: %v", err)
@@ -207,11 +207,8 @@ func (p *ChongzhiPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 }
 
 // QueryOrderStatus 查询订单状态
-func (p *ChongzhiPlatform) QueryOrderStatus(order *model.Order) (model.OrderStatus, error) {
-	logger.Info(fmt.Sprintf("【开始查询订单状态】order_id: %d, order_number: %s", order.ID, order.OrderNumber))
-
-	// 这里需要根据实际的查询接口实现
-	// 暂时返回处理中状态
+func (p *ChongzhiPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
+	// 当前平台未提供查询接口，保持占位实现
 	return model.OrderStatusRecharging, nil
 }
 
@@ -366,7 +363,7 @@ func (p *ChongzhiPlatform) QueryBalance(ctx context.Context, accountID int64) (f
 
 	// 发送POST请求
 	logger.Info(fmt.Sprintf("余额查询请求URL: %s", balanceURL))
-	req, err := http.NewRequest("POST", balanceURL, bytes.NewReader(gbkBody))
+	req, err := http.NewRequestWithContext(ctx, "POST", balanceURL, bytes.NewReader(gbkBody))
 	if err != nil {
 		logger.Error(fmt.Sprintf("NewRequest error: %v", err))
 		return 0, fmt.Errorf("NewRequest error: %v", err)

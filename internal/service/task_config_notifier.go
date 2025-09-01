@@ -37,7 +37,7 @@ const (
 )
 
 // NotifyConfigChange 通知配置变更
-func (n *TaskConfigNotifier) NotifyConfigChange(eventType string, configID int64) error {
+func (n *TaskConfigNotifier) NotifyConfigChange(ctx context.Context, eventType string, configID int64) error {
 	event := TaskConfigChangeEvent{
 		Type:      eventType,
 		ConfigID:  configID,
@@ -49,7 +49,7 @@ func (n *TaskConfigNotifier) NotifyConfigChange(eventType string, configID int64
 		return fmt.Errorf("序列化事件失败: %w", err)
 	}
 
-	err = n.redisClient.Publish(context.Background(), TaskConfigChangeChannel, string(eventData)).Err()
+	err = n.redisClient.Publish(ctx, TaskConfigChangeChannel, string(eventData)).Err()
 	if err != nil {
 		return fmt.Errorf("发布配置变更事件失败: %w", err)
 	}
@@ -59,16 +59,16 @@ func (n *TaskConfigNotifier) NotifyConfigChange(eventType string, configID int64
 }
 
 // NotifyConfigCreate 通知配置创建
-func (n *TaskConfigNotifier) NotifyConfigCreate(configID int64) error {
-	return n.NotifyConfigChange(EventTypeCreate, configID)
+func (n *TaskConfigNotifier) NotifyConfigCreate(ctx context.Context, configID int64) error {
+	return n.NotifyConfigChange(ctx, EventTypeCreate, configID)
 }
 
 // NotifyConfigUpdate 通知配置更新
-func (n *TaskConfigNotifier) NotifyConfigUpdate(configID int64) error {
-	return n.NotifyConfigChange(EventTypeUpdate, configID)
+func (n *TaskConfigNotifier) NotifyConfigUpdate(ctx context.Context, configID int64) error {
+	return n.NotifyConfigChange(ctx, EventTypeUpdate, configID)
 }
 
 // NotifyConfigDelete 通知配置删除
-func (n *TaskConfigNotifier) NotifyConfigDelete(configID int64) error {
-	return n.NotifyConfigChange(EventTypeDelete, configID)
+func (n *TaskConfigNotifier) NotifyConfigDelete(ctx context.Context, configID int64) error {
+	return n.NotifyConfigChange(ctx, EventTypeDelete, configID)
 }

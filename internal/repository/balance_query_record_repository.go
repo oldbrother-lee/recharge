@@ -106,8 +106,19 @@ func (r *balanceQueryRecordRepository) DeleteByOrderIDs(ctx context.Context, ord
 	if len(orderIDs) == 0 {
 		return nil
 	}
-	// 使用Unscoped()进行硬删除，避免外键约束问题
-	return r.db.WithContext(ctx).Unscoped().Where("order_id IN ?", orderIDs).Delete(&model.BalanceQueryRecord{}).Error
+	// 分批删除，避免 SQL 出现过多占位符导致 1390 错误
+	const batchSize = 1000
+	for start := 0; start < len(orderIDs); start += batchSize {
+		end := start + batchSize
+		if end > len(orderIDs) {
+			end = len(orderIDs)
+		}
+		ids := orderIDs[start:end]
+		if err := r.db.WithContext(ctx).Unscoped().Where("order_id IN ?", ids).Delete(&model.BalanceQueryRecord{}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ListByMobileAndType 根据手机号和查询类型分页查询余额查询记录

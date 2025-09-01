@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"recharge-go/internal/model"
-	notificationModel "recharge-go/internal/model/notification"
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service/recharge"
@@ -81,6 +80,7 @@ type rechargeService struct {
 	notificationRepo       notificationRepo.Repository
 	queue                  queue.Queue
 	orderService           OrderService
+	notificationHelper     *NotificationHelper
 }
 
 // NewRechargeService 创建充值服务实例
@@ -124,6 +124,7 @@ func NewRechargeService(
 		processingOrders:       make(map[int64]bool),
 		notificationRepo:       notificationRepo,
 		queue:                  queue,
+		notificationHelper:     NewNotificationHelper(db, notificationRepo, queue),
 	}
 }
 
@@ -316,22 +317,21 @@ func (s *rechargeService) Recharge(ctx context.Context, orderID int64) error {
 		// 新增：将订单状态设置为失败，并写入备注
 		_ = s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed)
 		_ = s.orderRepo.UpdateRemark(ctx, order.ID, "余额不足，订单失败")
-		// 新增：推送订单失败通知
-		notification := &notificationModel.NotificationRecord{
-			OrderID:          order.ID,
-			PlatformCode:     order.PlatformCode,
-			NotificationType: "order_status_changed",
-			Content:          "订单失败：余额不足",
-			Status:           1, // 待处理
+		// 发送状态变更通知（幂等）
+		if nErr := s.sendOrderStatusNotificationWithIdempotency(ctx, order, model.OrderStatusFailed); nErr != nil {
+			logger.Error("发送订单失败通知失败", "order_id", order.ID, "error", nErr)
 		}
-		_ = s.notificationRepo.Create(ctx, notification)
-		_ = s.queue.Push(ctx, "notification_queue", notification)
 	} else {
 		logger.Info("【更新订单成本价成功】", "order_id", order.ID, "const_price", apiParam.Price)
 	}
 
 	logger.Info("【充值流程完成】order_id: %d", orderID)
 	return nil
+}
+
+// sendOrderStatusNotificationWithIdempotency 发送订单状态变更通知（委托给NotificationHelper）
+func (s *rechargeService) sendOrderStatusNotificationWithIdempotency(ctx context.Context, order *model.Order, newStatus model.OrderStatus) error {
+	return s.notificationHelper.SendOrderStatusNotification(ctx, order, newStatus)
 }
 
 // getISPTypeFromOrder 根据订单信息确定运营商类型
@@ -534,37 +534,15 @@ func (s *rechargeService) handleFailedOrderCallback(ctx context.Context, tx *gor
 		}
 	}
 
-	// 创建通知记录
-	notification := &notificationModel.NotificationRecord{
-		OrderID:          order.ID,
-		PlatformCode:     order.PlatformCode,
-		NotificationType: "order_status_changed",
-		Content:          fmt.Sprintf("订单状态已更新为: %d", model.OrderStatusFailed),
-		Status:           1, // 待处理
+	// 发送状态变更通知（幂等）- 仅在未使用统一订单服务时
+	if s.unifiedOrderService == nil {
+		if nErr := s.sendOrderStatusNotificationWithIdempotency(ctx, order, model.OrderStatusFailed); nErr != nil {
+			tx.Rollback()
+			logger.Error("发送订单失败通知失败", "order_id", order.ID, "error", nErr)
+			return fmt.Errorf("push notification to queue failed: %v", nErr)
+		}
+		logger.Info("订单失败推送通知到队列成功", "order_id", order.ID)
 	}
-
-	// 保存通知记录到数据库
-	if err := s.notificationRepo.Create(ctx, notification); err != nil {
-		tx.Rollback()
-		logger.Error("创建通知记录失败",
-			"error", err,
-			"order_id", order.ID,
-			"platform_code", order.PlatformCode,
-			"notification_type", notification.NotificationType,
-		)
-		return fmt.Errorf("create notification record failed: %v", err)
-	}
-	logger.Info(fmt.Sprintf("%s创建失败通知记录成功: 订单号%s, 订单id%d", platformName, order.OrderNumber, order.ID))
-
-	// 推送通知到队列
-	logger.Info("准备推送失败通知到队列", "order_id", order.ID)
-	err := s.queue.Push(ctx, "notification_queue", notification)
-	if err != nil {
-		tx.Rollback()
-		logger.Error("推送通知到队列失败", "order_id", order.ID, "error", err)
-		return fmt.Errorf("push notification to queue failed: %v", err)
-	}
-	logger.Info("订单失败推送通知到队列成功", "order_id", order.ID)
 
 	// 记录回调日志
 	platformID := callbackData.TransactionID
@@ -623,37 +601,15 @@ func (s *rechargeService) handleSuccessOrderCallback(ctx context.Context, tx *go
 		logger.Info(fmt.Sprintf("订单回调更新订单状态成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
 	}
 
-	// 创建通知记录
-	notification := &notificationModel.NotificationRecord{
-		OrderID:          order.ID,
-		PlatformCode:     order.PlatformCode,
-		NotificationType: "order_status_changed",
-		Content:          fmt.Sprintf("订单状态已更新为: %d", orderState),
-		Status:           1, // 待处理
+	// 发送状态变更通知（幂等）- 仅在未使用统一订单服务时
+	if s.unifiedOrderService == nil {
+		if nErr := s.sendOrderStatusNotificationWithIdempotency(ctx, order, orderState); nErr != nil {
+			tx.Rollback()
+			logger.Error("发送订单状态通知失败", "order_id", order.ID, "status", orderState, "error", nErr)
+			return fmt.Errorf("push notification to queue failed: %v", nErr)
+		}
+		logger.Info("订单推送通知到队列成功", "order_id", order.ID, "status", orderState)
 	}
-
-	// 保存通知记录到数据库
-	if err := s.notificationRepo.Create(ctx, notification); err != nil {
-		tx.Rollback()
-		logger.Error("创建通知记录失败",
-			"error", err,
-			"order_id", order.ID,
-			"platform_code", order.PlatformCode,
-			"notification_type", notification.NotificationType,
-		)
-		return fmt.Errorf("create notification record failed: %v", err)
-	}
-	logger.Info(fmt.Sprintf("%s创建通知记录成功: 订单号%s, 订单id%d, 状态%s", platformName, order.OrderNumber, order.ID, orderState))
-
-	// 推送通知到队列
-	logger.Info("准备推送通知到队列", "order_id", order.ID, "status", orderState)
-	err := s.queue.Push(ctx, "notification_queue", notification)
-	if err != nil {
-		tx.Rollback()
-		logger.Error("推送通知到队列失败", "order_id", order.ID, "error", err)
-		return fmt.Errorf("push notification to queue failed: %v", err)
-	}
-	logger.Info("订单推送通知到队列成功", "order_id", order.ID)
 
 	// 记录回调日志
 	platformID := callbackData.TransactionID
@@ -971,22 +927,11 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			if txErr != nil {
 				logger.Error("更新订单状态失败", "error", txErr, "order_id", order.ID)
 			} else {
-				// 事务提交成功后，创建并推送通知
-				notification := &notificationModel.NotificationRecord{
-					OrderID:          order.ID,
-					PlatformCode:     order.PlatformCode,
-					NotificationType: "order_status_changed",
-					Content:          "订单失败：平台账号余额和授信额度均不足",
-					Status:           1, // 待处理
-				}
-				if createErr := s.notificationRepo.Create(ctx, notification); createErr != nil {
-					logger.Error("创建通知记录失败", "error", createErr, "order_id", order.ID)
+				// 事务提交成功后，发送状态变更通知（幂等）
+				if nErr := s.sendOrderStatusNotificationWithIdempotency(ctx, order, model.OrderStatusFailed); nErr != nil {
+					logger.Error("发送扣款失败通知失败", "order_id", order.ID, "error", nErr)
 				} else {
-					if pushErr := s.queue.Push(ctx, "notification_queue", notification); pushErr != nil {
-						logger.Error("推送通知到队列失败", "error", pushErr, "order_id", order.ID)
-					} else {
-						logger.Info("推送扣款失败通知到队列成功", "order_id", order.ID)
-					}
+					logger.Info("推送扣款失败通知到队列成功", "order_id", order.ID)
 				}
 			}
 

@@ -110,6 +110,7 @@ func SetupRouterV2(
 			callback.POST("/dayuanren/:userid", cc.HandleDayuanrenCallback)
 			callback.POST("/chongzhi/:userid", cc.HandleChongzhiCallback)
 			callback.POST("/payc2/:userid", cc.HandlePayc2Callback)
+			callback.POST("/lingshi/:userid", cc.HandleLingshiCallback)
 		}
 	}
 

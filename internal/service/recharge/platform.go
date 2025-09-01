@@ -12,7 +12,7 @@ type Platform interface {
 	// SubmitOrder 提交订单
 	SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error
 	// QueryOrderStatus 查询订单状态
-	QueryOrderStatus(order *model.Order) (model.OrderStatus, error)
+	QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error)
 	// ParseCallbackData 解析回调数据
 	ParseCallbackData(data []byte) (*model.CallbackData, error)
 	// QueryBalance 查询账户余额

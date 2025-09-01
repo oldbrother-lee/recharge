@@ -35,14 +35,26 @@ func (t *RechargeTask) Start(ctx context.Context) error {
 			if err != nil {
 				logger.Error("【从充值队列获取订单失败】",
 					"error", err)
-				time.Sleep(time.Second) // 发生错误时暂停一秒
+				// time.Sleep(time.Second) // 发生错误时暂停一秒
+				select {
+				case <-ctx.Done():
+					logger.Info("【充值任务处理器停止】")
+					return nil
+				case <-time.After(time.Second):
+				}
 				continue
 			}
 
 			if orderID == 0 {
 				// 如果队列为空，休眠 5 秒
 				logger.Debug("【充值队列为空，等待5秒】")
-				time.Sleep(5 * time.Second)
+				// time.Sleep(5 * time.Second)
+				select {
+				case <-ctx.Done():
+					logger.Info("【充值任务处理器停止】")
+					return nil
+				case <-time.After(5 * time.Second):
+				}
 				continue
 			}
 

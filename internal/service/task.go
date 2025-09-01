@@ -63,6 +63,7 @@ func NewTaskService(
 	config *configs.TaskConfig,
 	platformAccountRepo *repository.PlatformAccountRepository,
 ) *TaskService {
+	// 这里初始化一个可取消的背景上下文，保证即使在Start之前调用Stop也不会panic
 	ctx, cancel := context.WithCancel(context.Background())
 	return &TaskService{
 		taskConfigRepo:      taskConfigRepo,
@@ -104,7 +105,7 @@ func (s *TaskService) StartConfigListener() {
 }
 
 // StartTask 启动自动取单任务
-func (s *TaskService) StartTask() {
+func (s *TaskService) StartTask(ctx context.Context) {
 	s.mu.Lock()
 	if s.isRunning {
 		s.mu.Unlock()
@@ -113,7 +114,8 @@ func (s *TaskService) StartTask() {
 	s.isRunning = true
 	s.mu.Unlock()
 
-	s.ctx, s.cancel = context.WithCancel(context.Background())
+	// 从传入的父上下文派生可取消上下文，确保退出时能够正确传播
+	s.ctx, s.cancel = context.WithCancel(ctx)
 
 	// 启动主要的取单任务处理
 	s.wg.Add(1)
@@ -157,7 +159,7 @@ func (s *TaskService) StartTask() {
 }
 
 // StartOrderDetailsTask 启动订单详情查询任务
-func (s *TaskService) StartOrderDetailsTask() {
+func (s *TaskService) StartOrderDetailsTask(ctx context.Context) {
 	logger.Info(fmt.Sprintf("启动订单详情查询任务，执行间隔: %v", s.config.OrderDetailsInterval))
 	s.wg.Add(1)
 	go func() {
@@ -213,6 +215,15 @@ func (s *TaskService) StopTaskByID(taskID int64) {
 func (s *TaskService) ReloadTaskConfig() error {
 	logger.Debug("开始重新加载任务配置")
 
+	// 服务未运行则跳过重载，防止停止过程中被误触发启动新任务
+	s.mu.Lock()
+	if !s.isRunning {
+		s.mu.Unlock()
+		logger.Debug("服务已停止，跳过任务配置重载")
+		return nil
+	}
+	s.mu.Unlock()
+
 	// 获取最新的任务配置
 	configs, err := s.taskConfigRepo.GetEnabledConfigs()
 	if err != nil {
@@ -259,437 +270,13 @@ func (s *TaskService) processOrderDetails() {
 	for i, cfg := range configs {
 		// 如果不是第一个配置，添加2秒间隔
 		if i > 0 {
-			time.Sleep(2 * time.Second)
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
 		}
 		s.processOrderDetailsForConfig(&cfg)
-	}
-}
-
-// processTask 处理取单任务
-func (s *TaskService) processTask() {
-	logger.Info("开始执行定时任务")
-
-	// 获取所有启用的任务配置
-	configs, err := s.taskConfigRepo.GetEnabledConfigs()
-	if err != nil {
-		logger.Error("获取任务配置失败", err)
-		return
-	}
-	logger.Info(fmt.Sprintf("获取到 %d 个启用的任务配置", len(configs)))
-
-	// 检查配置变更，停止已删除或禁用的任务
-	s.checkAndStopObsoleteTasks(configs)
-
-	maxConcurrent := s.config.MaxConcurrent
-	logger.Info(fmt.Sprintf("最大并发数: %d", maxConcurrent))
-	if maxConcurrent <= 0 {
-		maxConcurrent = 20 // 默认最大并发数
-	}
-	sem := make(chan struct{}, maxConcurrent)
-	var wg sync.WaitGroup
-
-	for _, config := range configs {
-		// 检查任务是否已在运行（使用双重检查确保准确性）
-		s.taskMutex.Lock()
-		taskCtx, isRunning := s.taskContexts[config.ID]
-		if isRunning {
-			// 验证上下文是否仍然有效
-			select {
-			case <-taskCtx.Ctx.Done():
-				// 上下文已取消，删除无效的映射
-				delete(s.taskContexts, config.ID)
-				isRunning = false
-				logger.Debug(fmt.Sprintf("清理无效的任务上下文: TaskID=%d", config.ID))
-			default:
-				// 上下文仍然有效，任务确实在运行
-				logger.Debug(fmt.Sprintf("任务已在运行，跳过: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
-			}
-		}
-		s.taskMutex.Unlock()
-
-		if isRunning {
-			continue
-		}
-
-		logger.Info(fmt.Sprintf("启动新任务: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
-
-		sem <- struct{}{} // 占用一个并发槽
-		wg.Add(1)
-		go func(cfg *model.TaskConfig) {
-			defer func() {
-				<-sem // 释放并发槽
-				wg.Done()
-			}()
-
-			s.processTaskConfig(cfg)
-		}(&config)
-	}
-	wg.Wait()
-}
-
-// checkAndStopObsoleteTasks 检查并停止已删除或禁用的任务
-func (s *TaskService) checkAndStopObsoleteTasks(currentConfigs []model.TaskConfig) {
-	// 构建当前启用的任务ID集合
-	currentTaskIDs := make(map[int64]bool)
-	for _, cfg := range currentConfigs {
-		currentTaskIDs[cfg.ID] = true
-	}
-
-	// 检查正在运行的任务，停止不在当前配置中的任务
-	s.taskMutex.RLock()
-	var tasksToStop []int64
-	for taskID := range s.taskContexts {
-		if !currentTaskIDs[taskID] {
-			tasksToStop = append(tasksToStop, taskID)
-		}
-	}
-	s.taskMutex.RUnlock()
-
-	// 停止过时的任务
-	for _, taskID := range tasksToStop {
-		logger.Info(fmt.Sprintf("正在停止过时任务: TaskID=%d", taskID))
-		s.StopTaskByID(taskID)
-		// 注意：不需要手动删除任务上下文，StopTaskByID会触发defer清理逻辑
-	}
-}
-
-// startNewEnabledTasks 启动新启用的任务
-func (s *TaskService) startNewEnabledTasks(configs []model.TaskConfig) {
-	maxConcurrent := s.config.MaxConcurrent
-	if maxConcurrent <= 0 {
-		maxConcurrent = 20 // 默认最大并发数
-	}
-	sem := make(chan struct{}, maxConcurrent)
-	var wg sync.WaitGroup
-	newTaskCount := 0
-
-	for _, config := range configs {
-		// 检查任务是否已在运行（使用双重检查确保准确性）
-		s.taskMutex.Lock()
-		taskCtx, isRunning := s.taskContexts[config.ID]
-		if isRunning {
-			// 验证上下文是否仍然有效
-			select {
-			case <-taskCtx.Ctx.Done():
-				// 上下文已取消，删除无效的映射
-				delete(s.taskContexts, config.ID)
-				isRunning = false
-				logger.Debug(fmt.Sprintf("清理无效的任务上下文: TaskID=%d", config.ID))
-			default:
-				// 上下文仍然有效，任务确实在运行
-				logger.Debug(fmt.Sprintf("任务已在运行，跳过: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
-			}
-		}
-		s.taskMutex.Unlock()
-
-		if isRunning {
-			continue
-		}
-
-		newTaskCount++
-		logger.Info(fmt.Sprintf("启动新任务: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
-
-		sem <- struct{}{} // 占用一个并发槽
-		wg.Add(1)
-		go func(cfg *model.TaskConfig) {
-			defer func() {
-				<-sem // 释放并发槽
-				wg.Done()
-			}()
-
-			s.processTaskConfig(cfg)
-		}(&config)
-	}
-	wg.Wait()
-
-	if newTaskCount > 0 {
-		logger.Info(fmt.Sprintf("新任务启动完成，共启动 %d 个新任务", newTaskCount))
-	}
-}
-
-// checkTaskConfigChanged 检查任务配置是否发生变更
-func (s *TaskService) checkTaskConfigChanged(oldCfg *model.TaskConfig) bool {
-	// 从数据库获取最新配置
-	newCfg, err := s.taskConfigRepo.GetByID(oldCfg.ID)
-	if err != nil {
-		logger.Error(fmt.Sprintf("获取任务配置失败: TaskID=%d, error=%v", oldCfg.ID, err))
-		return false
-	}
-
-	// 检查任务是否被禁用
-	if newCfg.Status != 1 {
-		logger.Info(fmt.Sprintf("任务配置已被禁用: TaskID=%d", oldCfg.ID))
-		return true
-	}
-
-	// 检查关键配置是否发生变更
-	if oldCfg.PlatformAccountID != newCfg.PlatformAccountID ||
-		oldCfg.ChannelID != newCfg.ChannelID ||
-		oldCfg.ProductID != newCfg.ProductID ||
-		oldCfg.FaceValues != newCfg.FaceValues ||
-		oldCfg.MinSettleAmounts != newCfg.MinSettleAmounts ||
-		oldCfg.Provinces != newCfg.Provinces {
-		logger.Info(fmt.Sprintf("任务配置发生变更: TaskID=%d", oldCfg.ID))
-		return true
-	}
-
-	return false
-}
-
-// processTaskConfig 处理单个任务配置
-func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
-	// 创建任务专用的上下文
-	taskCtx, taskCancel := context.WithCancel(s.ctx)
-	taskID := cfg.ID
-
-	logger.Info(fmt.Sprintf("开始处理任务配置: TaskID=%d, PlatformAccountID=%d, ChannelID=%d, ProductID=%s",
-		cfg.ID, cfg.PlatformAccountID, cfg.ChannelID, cfg.ProductID))
-
-	// 获取任务配置信息
-	channelID := int(cfg.ChannelID)
-	productID := cfg.ProductID
-	provinces := cfg.Provinces
-	faceValues := cfg.FaceValues
-	minSettleAmounts := cfg.MinSettleAmounts
-
-	// 注册任务上下文（确保原子性操作）
-	s.taskMutex.Lock()
-	if existingTaskCtx, exists := s.taskContexts[taskID]; exists {
-		// 如果任务已存在，先取消旧任务
-		logger.Warn(fmt.Sprintf("检测到重复任务，取消旧任务: TaskID=%d", taskID))
-		existingTaskCtx.Cancel()
-		// 立即删除旧的上下文映射
-		delete(s.taskContexts, taskID)
-	}
-	// 注册新的任务上下文
-	s.taskContexts[taskID] = &TaskContext{
-		Ctx:    taskCtx,
-		Cancel: taskCancel,
-	}
-	s.taskMutex.Unlock()
-
-	logger.Info(fmt.Sprintf("任务上下文已注册: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
-
-	// 确保任务结束时清理上下文
-	defer func() {
-		// 先取消上下文
-		taskCancel()
-
-		// 再清理任务上下文映射
-		s.taskMutex.Lock()
-		defer s.taskMutex.Unlock()
-		
-		// 只有当前上下文仍然存在时才删除（避免重复删除）
-		if currentTaskCtx, exists := s.taskContexts[taskID]; exists && currentTaskCtx.Ctx == taskCtx {
-			delete(s.taskContexts, taskID)
-			logger.Info(fmt.Sprintf("任务上下文已清理: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
-		} else {
-			logger.Debug(fmt.Sprintf("任务上下文已被其他实例清理或替换: TaskID=%d", taskID))
-		}
-	}()
-
-	appkey, platform, accountName, err := s.platformSvc.GetAPIKeyAndSecret(cfg.PlatformAccountID)
-	if err != nil {
-		logger.Error(fmt.Sprintf("获取账号信息失败: %v", err))
-		return
-	}
-	//获取平台账号信息
-	platformAccount, err := s.platformAccountRepo.GetByID(cfg.PlatformAccountID)
-	if err != nil {
-		logger.Error(fmt.Sprintf("获取平台账号信息失败: error=%+v", err))
-		return
-	}
-
-	if platformAccount.BindUserID != nil {
-		fmt.Printf("userid %d platformAccount++++++++!!!!!!!!%+v", *platformAccount.BindUserID, platformAccount)
-	} else {
-		fmt.Printf("userid <nil> platformAccount++++++++!!!!!!!!%+v", platformAccount)
-		logger.Warn(fmt.Sprintf("平台账号未绑定用户，跳过任务处理: PlatformAccountID=%d, ChannelID=%d, ProductID=%s", cfg.PlatformAccountID, channelID, productID))
-		return
-	}
-	logger.Info(fmt.Sprintf("处理任务配置: ChannelID=%d, ProductID=%s accountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
-
-	// 获取或申请token
-	logger.Info(fmt.Sprintf("开始申请token: ChannelID=%d, ProductID=%s, AccountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
-	tokenApplyStartTime := time.Now()
-
-	token, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
-	if err != nil {
-		logger.Error(fmt.Sprintf("申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
-			channelID, productID, accountName, time.Since(tokenApplyStartTime), err))
-		return
-	}
-
-	logger.Info(fmt.Sprintf("申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, token=%s, 耗时=%v",
-		channelID, productID, accountName, token, time.Since(tokenApplyStartTime)))
-
-	// 开始查询循环：基于token创建时间判断5分钟过期，不限制查询次数
-	queryInterval := s.config.Interval
-	tokenStartTime := time.Now() // 记录token开始使用的时间
-	logger.Info(fmt.Sprintf("token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s AccountName=%s",
-		token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05"), accountName))
-
-	// 配置检查计时器
-	configCheckInterval := 30 * time.Second // 每30秒检查一次配置
-	lastConfigCheck := time.Now()
-
-	for {
-		select {
-		case <-taskCtx.Done():
-			logger.Info(fmt.Sprintf("任务被主动停止: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
-			return
-		case <-s.ctx.Done():
-			return
-		default:
-		}
-
-		// 定期检查配置是否有变更
-		if time.Since(lastConfigCheck) >= configCheckInterval {
-			if s.checkTaskConfigChanged(cfg) {
-				logger.Info(fmt.Sprintf("检测到任务配置变更，重启任务: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
-				return
-			}
-			lastConfigCheck = time.Now()
-		}
-
-		// 检查token是否已过期（5分钟）
-		if time.Since(tokenStartTime) >= 5*time.Minute {
-			tokenLifetime := time.Since(tokenStartTime)
-			logger.Info(fmt.Sprintf("token已过期，重新申请token: token=%s, ChannelID=%d, ProductID=%s, 生命周期=%v, 过期时间=%s AccountName=%s",
-				token, channelID, productID, tokenLifetime, time.Now().Format("2006-01-02 15:04:05"), accountName))
-
-			// 重新申请token而不是退出任务
-			reapplyStartTime := time.Now()
-			newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
-			if err != nil {
-				logger.Error(fmt.Sprintf("token过期后重新申请失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
-					channelID, productID, accountName, time.Since(reapplyStartTime), err))
-				return
-			}
-
-			token = newToken
-			tokenStartTime = time.Now() // 重置token开始时间
-			logger.Info(fmt.Sprintf("token过期后重新申请成功: ChannelID=%d, ProductID=%s, AccountName=%s, newToken=%s, 耗时=%v",
-				channelID, productID, accountName, newToken, time.Since(reapplyStartTime)))
-			continue
-		}
-
-		// 检查订单数量阈值，决定是否暂停拉单
-		if err := s.checkOrderThresholds(taskCtx); err != nil {
-			logger.Error(fmt.Sprintf("检查订单数量阈值失败: TaskID=%d, error=%v", taskID, err))
-		}
-
-		// 如果拉单被暂停，跳过本次查询
-		if !s.isPullingAllowed() {
-			logger.Debug(fmt.Sprintf("拉单已暂停，跳过查询: TaskID=%d", taskID))
-			continue
-		}
-
-		// 查询订单
-		// apiurl := "http://60.205.159.182:5000/"
-		order, err := s.platformSvc.QueryTask(token, platform.ApiURL, appkey, accountName)
-		if err != nil {
-			tokenLifetime := time.Since(tokenStartTime)
-			logger.Error(fmt.Sprintf("查询任务匹配状态失败: token=%s, 生命周期=%v, error=%v", token, tokenLifetime, err))
-
-			// 检查任务是否被取消
-			select {
-			case <-taskCtx.Done():
-				logger.Info(fmt.Sprintf("任务在错误处理中被停止: TaskID=%d", taskID))
-				return
-			default:
-			}
-
-			if strings.Contains(err.Error(), "匹配失败") {
-				// 匹配失败，让当前token失效并重新申请token
-				tokenLifetime := time.Since(tokenStartTime)
-				logger.Info(fmt.Sprintf("主动失效token: token=%s, 原因=匹配失败, 生命周期=%v, 失效时间=%s",
-					token, tokenLifetime, time.Now().Format("2006-01-02 15:04:05")))
-				_ = s.platformSvc.InvalidateToken(cfg.ID)
-
-				logger.Info(fmt.Sprintf("匹配订单失败重新申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
-				reapplyStartTime := time.Now()
-
-				// 检查任务是否被取消
-				select {
-				case <-taskCtx.Done():
-					logger.Info(fmt.Sprintf("任务在重新申请token前被停止: TaskID=%d", taskID))
-					return
-				default:
-				}
-
-				newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
-				if err != nil {
-					logger.Error(fmt.Sprintf("匹配订单失败重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
-						channelID, productID, accountName, time.Since(reapplyStartTime), err))
-					// 重新申请token失败时等待后重试，而不是直接退出
-					logger.Info(fmt.Sprintf("重新申请token失败，等待%v后重试", queryInterval))
-					time.Sleep(time.Duration(queryInterval) * time.Second)
-					continue
-				}
-
-				token = newToken
-				tokenStartTime = time.Now() // 重置token开始时间
-				logger.Info(fmt.Sprintf("匹配订单失败重新申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, 新token=%s, 耗时=%v",
-					channelID, productID, accountName, token, time.Since(reapplyStartTime)))
-				logger.Info(fmt.Sprintf("新token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s",
-					token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05")))
-				time.Sleep(1 * time.Second)
-				continue
-			}
-			// 其他错误（非匹配失败），记录错误并等待后重试，而不是直接退出任务
-			logger.Warn(fmt.Sprintf("查询订单遇到非匹配失败错误，等待%v后重试: error=%v", queryInterval, err))
-			time.Sleep(time.Duration(queryInterval) * time.Second)
-			continue
-		}
-
-		if order != nil {
-			// 匹配到订单，处理订单并重新申请token
-			logger.Info(fmt.Sprintf("匹配到订单: token=%s OrderNumber=%s, AccountNum=%s,SettlementAmount=%.2f",
-				token, order.OrderNumber, order.AccountNum, order.SettlementAmount))
-
-			// 让当前token失效
-			tokenLifetime := time.Since(tokenStartTime)
-			logger.Info(fmt.Sprintf("主动失效token: token=%s, 原因=匹配到订单, 生命周期=%v, 失效时间=%s",
-				token, tokenLifetime, time.Now().Format("2006-01-02 15:04:05")))
-			_ = s.platformSvc.InvalidateToken(cfg.ID)
-
-			// 处理订单
-			s.handleMatchedOrder(order, cfg, channelID, productID, platformAccount, platform)
-
-			// 重新申请token继续查询
-			logger.Info(fmt.Sprintf("开始重新申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
-			reapplyStartTime := time.Now()
-
-			// 检查任务是否被取消
-			select {
-			case <-taskCtx.Done():
-				logger.Info(fmt.Sprintf("任务在处理订单后重新申请token前被停止: TaskID=%d", taskID))
-				return
-			default:
-			}
-
-			newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
-			if err != nil {
-				logger.Error(fmt.Sprintf("重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
-					channelID, productID, accountName, time.Since(reapplyStartTime), err))
-				return
-			}
-
-			token = newToken
-			tokenStartTime = time.Now() // 重置token开始时间
-			logger.Info(fmt.Sprintf("重新申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, 新token=%s, 耗时=%v",
-				channelID, productID, accountName, token, time.Since(reapplyStartTime)))
-			logger.Info(fmt.Sprintf("新token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s",
-				token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05")))
-		} else {
-			// 未匹配到订单，等待后继续查询
-			tokenLifetime := time.Since(tokenStartTime)
-			logger.Debug(fmt.Sprintf("未匹配到订单，继续查询: token=%s, 生命周期=%v", token, tokenLifetime))
-		}
-
-		// 等待查询间隔
-		time.Sleep(time.Duration(queryInterval) * time.Second)
 	}
 }
 
@@ -697,7 +284,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 func (s *TaskService) processOrderDetailsForConfig(cfg *model.TaskConfig) {
 	logger.Info(fmt.Sprintf("开始为配置处理订单详情查询: TaskID=%d, ChannelID=%d, ProductID=%s", cfg.ID, cfg.ChannelID, cfg.ProductID))
 	// 获取平台账号信息
-	platformAccount, err := s.platformAccountRepo.GetByID(cfg.PlatformAccountID)
+	platformAccount, err := s.platformAccountRepo.GetByIDWithContext(s.ctx, cfg.PlatformAccountID)
 	if err != nil {
 		logger.Error(fmt.Sprintf("获取平台账号失败: PlatformAccountID=%d, error=%v", cfg.PlatformAccountID, err))
 		return
@@ -711,7 +298,9 @@ func (s *TaskService) processOrderDetailsForConfig(cfg *model.TaskConfig) {
 	}
 
 	// 查询订单列表 - 获取第一页数据，查询状态为1的订单
-	orderList, pageResult, err := s.platformSvc.GetOrderList("", 4, 0, 1, 100, platform.ApiURL, platformAccount) // 查询订单状态为1的订单
+	ctx, cancel := context.WithTimeout(s.ctx, 15*time.Second)
+	defer cancel()
+	orderList, pageResult, err := s.platformSvc.GetOrderList(ctx, "", 4, 0, 1, 100, platform.ApiURL, platformAccount) // 查询订单状态为1的订单
 	if err != nil {
 		logger.Error(fmt.Sprintf("查询订单列表失败: %v", err))
 		return
@@ -729,7 +318,11 @@ func (s *TaskService) processOrderDetailsForConfig(cfg *model.TaskConfig) {
 // processOrderIfNotExists 检查订单是否存在，如果不存在则创建
 func (s *TaskService) processOrderIfNotExists(order *platform.PlatformOrder, cfg *model.TaskConfig, platformAccount *model.PlatformAccount, platformInfo *model.Platform) {
 	// 检查任务订单表中是否已存在
-	existingTaskOrder, err := s.taskOrderRepo.GetByOrderNumber(order.OrderNumber)
+	existingTaskOrder, err := func() (*model.TaskOrder, error) {
+		ctx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+		defer cancel()
+		return s.taskOrderRepo.GetByOrderNumberWithContext(ctx, order.OrderNumber)
+	}()
 	if err == nil && existingTaskOrder != nil {
 		// 订单已存在，忽略
 		return
@@ -972,4 +565,525 @@ func (s *TaskService) isPullingAllowed() bool {
 	s.suspendMutex.RLock()
 	defer s.suspendMutex.RUnlock()
 	return !s.isPullingSuspended
+}
+
+// processTask 处理取单任务
+func (s *TaskService) processTask() {
+	logger.Info("开始执行定时任务")
+
+	// 若服务已停止，跳过处理，避免停止过程中继续拉起任务
+	s.mu.Lock()
+	if !s.isRunning {
+		s.mu.Unlock()
+		logger.Debug("服务已停止，跳过定时任务执行")
+		return
+	}
+	s.mu.Unlock()
+
+	// 获取所有启用的任务配置
+	configs, err := s.taskConfigRepo.GetEnabledConfigs()
+	if err != nil {
+		logger.Error("获取任务配置失败", err)
+		return
+	}
+	logger.Info(fmt.Sprintf("获取到 %d 个启用的任务配置", len(configs)))
+
+	// 检查配置变更，停止已删除或禁用的任务
+	s.checkAndStopObsoleteTasks(configs)
+
+	maxConcurrent := s.config.MaxConcurrent
+	logger.Info(fmt.Sprintf("最大并发数: %d", maxConcurrent))
+	if maxConcurrent <= 0 {
+		maxConcurrent = 20 // 默认最大并发数
+	}
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+
+	for _, config := range configs {
+		// 检查任务是否已在运行（使用双重检查确保准确性）
+		s.taskMutex.Lock()
+		taskCtx, isRunning := s.taskContexts[config.ID]
+		if isRunning {
+			// 验证上下文是否仍然有效
+			select {
+			case <-taskCtx.Ctx.Done():
+				// 上下文已取消，删除无效的映射
+				delete(s.taskContexts, config.ID)
+				isRunning = false
+				logger.Debug(fmt.Sprintf("清理无效的任务上下文: TaskID=%d", config.ID))
+			default:
+				// 上下文仍然有效，任务确实在运行
+				logger.Debug(fmt.Sprintf("任务已在运行，跳过: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
+			}
+		}
+		s.taskMutex.Unlock()
+
+		if isRunning {
+			continue
+		}
+
+		logger.Info(fmt.Sprintf("启动新任务: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
+
+		sem <- struct{}{} // 占用一个并发槽
+		wg.Add(1)
+		go func(cfg *model.TaskConfig) {
+			defer func() {
+				<-sem // 释放并发槽
+				wg.Done()
+			}()
+
+			s.processTaskConfig(cfg)
+		}(&config)
+	}
+	wg.Wait()
+}
+
+// checkAndStopObsoleteTasks 检查并停止已删除或禁用的任务
+func (s *TaskService) checkAndStopObsoleteTasks(currentConfigs []model.TaskConfig) {
+	// 构建当前启用的任务ID集合
+	currentTaskIDs := make(map[int64]bool)
+	for _, cfg := range currentConfigs {
+		currentTaskIDs[cfg.ID] = true
+	}
+
+	// 检查正在运行的任务，停止不在当前配置中的任务
+	s.taskMutex.RLock()
+	var tasksToStop []int64
+	for taskID := range s.taskContexts {
+		if !currentTaskIDs[taskID] {
+			tasksToStop = append(tasksToStop, taskID)
+		}
+	}
+	s.taskMutex.RUnlock()
+
+	// 停止过时的任务
+	for _, taskID := range tasksToStop {
+		logger.Info(fmt.Sprintf("正在停止过时任务: TaskID=%d", taskID))
+		s.StopTaskByID(taskID)
+		// 注意：不需要手动删除任务上下文，StopTaskByID会触发defer清理逻辑
+	}
+}
+
+// startNewEnabledTasks 启动新启用的任务
+func (s *TaskService) startNewEnabledTasks(configs []model.TaskConfig) {
+	// 若服务已停止，直接返回，避免停止过程中启动新任务
+	s.mu.Lock()
+	if !s.isRunning {
+		s.mu.Unlock()
+		logger.Debug("服务已停止，跳过启动新任务")
+		return
+	}
+	s.mu.Unlock()
+
+	maxConcurrent := s.config.MaxConcurrent
+	if maxConcurrent <= 0 {
+		maxConcurrent = 20 // 默认最大并发数
+	}
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
+	newTaskCount := 0
+
+	for _, config := range configs {
+		// 检查任务是否已在运行（使用双重检查确保准确性）
+		s.taskMutex.Lock()
+		taskCtx, isRunning := s.taskContexts[config.ID]
+		if isRunning {
+			// 验证上下文是否仍然有效
+			select {
+			case <-taskCtx.Ctx.Done():
+				// 上下文已取消，删除无效的映射
+				delete(s.taskContexts, config.ID)
+				isRunning = false
+				logger.Debug(fmt.Sprintf("清理无效的任务上下文: TaskID=%d", config.ID))
+			default:
+				// 上下文仍然有效，任务确实在运行
+				logger.Debug(fmt.Sprintf("任务已在运行，跳过: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
+			}
+		}
+		s.taskMutex.Unlock()
+
+		if isRunning {
+			continue
+		}
+
+		newTaskCount++
+		logger.Info(fmt.Sprintf("启动新任务: TaskID=%d, ChannelID=%d, ProductID=%s", config.ID, config.ChannelID, config.ProductID))
+
+		sem <- struct{}{} // 占用一个并发槽
+		wg.Add(1)
+		go func(cfg *model.TaskConfig) {
+			defer func() {
+				<-sem // 释放并发槽
+				wg.Done()
+			}()
+
+			s.processTaskConfig(cfg)
+		}(&config)
+	}
+	wg.Wait()
+
+	if newTaskCount > 0 {
+		logger.Info(fmt.Sprintf("新任务启动完成，共启动 %d 个新任务", newTaskCount))
+	}
+}
+
+// checkTaskConfigChanged 检查任务配置是否发生变更
+func (s *TaskService) checkTaskConfigChanged(oldCfg *model.TaskConfig) bool {
+	// 从数据库获取最新配置
+	newCfg, err := s.taskConfigRepo.GetByID(oldCfg.ID)
+	if err != nil {
+		logger.Error(fmt.Sprintf("获取任务配置失败: TaskID=%d, error=%v", oldCfg.ID, err))
+		return false
+	}
+
+	// 检查任务是否被禁用
+	if newCfg.Status != 1 {
+		logger.Info(fmt.Sprintf("任务配置已被禁用: TaskID=%d", oldCfg.ID))
+		return true
+	}
+
+	// 检查关键配置是否发生变更
+	if oldCfg.PlatformAccountID != newCfg.PlatformAccountID ||
+		oldCfg.ChannelID != newCfg.ChannelID ||
+		oldCfg.ProductID != newCfg.ProductID ||
+		oldCfg.FaceValues != newCfg.FaceValues ||
+		oldCfg.MinSettleAmounts != newCfg.MinSettleAmounts ||
+		oldCfg.Provinces != newCfg.Provinces {
+		logger.Info(fmt.Sprintf("任务配置发生变更: TaskID=%d", oldCfg.ID))
+		return true
+	}
+
+	return false
+}
+
+// processTaskConfig 处理单个任务配置
+func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
+	// 创建任务专用的上下文
+	taskCtx, taskCancel := context.WithCancel(s.ctx)
+	taskID := cfg.ID
+
+	logger.Info(fmt.Sprintf("开始处理任务配置: TaskID=%d, PlatformAccountID=%d, ChannelID=%d, ProductID=%s",
+		cfg.ID, cfg.PlatformAccountID, cfg.ChannelID, cfg.ProductID))
+
+	// 获取任务配置信息
+	channelID := int(cfg.ChannelID)
+	productID := cfg.ProductID
+	provinces := cfg.Provinces
+	faceValues := cfg.FaceValues
+	minSettleAmounts := cfg.MinSettleAmounts
+
+	// 注册任务上下文（确保原子性操作）
+	s.taskMutex.Lock()
+	if existingTaskCtx, exists := s.taskContexts[taskID]; exists {
+		// 如果任务已存在，先取消旧任务
+		logger.Warn(fmt.Sprintf("检测到重复任务，取消旧任务: TaskID=%d", taskID))
+		existingTaskCtx.Cancel()
+		// 立即删除旧的上下文映射
+		delete(s.taskContexts, taskID)
+	}
+	// 注册新的任务上下文
+	s.taskContexts[taskID] = &TaskContext{
+		Ctx:    taskCtx,
+		Cancel: taskCancel,
+	}
+	s.taskMutex.Unlock()
+
+	logger.Info(fmt.Sprintf("任务上下文已注册: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
+
+	// 定义查询间隔
+	queryInterval := s.config.Interval
+
+	// 确保任务结束时清理上下文
+	defer func() {
+		// 先取消上下文
+		taskCancel()
+
+		// 再清理任务上下文映射
+		s.taskMutex.Lock()
+		defer s.taskMutex.Unlock()
+		
+		// 只有当前上下文仍然存在时才删除（避免重复删除）
+		if currentTaskCtx, exists := s.taskContexts[taskID]; exists && currentTaskCtx.Ctx == taskCtx {
+			delete(s.taskContexts, taskID)
+			logger.Info(fmt.Sprintf("任务上下文已清理: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
+		} else {
+			logger.Debug(fmt.Sprintf("任务上下文已被其他实例清理或替换: TaskID=%d", taskID))
+		}
+	}()
+
+	// 获取账号信息，失败时重试而不是退出
+	var appkey, accountName string
+	var platform *model.Platform
+	for {
+		var err error
+		appkey, platform, accountName, err = s.platformSvc.GetAPIKeyAndSecret(cfg.PlatformAccountID)
+		if err != nil {
+			logger.Error(fmt.Sprintf("获取账号信息失败，%d秒后重试: TaskID=%d, error=%v", queryInterval, taskID, err))
+			select {
+			case <-taskCtx.Done():
+				logger.Info(fmt.Sprintf("任务在获取账号信息重试中被停止: TaskID=%d", taskID))
+				return
+			case <-time.After(time.Duration(queryInterval) * time.Second):
+				continue
+			}
+		}
+		break
+	}
+	//获取平台账号信息
+	// 获取平台账号信息（失败或未绑定用户时重试）
+	var platformAccount *model.PlatformAccount
+	for {
+		var err error
+		platformAccount, err = s.platformAccountRepo.GetByIDWithContext(taskCtx, cfg.PlatformAccountID)
+		if err != nil {
+			logger.Error(fmt.Sprintf("获取平台账号信息失败，%d秒后重试: PlatformAccountID=%d, error=%v", queryInterval, cfg.PlatformAccountID, err))
+			select {
+			case <-taskCtx.Done():
+				logger.Info(fmt.Sprintf("任务在获取平台账号信息重试中被停止: TaskID=%d", taskID))
+				return
+			case <-time.After(time.Duration(queryInterval) * time.Second):
+				continue
+			}
+		}
+
+		if platformAccount.BindUserID == nil {
+			logger.Warn(fmt.Sprintf("平台账号未绑定用户，%d秒后重试: PlatformAccountID=%d, ChannelID=%d, ProductID=%s", queryInterval, cfg.PlatformAccountID, channelID, productID))
+			select {
+			case <-taskCtx.Done():
+				logger.Info(fmt.Sprintf("任务在等待绑定用户时被停止: TaskID=%d", taskID))
+				return
+			case <-time.After(time.Duration(queryInterval) * time.Second):
+				continue
+			}
+		}
+		break
+	}
+	logger.Info(fmt.Sprintf("处理任务配置: ChannelID=%d, ProductID=%s accountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
+
+	// 获取或申请token
+	logger.Info(fmt.Sprintf("开始申请token: ChannelID=%d, ProductID=%s, AccountName=%s provinces=%s faceValues=%s minSettleAmounts=%s", channelID, productID, accountName, provinces, faceValues, minSettleAmounts))
+	var token string
+	for {
+		tokenApplyStartTime := time.Now()
+		var err error
+		token, err = s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
+		if err != nil {
+			logger.Error(fmt.Sprintf("申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
+				channelID, productID, accountName, time.Since(tokenApplyStartTime), err))
+			select {
+			case <-taskCtx.Done():
+				logger.Info(fmt.Sprintf("任务在申请token重试中被停止: TaskID=%d", taskID))
+				return
+			case <-time.After(time.Duration(queryInterval) * time.Second):
+				continue
+			}
+		}
+		logger.Info(fmt.Sprintf("申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, token=%s, 耗时=%v",
+			channelID, productID, accountName, token, time.Since(tokenApplyStartTime)))
+		break
+	}
+
+	// 开始查询循环：基于token创建时间判断5分钟过期，不限制查询次数
+	// queryInterval 已在上方定义
+	tokenStartTime := time.Now() // 记录token开始使用的时间
+	logger.Info(fmt.Sprintf("token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s AccountName=%s",
+		token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05"), accountName))
+
+	// 配置检查计时器
+	configCheckInterval := 30 * time.Second // 每30秒检查一次配置
+	lastConfigCheck := time.Now()
+
+	for {
+		select {
+		case <-taskCtx.Done():
+			logger.Info(fmt.Sprintf("任务被主动停止: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
+			return
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+
+		// 定期检查配置是否有变更
+		if time.Since(lastConfigCheck) >= configCheckInterval {
+			if s.checkTaskConfigChanged(cfg) {
+				logger.Info(fmt.Sprintf("检测到任务配置变更，重启任务: TaskID=%d, ChannelID=%d, ProductID=%s", taskID, channelID, productID))
+				return
+			}
+			lastConfigCheck = time.Now()
+		}
+
+		// 检查token是否已过期（5分钟）
+		if time.Since(tokenStartTime) >= 5*time.Minute {
+			tokenLifetime := time.Since(tokenStartTime)
+			logger.Info(fmt.Sprintf("token已过期，重新申请token: token=%s, ChannelID=%d, ProductID=%s, 生命周期=%v, 过期时间=%s AccountName=%s",
+				token, channelID, productID, tokenLifetime, time.Now().Format("2006-01-02 15:04:05"), accountName))
+
+			// 重新申请token而不是退出任务
+			reapplyStartTime := time.Now()
+			newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
+			if err != nil {
+				logger.Error(fmt.Sprintf("重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
+					channelID, productID, accountName, time.Since(reapplyStartTime), err))
+				logger.Info(fmt.Sprintf("处理订单后重新申请token失败，等待%v后重试", queryInterval))
+				select {
+				case <-taskCtx.Done():
+					logger.Info(fmt.Sprintf("任务在处理订单后重新申请token等待中被停止: TaskID=%d", taskID))
+					return
+				case <-time.After(time.Duration(queryInterval) * time.Second):
+					continue
+				}
+			}
+
+			token = newToken
+			tokenStartTime = time.Now() // 重置token开始时间
+			logger.Info(fmt.Sprintf("重新申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, 新token=%s, 耗时=%v",
+				channelID, productID, accountName, token, time.Since(reapplyStartTime)))
+			continue
+		}
+
+		// 检查订单数量阈值，决定是否暂停拉单
+		if err := s.checkOrderThresholds(taskCtx); err != nil {
+			logger.Error(fmt.Sprintf("检查订单数量阈值失败: TaskID=%d, error=%v", taskID, err))
+		}
+
+		// 如果拉单被暂停，跳过本次查询
+		if !s.isPullingAllowed() {
+			logger.Debug(fmt.Sprintf("拉单已暂停，跳过查询: TaskID=%d", taskID))
+			continue
+		}
+
+		// 查询订单
+		// apiurl := "http://60.205.159.182:5000/"
+		order, err := s.platformSvc.QueryTask(taskCtx, token, platform.ApiURL, appkey, accountName)
+		if err != nil {
+			tokenLifetime := time.Since(tokenStartTime)
+			logger.Error(fmt.Sprintf("查询任务匹配状态失败: token=%s, 生命周期=%v, error=%v", token, tokenLifetime, err))
+
+			// 检查任务是否被取消
+			select {
+			case <-taskCtx.Done():
+				logger.Info(fmt.Sprintf("任务在错误处理中被停止: TaskID=%d", taskID))
+				return
+			default:
+			}
+
+			if strings.Contains(err.Error(), "匹配失败") {
+				// 匹配失败，让当前token失效并重新申请token
+				tokenLifetime := time.Since(tokenStartTime)
+				logger.Info(fmt.Sprintf("主动失效token: token=%s, 原因=匹配失败, 生命周期=%v, 失效时间=%s",
+					token, tokenLifetime, time.Now().Format("2006-01-02 15:04:05")))
+				_ = s.platformSvc.InvalidateToken(cfg.ID)
+
+				logger.Info(fmt.Sprintf("匹配订单失败重新申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
+				reapplyStartTime := time.Now()
+
+				// 检查任务是否被取消
+				select {
+				case <-taskCtx.Done():
+					logger.Info(fmt.Sprintf("任务在重新申请token前被停止: TaskID=%d", taskID))
+					return
+				default:
+				}
+
+				newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
+				if err != nil {
+					logger.Error(fmt.Sprintf("匹配订单失败重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
+						channelID, productID, accountName, time.Since(reapplyStartTime), err))
+					// 重新申请token失败时等待后重试，而不是直接退出
+					logger.Info(fmt.Sprintf("重新申请token失败，等待%v后重试", queryInterval))
+					select {
+					case <-taskCtx.Done():
+						logger.Info(fmt.Sprintf("任务在匹配失败重新申请token等待中被停止: TaskID=%d", taskID))
+						return
+					case <-time.After(time.Duration(queryInterval) * time.Second):
+						continue
+					}
+				}
+
+				token = newToken
+				tokenStartTime = time.Now() // 重置token开始时间
+				logger.Info(fmt.Sprintf("匹配订单失败重新申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, 新token=%s, 耗时=%v",
+					channelID, productID, accountName, token, time.Since(reapplyStartTime)))
+				logger.Info(fmt.Sprintf("新token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s",
+					token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05")))
+				select {
+				case <-taskCtx.Done():
+					logger.Info(fmt.Sprintf("任务在匹配失败处理后等待中被停止: TaskID=%d", taskID))
+					return
+				case <-time.After(1 * time.Second):
+					continue
+				}
+			}
+			// 其他错误（非匹配失败），记录错误并等待后重试，而不是直接退出任务
+			logger.Warn(fmt.Sprintf("查询订单遇到非匹配失败错误，等待%v后重试: error=%v", queryInterval, err))
+			select {
+			case <-taskCtx.Done():
+				logger.Info(fmt.Sprintf("任务在非匹配失败错误等待中被停止: TaskID=%d", taskID))
+				return
+			case <-time.After(time.Duration(queryInterval) * time.Second):
+				continue
+			}
+		}
+
+		if order != nil {
+			// 匹配到订单，处理订单并重新申请token
+			logger.Info(fmt.Sprintf("匹配到订单: token=%s OrderNumber=%s, AccountNum=%s,SettlementAmount=%.2f",
+				token, order.OrderNumber, order.AccountNum, order.SettlementAmount))
+
+			// 让当前token失效
+			tokenLifetime := time.Since(tokenStartTime)
+			logger.Info(fmt.Sprintf("主动失效token: token=%s, 原因=匹配到订单, 生命周期=%v, 失效时间=%s",
+				token, tokenLifetime, time.Now().Format("2006-01-02 15:04:05")))
+			_ = s.platformSvc.InvalidateToken(cfg.ID)
+
+			// 处理订单
+			s.handleMatchedOrder(order, cfg, channelID, productID, platformAccount, platform)
+
+			// 重新申请token继续查询
+			logger.Info(fmt.Sprintf("开始重新申请token: ChannelID=%d, ProductID=%s, AccountName=%s", channelID, productID, accountName))
+			reapplyStartTime := time.Now()
+
+			// 检查任务是否被取消
+			select {
+			case <-taskCtx.Done():
+				logger.Info(fmt.Sprintf("任务在处理订单后重新申请token前被停止: TaskID=%d", taskID))
+				return
+			default:
+			}
+
+			newToken, err := s.platformSvc.GetTokenWithContext(taskCtx, cfg.ID, channelID, productID, "", cfg.FaceValues, cfg.MinSettleAmounts, appkey, accountName, platform.ApiURL)
+			if err != nil {
+				logger.Error(fmt.Sprintf("重新申请token失败: ChannelID=%d, ProductID=%s, AccountName=%s, 耗时=%v, error=%v",
+					channelID, productID, accountName, time.Since(reapplyStartTime), err))
+				logger.Info(fmt.Sprintf("处理订单后重新申请token失败，等待%v后重试", queryInterval))
+				select {
+				case <-taskCtx.Done():
+					logger.Info(fmt.Sprintf("任务在处理订单后重新申请token等待中被停止: TaskID=%d", taskID))
+					return
+				case <-time.After(time.Duration(queryInterval) * time.Second):
+					continue
+				}
+			}
+
+			token = newToken
+			tokenStartTime = time.Now() // 重置token开始时间
+			logger.Info(fmt.Sprintf("重新申请token成功: ChannelID=%d, ProductID=%s, AccountName=%s, 新token=%s, 耗时=%v",
+				channelID, productID, accountName, token, time.Since(reapplyStartTime)))
+			logger.Info(fmt.Sprintf("新token开始生命周期: token=%s, 开始时间=%s, 预计过期时间=%s",
+				token, tokenStartTime.Format("2006-01-02 15:04:05"), tokenStartTime.Add(5*time.Minute).Format("2006-01-02 15:04:05")))
+		} else {
+			// 未匹配到订单，等待后继续查询
+			tokenLifetime := time.Since(tokenStartTime)
+			logger.Debug(fmt.Sprintf("未匹配到订单，继续查询: token=%s, 生命周期=%v", token, tokenLifetime))
+		}
+
+		// 等待查询间隔（可被任务取消）
+		select {
+		case <-taskCtx.Done():
+			logger.Info(fmt.Sprintf("任务在查询间隔等待中被停止: TaskID=%d", taskID))
+			return
+		case <-time.After(time.Duration(queryInterval) * time.Second):
+			// 继续下一轮
+		}
+	}
 }

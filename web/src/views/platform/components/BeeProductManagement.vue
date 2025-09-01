@@ -317,7 +317,7 @@ const columns: DataTableColumns<BeeProduct> = [
     width: 100,
   },
   {
-    title: '报价',
+    title: '报价1',
     key: 'user_quote_stock_info',
     width: 100,
     render(row: any) {
@@ -339,7 +339,28 @@ const columns: DataTableColumns<BeeProduct> = [
       return `¥${price.toFixed(3)}`;
     }
   },
+  {
+    title: '库存',
+    key: 'usable_stock',
+    width: 100,
+    render(row: any) {
+      // 优先使用省份数据中的库存；否则使用 user_quote_stock_info.usable_stock
+      let stock: any = null;
+      if (row._provinceData && row._provinceData.usable_stock !== undefined) {
+        stock = row._provinceData.usable_stock;
+      } else if (
+        row.user_quote_stock_info &&
+        row.user_quote_stock_info.usable_stock !== undefined
+      ) {
+        stock = row.user_quote_stock_info.usable_stock;
+      }
 
+      if (!stock) {
+        return '-';
+      }
+      return stock;
+    }
+  },
   {
     title: '供应状态',
     key: 'status',

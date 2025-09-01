@@ -13,6 +13,7 @@ import (
 	"recharge-go/pkg/logger"
 	"recharge-go/pkg/signature"
 	"strconv"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -173,14 +174,14 @@ func (p *DayuanrenPlatform) SubmitOrder(ctx context.Context, order *model.Order,
 }
 
 // QueryOrderStatus 查询订单状态
-func (p *DayuanrenPlatform) QueryOrderStatus(order *model.Order) (model.OrderStatus, error) {
+func (p *DayuanrenPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
 	_, appSecret, accountName, err := p.getAPIKeyAndSecret(order.PlatformAccountID)
 	if err != nil {
 		return 0, fmt.Errorf("获取API密钥失败: %v", err)
 	}
 
 	// 获取平台API信息
-	api, err := p.platformRepo.GetPlatformByCode(context.Background(), "dayuanren")
+	api, err := p.platformRepo.GetPlatformByCode(ctx, "dayuanren")
 	if err != nil {
 		return 0, fmt.Errorf("获取平台API信息失败: %v", err)
 	}
@@ -197,7 +198,13 @@ func (p *DayuanrenPlatform) QueryOrderStatus(order *model.Order) (model.OrderSta
 		form.Add(k, v)
 	}
 
-	resp, err := http.PostForm(api.URL+"/index/check", form)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(api.URL, "/")+"/index/check", strings.NewReader(form.Encode()))
+	if err != nil {
+		return 0, fmt.Errorf("创建请求失败: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("请求失败: %v", err)
 	}

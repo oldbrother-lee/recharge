@@ -2,14 +2,12 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
 	"time"
 
 	"recharge-go/internal/model"
-	notificationModel "recharge-go/internal/model/notification"
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/pkg/queue"
@@ -33,6 +31,7 @@ type UnifiedOrderService struct {
 	productRepo             repository.ProductRepository
 	retryService            *RetryService
 	orderExceptionService   OrderExceptionService
+	notificationHelper      *NotificationHelper
 }
 
 // NewUnifiedOrderService 创建统一订单处理服务
@@ -63,6 +62,7 @@ func NewUnifiedOrderService(
 		productRepo:            productRepo,
 		retryService:           retryService,
 		orderExceptionService:  orderExceptionService,
+		notificationHelper:     NewNotificationHelper(db, notificationRepo, queue),
 	}
 }
 
@@ -221,49 +221,7 @@ func (s *UnifiedOrderService) UpdateOrderStatusUnified(ctx context.Context, req 
 
 // sendOrderStatusNotification 发送订单状态变更通知
 func (s *UnifiedOrderService) sendOrderStatusNotification(ctx context.Context, order *model.Order, newStatus model.OrderStatus) error {
-	// 序列化订单快照
-	orderData, err := json.Marshal(order)
-	if err != nil {
-		s.logger.Error("序列化订单快照失败", zap.Int64("order_id", order.ID), zap.Error(err))
-		return err
-	}
-
-	// 创建通知记录（包含订单快照）
-	notification := &notificationModel.NotificationRecord{
-		OrderID:          order.ID,
-		PlatformCode:     order.PlatformCode,
-		NotificationType: "order_status_changed",
-		Content:          fmt.Sprintf("订单状态已更新为: %d", newStatus),
-		OrderSnapshot:    string(orderData), // 保存完整订单快照
-		TargetStatus:     int(newStatus),    // 保存目标状态
-		Status:           1,                 // 待处理
-	}
-
-	// 原子操作：创建通知记录并推送到队列
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 保存通知记录到数据库
-		if err := tx.Create(notification).Error; err != nil {
-			s.logger.Error("创建通知记录失败", zap.Int64("order_id", order.ID), zap.Error(err))
-			return err
-		}
-
-		// 推送通知到队列
-		s.logger.Info("准备推送通知到队列", 
-			zap.Int64("order_id", order.ID), 
-			zap.Int("new_status", int(newStatus)),
-			zap.Int64("notification_id", notification.ID))
-		
-		if err := s.queue.Push(ctx, "notification_queue", notification); err != nil {
-			s.logger.Error("推送通知到队列失败", zap.Int64("order_id", order.ID), zap.Error(err))
-			return err
-		}
-
-		s.logger.Info("推送通知到队列成功", 
-			zap.Int64("order_id", order.ID), 
-			zap.Int("status", int(newStatus)),
-			zap.Int64("notification_id", notification.ID))
-		return nil
-	})
+	return s.notificationHelper.SendOrderStatusNotification(ctx, order, newStatus)
 }
 
 // BalanceCheckResult 余额验证结果

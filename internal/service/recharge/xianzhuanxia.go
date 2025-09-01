@@ -36,8 +36,8 @@ func (p *XianzhuanxiaPlatform) GetName() string {
 }
 
 // getAPIKeyAndSecret 获取API密钥和密钥
-func (p *XianzhuanxiaPlatform) getAPIKeyAndSecret(apiID uint) (string, string, string, error) {
-	account, err := p.platformRepo.GetAccountByID(context.Background(), int64(apiID))
+func (p *XianzhuanxiaPlatform) getAPIKeyAndSecret(ctx context.Context, apiID uint) (string, string, string, error) {
+	account, err := p.platformRepo.GetAccountByID(ctx, int64(apiID))
 	if err != nil {
 		return "", "", "", fmt.Errorf("获取平台账号信息失败: %v", err)
 	}
@@ -71,7 +71,7 @@ func (p *XianzhuanxiaPlatform) SubmitOrder(ctx context.Context, order *model.Ord
 	)
 
 	// 获取API密钥和密钥
-	appKey, _, accountName, err := p.getAPIKeyAndSecret(uint(api.AccountID))
+	appKey, _, accountName, err := p.getAPIKeyAndSecret(ctx, uint(api.AccountID))
 	if err != nil {
 		return fmt.Errorf("获取API密钥失败: %v", err)
 	}
@@ -180,7 +180,7 @@ func (p *XianzhuanxiaPlatform) SubmitOrder(ctx context.Context, order *model.Ord
 }
 
 // QueryOrderStatus 查询订单状态
-func (p *XianzhuanxiaPlatform) QueryOrderStatus(order *model.Order) (model.OrderStatus, error) {
+func (p *XianzhuanxiaPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
 	logger.Info("开始查询闲赚侠订单状态",
 		"order_id", order.ID,
 		"order_number", order.OrderNumber,
@@ -188,7 +188,7 @@ func (p *XianzhuanxiaPlatform) QueryOrderStatus(order *model.Order) (model.Order
 	)
 
 	// 获取API密钥和密钥
-	appKey, appSecret, _, err := p.getAPIKeyAndSecret(uint(order.APICurID))
+	appKey, appSecret, _, err := p.getAPIKeyAndSecret(ctx, uint(order.APICurID))
 	if err != nil {
 		return 0, fmt.Errorf("获取API密钥失败: %v", err)
 	}
@@ -220,7 +220,7 @@ func (p *XianzhuanxiaPlatform) QueryOrderStatus(order *model.Order) (model.Order
 		return 0, fmt.Errorf("序列化请求参数失败: %v", err)
 	}
 
-	req, err := http.NewRequest("POST", order.PlatformURL+"/query", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", order.PlatformURL+"/query", bytes.NewBuffer(jsonData))
 	if err != nil {
 		logger.Error("创建HTTP请求失败",
 			"error", err,
@@ -269,13 +269,16 @@ func (p *XianzhuanxiaPlatform) QueryOrderStatus(order *model.Order) (model.Order
 		return 0, fmt.Errorf("查询订单状态失败: %s", result.Message)
 	}
 
-	logger.Info("查询订单状态成功",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"status", result.Data.Status,
-	)
-
-	return model.OrderStatus(result.Data.Status), nil
+	switch result.Data.Status {
+	case 2:
+		return model.OrderStatusSuccess, nil
+	case 3, 5:
+		return model.OrderStatusFailed, nil
+	case 1, 4:
+		return model.OrderStatusRecharging, nil
+	default:
+		return model.OrderStatusRecharging, nil
+	}
 }
 
 // ParseCallbackData 解析回调数据
@@ -339,7 +342,7 @@ func (p *XianzhuanxiaPlatform) QueryBalance(ctx context.Context, accountID int64
 	)
 
 	// 获取API密钥和密钥
-	appKey, appSecret, accountName, err := p.getAPIKeyAndSecret(uint(accountID))
+	appKey, appSecret, accountName, err := p.getAPIKeyAndSecret(ctx, uint(accountID))
 	if err != nil {
 		return 0, fmt.Errorf("获取API密钥失败: %v", err)
 	}

@@ -624,8 +624,14 @@ func (c *Container) Close() error {
 	if c.queue != nil {
 		c.queue.Close()
 	}
-	if err := redis.Close(); err != nil {
-		return err
+	// 停止安全中间件的后台协程
+	if c.securityMiddleware != nil {
+		c.securityMiddleware.Stop()
+	}
+	if c.redisClient != nil {
+		if err := c.redisClient.Close(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

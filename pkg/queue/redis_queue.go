@@ -67,8 +67,12 @@ func (q *RedisQueue) Peek(ctx context.Context, key string) (interface{}, error) 
 
 // Pop 出队
 func (q *RedisQueue) Pop(ctx context.Context, key string) (interface{}, error) {
-	result, err := q.client.BRPop(ctx, 0, key).Result()
+	result, err := q.client.BRPop(ctx, 1*time.Second, key).Result()
 	if err != nil {
+		if err == redisV8.Nil {
+			// 超时未取到，视为队列为空
+			return nil, nil
+		}
 		return nil, fmt.Errorf("pop from queue failed: %v", err)
 	}
 	if len(result) < 2 {

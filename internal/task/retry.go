@@ -17,14 +17,19 @@ type RetryTask struct {
 	stopChan     chan struct{}
 	config       *configs.Config
 	queue        queue.Queue
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 func NewRetryTask(retryService *service.RetryService, config *configs.Config, queue queue.Queue) *RetryTask {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &RetryTask{
 		retryService: retryService,
 		stopChan:     make(chan struct{}),
 		config:       config,
 		queue:        queue,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -57,6 +62,10 @@ func (t *RetryTask) Start() {
 
 func (t *RetryTask) Stop() {
 	logger.Info("【重试任务停止】开始停止重试任务")
+	if t.cancel != nil {
+		// 先取消上下文，打断可能的阻塞调用（如BRPop）
+		t.cancel()
+	}
 	close(t.stopChan)
 	logger.Info("【重试任务已停止】")
 }
@@ -99,19 +108,39 @@ func (t *RetryTask) startConsumer(consumerID int, queueName string, pollInterval
 		case <-t.stopChan:
 			logger.Info("【重试任务消费者停止】收到停止信号", "consumer_id", consumerID)
 			return
+		case <-t.ctx.Done():
+			logger.Info("【重试任务消费者停止】上下文已取消", "consumer_id", consumerID)
+			return
 		default:
 			// 从队列中获取重试任务
-			ctx := context.Background()
+			ctx := t.ctx
 			taskData, err := t.queue.Pop(ctx, queueName)
 			if err != nil {
 				logger.Error("【从队列获取重试任务失败】", "consumer_id", consumerID, "error", err)
-				time.Sleep(5 * time.Second) // 出错时等待5秒
+				// 出错时等待5秒，或提前退出
+				select {
+				case <-t.stopChan:
+					logger.Info("【重试任务消费者停止】收到停止信号", "consumer_id", consumerID)
+					return
+				case <-t.ctx.Done():
+					logger.Info("【重试任务消费者停止】上下文已取消", "consumer_id", consumerID)
+					return
+				case <-time.After(5 * time.Second):
+				}
 				continue
 			}
 
 			if taskData == nil {
-				// 队列为空，等待后继续
-				time.Sleep(pollInterval)
+				// 队列为空，等待后继续，或提前退出
+				select {
+				case <-t.stopChan:
+					logger.Info("【重试任务消费者停止】收到停止信号", "consumer_id", consumerID)
+					return
+				case <-t.ctx.Done():
+					logger.Info("【重试任务消费者停止】上下文已取消", "consumer_id", consumerID)
+					return
+				case <-time.After(pollInterval):
+				}
 				continue
 			}
 
@@ -142,9 +171,12 @@ func (t *RetryTask) startPeriodicRetry() {
 		case <-t.stopChan:
 			logger.Info("【定时重试任务停止】收到停止信号")
 			return
+		case <-t.ctx.Done():
+			logger.Info("【定时重试任务停止】上下文已取消")
+			return
 		case <-ticker.C:
 			logger.Info("【定时重试任务执行】开始处理待重试记录")
-			if err := t.retryService.ProcessRetries(context.Background()); err != nil {
+			if err := t.retryService.ProcessRetries(t.ctx); err != nil {
 				logger.Error("【定时重试任务执行失败】error: %v", err)
 			} else {
 				logger.Info("【定时重试任务执行完成】")

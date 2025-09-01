@@ -31,7 +31,7 @@ func (s *ServerApp) Start(ctx context.Context) error {
 
 	// 初始化并启动统计任务
 	s.statisticsTask = s.container.GetServices().StatisticsTask
-	s.statisticsTask.Start()
+	s.statisticsTask.Start(ctx)
 
 	// 使用优化后的路由设置
 	r := router.SetupRouterV2(

@@ -162,8 +162,8 @@ func (s *PlatformService) UpdatePlatformAccount(ctx context.Context, id int64, r
 }
 
 // DeletePlatformAccount 删除平台账号
-func (s *PlatformService) DeletePlatformAccount(id int64) error {
-	return s.platformRepo.DeleteAccount(context.Background(), id)
+func (s *PlatformService) DeletePlatformAccount(ctx context.Context, id int64) error {
+	return s.platformRepo.DeleteAccount(ctx, id)
 }
 
 // SendNotification 发送订单状态通知
@@ -196,7 +196,7 @@ func (s *PlatformService) SendNotification(ctx context.Context, order *model.Ord
 		params = s.buildKekebangParams(order, account)
 	case "xianzhuanxia":
 		// 闲赚侠一般直接调用 ReportTask 方法，不需要拼接 URL
-		err := s.buildXianzhuanxiaParams(order, account, platform.ApiURL)
+		err := s.buildXianzhuanxiaParams(ctx, order, account, platform.ApiURL)
 		if err != nil {
 			return fmt.Errorf("上报订单结果失败: %w", err)
 		}
@@ -446,7 +446,7 @@ func (s *PlatformService) generateSign(platformCode string, params map[string]in
 	}
 }
 
-func (s *PlatformService) buildXianzhuanxiaParams(order *model.Order, account *model.PlatformAccount, apiURL string) error {
+func (s *PlatformService) buildXianzhuanxiaParams(ctx context.Context, order *model.Order, account *model.PlatformAccount, apiURL string) error {
 
 	params := map[string]interface{}{
 		"orderNumber": order.OutTradeNum,
@@ -464,7 +464,7 @@ func (s *PlatformService) buildXianzhuanxiaParams(order *model.Order, account *m
 	}
 
 	url := fmt.Sprintf("%s/api/task/recharge/reported", apiURL)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("创建请求失败: %v", err)
 	}

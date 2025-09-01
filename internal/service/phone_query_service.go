@@ -101,8 +101,8 @@ func (s *phoneQueryService) QueryPaymentRecords(ctx context.Context, phone, ispT
 	)
 
 	// 验证运营商类型（仅支持移动和联通）
-	if ispType != "yd" && ispType != "lt" {
-		return nil, fmt.Errorf("不支持的运营商类型: %s，仅支持 yd(移动) 和 lt(联通)", ispType)
+	if ispType != "yd" && ispType != "lt" && ispType != "dx" {
+		return nil, fmt.Errorf("不支持的运营商类型: %s，仅支持 yd(移动)、lt(联通) 和 dx(电信)", ispType)
 	}
 
 	params := map[string]string{
@@ -172,7 +172,11 @@ func (s *phoneQueryService) QueryBalanceWithRetry(ctx context.Context, phone, is
 				zap.Duration("retry_delay", retryDelay),
 				zap.Error(lastErr),
 			)
-			time.Sleep(retryDelay)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryDelay):
+			}
 		}
 	}
 
@@ -203,7 +207,11 @@ func (s *phoneQueryService) QueryPaymentRecordsWithRetry(ctx context.Context, ph
 				zap.Duration("retry_delay", retryDelay),
 				zap.Error(lastErr),
 			)
-			time.Sleep(retryDelay)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(retryDelay):
+			}
 		}
 	}
 

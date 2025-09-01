@@ -15,5 +15,6 @@ func RegisterCallbackRoutes(r *gin.RouterGroup, callbackController *controller.C
 		callback.POST("/dayuanren/:userid", callbackController.HandleDayuanrenCallback)
 		callback.POST("/chongzhi/:userid", callbackController.HandleChongzhiCallback)
 		callback.POST("/payc2/:userid", callbackController.HandlePayc2Callback)
+		callback.POST("/lingshi/:userid", callbackController.HandleLingshiCallback)
 	}
 }

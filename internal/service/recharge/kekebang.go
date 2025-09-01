@@ -36,8 +36,8 @@ func (p *KekebangPlatform) GetName() string {
 }
 
 // getAPIKeyAndSecret 获取API密钥和密钥
-func (p *KekebangPlatform) getAPIKeyAndSecret(accountID int64) (string, string, error) {
-	account, err := p.platformRepo.GetAccountByID(context.Background(), accountID)
+func (p *KekebangPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int64) (string, string, error) {
+	account, err := p.platformRepo.GetAccountByID(ctx, accountID)
 	if err != nil {
 		return "", "", fmt.Errorf("获取平台账号信息失败: %v", err)
 	}
@@ -49,7 +49,7 @@ func (p *KekebangPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 	logger.Info(fmt.Sprintf("【开始提交可客帮订单】order_number: %s", order.OrderNumber))
 	fmt.Printf("【开始提交可客帮订单】order_number: %+v\n", apiParam)
 	//通过account_id 获取到 api_key 和 api_secret
-	apiKey, apiSecret, err := p.getAPIKeyAndSecret(api.AccountID)
+	apiKey, apiSecret, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
 	if err != nil {
 		return fmt.Errorf("get api key and secret failed: %v", err)
 	}
@@ -129,7 +129,7 @@ func (p *KekebangPlatform) mapOrderState(orderState int, orderID int64, orderNum
 }
 
 // QueryOrderStatus 查询订单状态
-func (p *KekebangPlatform) QueryOrderStatus(order *model.Order) (model.OrderStatus, error) {
+func (p *KekebangPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
 	logger.Info("【开始查询可客帮订单状态】order_id: %d, order_number: %s", order.ID, order.OrderNumber)
 
 	// 构建请求参数
@@ -145,7 +145,7 @@ func (p *KekebangPlatform) QueryOrderStatus(order *model.Order) (model.OrderStat
 	params["sign"] = sign
 
 	// 发送请求
-	resp, err := p.sendRequest(context.Background(), order.PlatformURL+"/query-order", params)
+	resp, err := p.sendRequest(ctx, order.PlatformURL+"/query-order", params)
 	if err != nil {
 		logger.Error("【查询订单状态失败】order_id: %d, order_number: %s, error: %v",
 			order.ID, order.OrderNumber, err)
@@ -263,55 +263,29 @@ type KekebangCallbackResponse struct {
 
 // QueryBalance 查询账户余额
 func (p *KekebangPlatform) QueryBalance(ctx context.Context, accountID int64) (float64, error) {
-	logger.Info("开始查询可客帮账户余额",
-		"account_id", accountID,
-	)
+	logger.Info("【开始查询可客帮账户余额】account_id: %d", accountID)
 
-	// 获取API密钥和密钥
-	appKey, appSecret, err := p.getAPIKeyAndSecret(accountID)
+	appKey, appSecret, err := p.getAPIKeyAndSecret(ctx, accountID)
 	if err != nil {
 		return 0, fmt.Errorf("获取API密钥失败: %v", err)
 	}
 
-	// 获取平台API信息
-	api, err := p.platformRepo.GetPlatformByCode(ctx, "kekebang")
-	if err != nil {
-		return 0, fmt.Errorf("获取平台API信息失败: %v", err)
-	}
-
-	// 构建请求参数
 	params := map[string]interface{}{
 		"app_key":   appKey,
 		"timestamp": strconv.FormatInt(time.Now().Unix(), 10),
-		"biz_code":  "2", // 查询余额
+		"biz_code":  "2", // 余额查询
 	}
+	params["sign"] = signature.GenerateKekebangSign(params, appSecret)
 
-	// 使用客帮帮平台的签名方法
-	sign := signature.GenerateKekebangSign(params, appSecret)
-	params["sign"] = sign
-
-	// 发送请求
-	resp, err := p.sendRequest(ctx, api.URL+"/query-balance", params)
+	resp, err := p.sendRequest(ctx, "https://api.kekebang.com/balance", params)
 	if err != nil {
 		return 0, fmt.Errorf("查询余额失败: %v", err)
 	}
 
-	// 确保 Code 是字符串类型
-	code := fmt.Sprintf("%v", resp.Code)
-	if code != "00000" {
-		return 0, fmt.Errorf("查询余额失败: %s", resp.Message)
+	if resp.Code != "00000" {
+		return 0, fmt.Errorf("平台返回错误: %s", resp.Message)
 	}
 
-	// 解析余额
-	balance, err := strconv.ParseFloat(resp.Balance, 64)
-	if err != nil {
-		return 0, fmt.Errorf("解析余额失败: %v", err)
-	}
-
-	logger.Info("查询余额成功",
-		"account_id", accountID,
-		"balance", balance,
-	)
-
+	balance, _ := strconv.ParseFloat(resp.Balance, 64)
 	return balance, nil
 }

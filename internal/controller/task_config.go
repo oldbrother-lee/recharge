@@ -43,7 +43,7 @@ func (c *TaskConfigController) Create(ctx *gin.Context) {
 
 	// 通知任务配置变更（批量创建时通知每个配置）
 	for _, config := range configPtrs {
-		if err := c.notifier.NotifyConfigCreate(config.ID); err != nil {
+		if err := c.notifier.NotifyConfigCreate(ctx.Request.Context(), config.ID); err != nil {
 			// 记录错误但不影响响应，因为配置已经创建成功
 			utils.Error(ctx, http.StatusInternalServerError, "配置创建成功但通知失败")
 			return
@@ -67,7 +67,7 @@ func (c *TaskConfigController) Update(ctx *gin.Context) {
 	}
 
 	// 通知任务配置变更
-	if err := c.notifier.NotifyConfigUpdate(*req.ID); err != nil {
+	if err := c.notifier.NotifyConfigUpdate(ctx.Request.Context(), *req.ID); err != nil {
 		// 记录错误但不影响响应，因为配置已经更新成功
 		utils.Error(ctx, http.StatusInternalServerError, "配置更新成功但通知失败")
 		return
@@ -97,7 +97,7 @@ func (c *TaskConfigController) Delete(ctx *gin.Context) {
 	}
 
 	// 通知任务配置变更
-	if err := c.notifier.NotifyConfigDelete(id); err != nil {
+	if err := c.notifier.NotifyConfigDelete(ctx.Request.Context(), id); err != nil {
 		// 记录错误但不影响响应，因为配置已经删除成功
 		utils.Error(ctx, http.StatusInternalServerError, "配置删除成功但通知失败")
 		return

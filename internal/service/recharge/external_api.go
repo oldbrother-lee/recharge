@@ -38,19 +38,16 @@ func (p *ExternalAPIPlatform) GetName() string {
 }
 
 // getAPIKeyAndSecret 获取API密钥和密钥
-func (p *ExternalAPIPlatform) getAPIKeyAndSecret(accountID int64) (string, string, string, string, error) {
-	account, err := p.platformRepo.GetAccountByID(context.Background(), accountID)
+func (p *ExternalAPIPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int64) (string, string, string, string, error) {
+	account, err := p.platformRepo.GetAccountByID(ctx, accountID)
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("获取平台账号信息失败: %v", err)
+		return "", "", "", "", fmt.Errorf("get platform account failed: %v", err)
 	}
-
-	// 获取平台配置中的ApiURL
-	platform, err := p.platformRepo.GetPlatformByID(account.PlatformID)
+	api, err := p.platformRepo.GetPlatformByCode(ctx, "external_api")
 	if err != nil {
-		return "", "", "", "", fmt.Errorf("获取平台信息失败: %v", err)
+		return "", "", "", "", fmt.Errorf("get platform api failed: %v", err)
 	}
-
-	return account.AccountName, account.AppKey, account.AppSecret, platform.ApiURL, nil
+	return account.AccountName, account.AppKey, account.AppSecret, api.URL, nil
 }
 
 // SubmitOrder 提交订单到外部API
@@ -58,7 +55,7 @@ func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Orde
 	logger.Info(fmt.Sprintf("【开始提交外部API订单】order_number: %s", order.OrderNumber))
 
 	// 获取API密钥和URL
-	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(api.AccountID)
+	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
 	if err != nil {
 		return fmt.Errorf("get api key and secret failed: %v", err)
 	}
@@ -116,17 +113,18 @@ func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Orde
 }
 
 // QueryOrderStatus 查询订单状态
-func (p *ExternalAPIPlatform) QueryOrderStatus(order *model.Order) (model.OrderStatus, error) {
+func (p *ExternalAPIPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
+	logger.Info("external_api 查询订单状态", "order_id", order.ID, "order_number", order.OrderNumber)
+
 	// 获取API密钥和URL
-	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(order.PlatformAccountID)
+	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, order.PlatformAccountID)
 	if err != nil {
 		return model.OrderStatusFailed, fmt.Errorf("get api key and secret failed: %v", err)
 	}
 
 	// 构建查询参数
 	params := map[string]interface{}{
-		"app_id": appID,
-		// "app_key":       appKey,
+		"app_id":       appID,
 		"timestamp":     time.Now().Unix(),
 		"nonce":         p.generateNonce(),
 		"out_trade_num": order.OrderNumber,
@@ -137,7 +135,7 @@ func (p *ExternalAPIPlatform) QueryOrderStatus(order *model.Order) (model.OrderS
 	params["sign"] = sign
 
 	// 发送查询请求
-	resp, err := p.sendQueryRequest(context.Background(), appKey, apiURL+"/external/order/query", params)
+	resp, err := p.sendQueryRequest(ctx, appKey, apiURL+"/external/order/query", params)
 	if err != nil {
 		return model.OrderStatusFailed, fmt.Errorf("query order status failed: %v", err)
 	}
@@ -214,7 +212,7 @@ func (p *ExternalAPIPlatform) ParseCallbackData(data []byte) (*model.CallbackDat
 // QueryBalance 查询账户余额
 func (p *ExternalAPIPlatform) QueryBalance(ctx context.Context, accountID int64) (float64, error) {
 	// 获取API密钥和URL
-	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(accountID)
+	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, accountID)
 	if err != nil {
 		return 0, fmt.Errorf("get api key and secret failed: %v", err)
 	}

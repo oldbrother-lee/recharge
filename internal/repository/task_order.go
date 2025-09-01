@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"recharge-go/internal/model"
 
 	"gorm.io/gorm"
@@ -30,6 +31,16 @@ func (r *TaskOrderRepository) Update(order *model.TaskOrder) error {
 func (r *TaskOrderRepository) GetByOrderNumber(orderNumber string) (*model.TaskOrder, error) {
 	var order model.TaskOrder
 	err := r.db.Where("order_number = ?", orderNumber).First(&order).Error
+	if err != nil {
+		return nil, err
+	}
+	return &order, nil
+}
+
+// GetByOrderNumberWithContext 根据订单号获取任务订单（支持上下文取消）
+func (r *TaskOrderRepository) GetByOrderNumberWithContext(ctx context.Context, orderNumber string) (*model.TaskOrder, error) {
+	var order model.TaskOrder
+	err := r.db.WithContext(ctx).Where("order_number = ?", orderNumber).First(&order).Error
 	if err != nil {
 		return nil, err
 	}

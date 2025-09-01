@@ -174,18 +174,19 @@ func (c *PlatformController) UpdatePlatformAccount(ctx *gin.Context) {
 
 // DeletePlatformAccount 删除平台账号
 func (c *PlatformController) DeletePlatformAccount(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+	idStr := ctx.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid account id")
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
 		return
 	}
 
-	if err := c.service.DeletePlatformAccount(id); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+	if err := c.service.DeletePlatformAccount(ctx.Request.Context(), id); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	utils.Success(ctx, nil)
+	ctx.JSON(http.StatusOK, gin.H{"message": "deleted"})
 }
 
 // GetPlatformAccount 获取平台账号详情
@@ -239,7 +240,7 @@ func (c *PlatformController) GetChannelList(ctx *gin.Context) {
 
 	}
 
-	channels, err := c.platformSvc.GetChannelList(appKey, name, apiURL)
+	channels, err := c.platformSvc.GetChannelList(ctx.Request.Context(), appKey, name, apiURL)
 	if err != nil {
 		utils.Error(ctx, http.StatusInternalServerError, err.Error())
 		return

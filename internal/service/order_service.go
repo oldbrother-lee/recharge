@@ -242,13 +242,84 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		"new_status", status,
 	)
 
-	// 如果状态没有变化，直接返回
+	// 如果状态没有变化，也需要触发通知逻辑（幂等）
 	if order.Status == status {
 		tx.Rollback()
-		logger.Info("订单状态未发生变化，无需更新",
+		logger.Info("订单状态未发生变化，触发幂等通知逻辑",
 			"order_id", id,
 			"status", status,
 		)
+
+		// 幂等性检查：是否已存在相同(order_id, type, target_status)的通知记录
+		existing, _, listErr := s.notificationRepo.List(ctx, map[string]interface{}{
+			"order_id":          id,
+			"notification_type": "order_status_changed",
+			"target_status":     int(status),
+		}, 1, 10)
+		if listErr == nil && len(existing) > 0 {
+			for _, n := range existing {
+				switch n.Status {
+				case 3: // 成功
+					logger.Info("已存在成功通知，跳过创建", "order_id", id, "notification_id", n.ID)
+					return nil
+				case 1, 2: // 待处理或处理中
+					logger.Info("已存在待处理/处理中通知，尝试重新推送到队列", "order_id", id, "notification_id", n.ID)
+					if pushErr := s.queue.Push(ctx, "notification_queue", n); pushErr != nil {
+						logger.Error("重新推送通知失败", "order_id", id, "notification_id", n.ID, "error", pushErr)
+					}
+					return nil
+				case 4: // 失败，重置后重推
+					logger.Info("存在失败通知，重置为待处理并重新推送", "order_id", id, "notification_id", n.ID)
+					if upErr := s.notificationRepo.UpdateStatus(ctx, n.ID, 1); upErr != nil {
+						logger.Error("重置通知状态失败", "order_id", id, "notification_id", n.ID, "error", upErr)
+					} else {
+						n.Status = 1
+						if pushErr := s.queue.Push(ctx, "notification_queue", n); pushErr != nil {
+							logger.Error("重新推送通知失败", "order_id", id, "notification_id", n.ID, "error", pushErr)
+						}
+					}
+					return nil
+				}
+			}
+		} else if listErr != nil {
+			logger.Warn("幂等检查查询通知记录失败，继续创建", "order_id", id, "error", listErr)
+		}
+
+		// 序列化订单快照
+		orderData, err := json.Marshal(order)
+		if err != nil {
+			logger.Error("序列化订单快照失败", "order_id", id, "error", err)
+			return nil // 订单状态已是目标状态，通知推送失败不影响主流程
+		}
+
+		// 创建通知记录（包含订单快照）
+		notification := &notificationModel.NotificationRecord{
+			OrderID:          id,
+			PlatformCode:     order.PlatformCode,
+			NotificationType: "order_status_changed",
+			Content:          fmt.Sprintf("订单状态已更新为: %d", status),
+			OrderSnapshot:    string(orderData), // 保存完整订单快照
+			TargetStatus:     int(status),       // 保存目标状态
+			Status:           1,                 // 待处理
+		}
+
+		// 保存通知记录到数据库（容错处理唯一键冲突）
+		if createErr := s.notificationRepo.Create(ctx, notification); createErr != nil {
+			if strings.Contains(createErr.Error(), "Duplicate entry") || strings.Contains(createErr.Error(), "UNIQUE constraint") {
+				logger.Warn("通知记录已存在（唯一键冲突），可能并发创建", "order_id", id, "target_status", status)
+				return nil
+			}
+			logger.Error("创建通知记录失败", "order_id", id, "error", createErr)
+			return nil // 订单状态已是目标状态，通知推送失败不影响主流程
+		}
+
+		// 推送通知到队列
+		logger.Info("准备推送通知到队列", "order_id", id, "new_status", status, "notification_id", notification.ID)
+		if pushErr := s.queue.Push(ctx, "notification_queue", notification); pushErr != nil {
+			logger.Error("推送通知到队列失败", "order_id", id, "notification_id", notification.ID, "error", pushErr)
+		} else {
+			logger.Info("推送通知到队列成功", "order_id", id, "notification_id", notification.ID, "status", status)
+		}
 		return nil
 	}
 

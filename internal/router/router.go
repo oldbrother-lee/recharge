@@ -61,6 +61,9 @@ func SetupRouter(
 		// 可客帮订单接口 - 不需要认证
 		RegisterKekebangOrderRoutes(api)
 
+		// 闲赢客订单接口 - 不需要认证
+		RegisterXianyinkeOrderRoutes(api)
+
 		// 代充订单接口 - 不需要认证
 		RegisterDaichongOrderRoutes(api)
 

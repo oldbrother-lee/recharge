@@ -50,6 +50,14 @@ func (s *PushStatusService) GetPushStatus(account *model.PlatformAccount) (int, 
 		}
 		sign = signature.GenerateKekebangSign(params, account.AppSecret)
 		url = fmt.Sprintf("%s/openapi/suppler/v1/get-supply-switch-status", account.Platform.ApiURL)
+	case "xianyinke":
+		params = map[string]interface{}{
+			"app_key":   account.AppKey,
+			"timestamp": time.Now().Unix(),
+		}
+		sign = signature.GenerateXianyinkeSign(params, account.AppSecret)
+		// 临时URL：参考蜜蜂，后续以实际为准
+		url = fmt.Sprintf("%s/userapi/sgd/getSupplyGoodManageSwitch", account.Platform.ApiURL)
 	default:
 		return 0, fmt.Errorf("unsupported platform type: %s", account.Platform.Code)
 	}
@@ -128,6 +136,15 @@ func (s *PushStatusService) UpdatePushStatus(account *model.PlatformAccount, sta
 		logger.Info(fmt.Sprintf("kekebang Notify appSecret: %s", account.AppSecret))
 		sign = signature.GenerateKekebangNotifySign(params, account.AppSecret)
 		url = fmt.Sprintf("%s/openapi/suppler/v1/edit-supply-switch-status", account.Platform.ApiURL)
+	case "xianyinke":
+		params = map[string]interface{}{
+			"app_key":   account.AppKey,
+			"data":      string(dataStr),
+			"timestamp": time.Now().Unix(),
+		}
+		sign = signature.GenerateXianyinkeSign(params, account.AppSecret)
+		// 临时URL：参考蜜蜂，后续以实际为准
+		url = fmt.Sprintf("%s/userapi/sgd/editSupplyGoodManageSwitch", account.Platform.ApiURL)
 	default:
 		return fmt.Errorf("unsupported platform type: %s", account.Platform.Code)
 	}

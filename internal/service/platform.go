@@ -204,6 +204,8 @@ func (s *PlatformService) SendNotification(ctx context.Context, order *model.Ord
 	case "external_api":
 		// 外部API通知处理
 		return s.sendExternalAPINotification(ctx, order)
+	case "xianyinke":
+		params = s.buildXianyinkeParams(order, account)
 	default:
 		return fmt.Errorf("不支持的平台: %s", platform.Code)
 	}
@@ -240,6 +242,8 @@ func (s *PlatformService) SendNotification(ctx context.Context, order *model.Ord
 		url = platform.ApiURL + "/openapi/suppler/v1/report-user"
 	case "xianzhuanxia":
 		url = platform.ApiURL + "/api/task/recharge/reported"
+	case "xianyinke":
+		url = platform.ApiURL + "/api/v1/helpOrder/report"
 	default:
 		return fmt.Errorf("不支持的平台: %s", platform.Code)
 	}
@@ -342,6 +346,19 @@ func (s *PlatformService) GetPlatformAccountByAccountName(accountName string) (*
 	return s.platformRepo.GetPlatformAccountByAccountName(accountName)
 }
 
+func (s *PlatformService) buildXianyinkeParams(order *model.Order, account *model.PlatformAccount) map[string]interface{} {
+    params := map[string]interface{}{
+        "app_key":        account.AppKey,
+        "id":             order.OutTradeNum,
+        "status":         s.getXianyinkeStatus(order.Status),
+        "error_msg":      s.getXianyinkeErrorMsg(order),
+        "voucher_text":   "",
+        "voucher_base64": "",
+        "timestamp":      time.Now().Format("2006-01-02 15:04:05"),
+    }
+    return params
+}
+
 func (s *PlatformService) buildKekebangParams(order *model.Order, account *model.PlatformAccount) map[string]interface{} {
 	data := map[string]interface{}{
 		"user_order_id": order.OutTradeNum,
@@ -421,6 +438,35 @@ func (s *PlatformService) getKekebangStatus(orderStatus model.OrderStatus) int {
 	}
 }
 
+func (s *PlatformService) getXianyinkeStatus(orderStatus model.OrderStatus) int {
+	switch orderStatus {
+	case model.OrderStatusSuccess:
+		return 5 // 闲赢客成功状态码
+	case model.OrderStatusFailed:
+		return 4 // 闲赢客失败状态码
+	case model.OrderStatusProcessing:
+		return 2 // 闲赢客处理中
+	default:
+		return 0
+	}
+}
+
+// 新增：闲赢客 error_msg 生成逻辑
+func (s *PlatformService) getXianyinkeErrorMsg(order *model.Order) string {
+    switch order.Status {
+    case model.OrderStatusFailed:
+        if order.Remark != "" {
+            return order.Remark
+        }
+        return "充值失败"
+    case model.OrderStatusSuccess:
+        return "充值成功"
+    case model.OrderStatusProcessing:
+        return ""
+    default:
+        return ""
+    }
+}
 func (s *PlatformService) getStatusText(orderStatus model.OrderStatus) string {
 	// 根据订单状态返回对应的文本信息
 	switch orderStatus {
@@ -441,6 +487,8 @@ func (s *PlatformService) generateSign(platformCode string, params map[string]in
 		return signature.GenerateSign(params, account.AppSecret)
 	case "kekebang":
 		return signature.GenerateKekebangNotifySign(params, account.AppSecret)
+	case "xianyinke":
+		return signature.GenerateXianyinkeSign(params, account.AppSecret)
 	default:
 		return ""
 	}

@@ -15,6 +15,7 @@ import (
 	"recharge-go/pkg/signature"
 	"strconv"
 	"time"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -85,8 +86,15 @@ func (p *MishiPlatform) SubmitOrder(ctx context.Context, order *model.Order, api
 		"order_number", order.OrderNumber,
 		"mobile", order.Mobile,
 	)
-	fmt.Printf("[mishi] api: %+v\n", api)
-	fmt.Printf("[mishi] 提交秘史订单apiParam: %+v\n", apiParam)
+	// 原先打印完整结构的调试输出改为结构化且不暴露敏感信息
+	logger.Info("[mishi] 提交参数上下文",
+		"api_code", api.Code,
+		"api_id", api.ID,
+		"platform_id", api.PlatformID,
+		"account_id", api.AccountID,
+		"param_id", apiParam.ID,
+		"product_id", apiParam.ProductID,
+	)
 	// 获取API密钥和密钥
 	_, appSecret, accountName, err := p.getAPIKeyAndSecret(api.AccountID)
 	if err != nil {
@@ -106,25 +114,35 @@ func (p *MishiPlatform) SubmitOrder(ctx context.Context, order *model.Order, api
 	params.Add("szProductId", apiParam.ProductID)
 	params.Add("szTimeStamp", szTimeStamp)
 
-	// 生成签名
+	// 生成签名（日志中避免泄露密钥）
 	signStr := fmt.Sprintf("szAgentId=%s&szOrderId=%s&szPhoneNum=%s&nMoney=%s&nSortType=%s&nProductClass=%s&nProductType=%s&szTimeStamp=%s&szKey=%s",
 		accountName, order.OrderNumber, order.Mobile, strconv.FormatInt(int64(order.Denom), 10),
 		convertOperatorCode(strconv.Itoa(order.ISP)), "1", "1", szTimeStamp, appSecret)
-
-	logger.Info("meishi 生成签名前: ", "signStr", signStr)
+	redacted := strings.ReplaceAll(signStr, appSecret, "****")
+	logger.Info("meishi 生成签名前",
+		"sign_preview", redacted,
+		"contains_secret", true,
+	)
 	sign := signature.GetMD5(signStr)
 	params.Add("szVerifyString", sign)
 
 	// 添加回调地址
 	params.Add("szNotifyUrl", api.CallbackURL)
 
-	logger.Info("meishi 发送请求: ", "params", params)
+	// 发送请求前日志（不打印敏感参数值）
+	logger.Info("meishi 发送请求",
+		"url", api.URL+"/api/submitorder",
+		"param_keys", func() []string { keys := make([]string, 0, len(params)); for k := range params { if k != "szVerifyString" && k != "szPhoneNum" { keys = append(keys, k) } }; return keys }(),
+	)
 	// 发送请求
 	respStr, err := p.sendRequest(ctx, api.URL+"/api/submitorder", params)
 	if err != nil {
 		return fmt.Errorf("发送请求失败: %v", err)
 	}
-	logger.Info("meishi 发送请求成功返回的参数: ", "respStr", respStr)
+	logger.Info("meishi 收到响应",
+		"url", api.URL+"/api/submitorder",
+		"resp_preview", func(s string) string { if len(s) > 300 { return s[:300] + "..." }; return s }(respStr),
+	)
 	// 解析响应
 	var result MishiOrderResponseSubmit
 	if err := json.Unmarshal([]byte(respStr), &result); err != nil {
@@ -133,7 +151,7 @@ func (p *MishiPlatform) SubmitOrder(ctx context.Context, order *model.Order, api
 
 	// 处理响应
 	if result.NRtn != 0 {
-		logger.Error("meishi 提交订单失败: NRtn %d szRtnCode：%s", result.NRtn, result.SzRtnCode)
+		logger.Error("meishi 提交订单失败", "NRtn", result.NRtn, "szRtnCode", result.SzRtnCode)
 		return fmt.Errorf("提交订单失败: %s", result.SzRtnCode)
 	}
 
@@ -310,6 +328,8 @@ func (p *MishiPlatform) sendRequest(ctx context.Context, url string, params url.
 	if err != nil {
 		return "", fmt.Errorf("读取响应失败: %v", err)
 	}
+	preview := func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." }; return string(b) }(body)
+	logger.Info("mishi 响应", "url", url, "status_code", resp.StatusCode, "body_preview", preview)
 	return string(body), nil
 
 }

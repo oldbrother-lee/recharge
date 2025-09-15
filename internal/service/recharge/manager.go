@@ -31,7 +31,6 @@ func NewManager(db *gorm.DB) *Manager {
 			"kekebang":     reflect.TypeOf((*KekebangPlatform)(nil)).Elem(),
 			"xianzhuanxia": reflect.TypeOf((*XianzhuanxiaPlatform)(nil)).Elem(),
 			"mishi":        reflect.TypeOf((*MishiPlatform)(nil)).Elem(),
-			"external_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 			"internal_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 			"chongzhi":     reflect.TypeOf((*ChongzhiPlatform)(nil)).Elem(),
 			"payc2":        reflect.TypeOf((*Payc2Platform)(nil)).Elem(),
@@ -79,8 +78,6 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewMishiPlatform(m.platformRepo.GetDB())
 	case "dayuanren":
 		platform = NewDayuanrenPlatform(m.platformRepo.GetDB())
-	case "external_api":
-		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
 	case "internal_api":
 		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
 	case "chongzhi":

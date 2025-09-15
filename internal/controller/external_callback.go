@@ -88,7 +88,7 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 
 	// 初始化日志
 	logData = model.ExternalOrderLog{
-		Platform:  "external_api",
+		Platform:  "internal_api",
 		OrderID:   req.OutTradeNum,
 		BizType:   "callback",
 		Status:    0, // 默认失败
@@ -264,15 +264,29 @@ func (c *ExternalCallbackController) handleFailedOrderWithRetry(ctx context.Cont
 
 	for _, relation := range relations {
 		alreadyUsed := false
-		for _, usedAPI := range usedAPIs {
-			if apiID, ok := usedAPI["api_id"].(float64); ok && int64(apiID) == relation.APIID {
-				alreadyUsed = true
-				logger.Info("API已被使用",
-					"order_id", order.ID,
-					"api_id", relation.APIID)
-				break
+
+		// 兜底保护：排除当前订单正在使用的通道（无论 UsedAPIs 是否已写入）
+		if relation.APIID == order.APICurID || relation.APIID == order.APIID {
+			alreadyUsed = true
+			logger.Info("当前订单正在使用的API，默认排除",
+				"order_id", order.ID,
+				"api_id", relation.APIID,
+				"api_cur_id", order.APICurID,
+				"api_id_field", order.APIID)
+		}
+
+		if !alreadyUsed {
+			for _, usedAPI := range usedAPIs {
+				if apiID, ok := usedAPI["api_id"].(float64); ok && int64(apiID) == relation.APIID {
+					alreadyUsed = true
+					logger.Info("API已被使用",
+						"order_id", order.ID,
+						"api_id", relation.APIID)
+					break
+				}
 			}
 		}
+
 		if !alreadyUsed {
 			logger.Info("发现可用API",
 				"order_id", order.ID,

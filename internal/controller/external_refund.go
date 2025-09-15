@@ -48,7 +48,7 @@ func (c *ExternalRefundController) ProcessRefund(ctx *gin.Context) {
 
 	// 创建日志记录
 	logData := &model.ExternalOrderLog{
-		Platform:  "external_api",
+		Platform:  "internal_api",
 		RawData:   "", // 暂时为空
 		CreatedAt: startTime,
 	}

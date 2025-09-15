@@ -12,6 +12,7 @@ import (
 	"recharge-go/pkg/logger"
 	"recharge-go/pkg/signature"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -174,13 +175,73 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 		nFlag,
 		account.AppSecret,
 	)
-	fmt.Println(signStr)
-	// if signature.GetMD5(signStr) != params["szVerifyString"] {
-	// 	logger.Error("返回：401 签名校验失败")
-	// 	utils.ErrorWithStatus(ctx, 401, 401, "签名校验失败")
-	// 	return
-	// }
+	// 追加：按“原始字符串”拼接一版签名串（不做数值转型），用于对比上游是否以原值拼接
+	signStrRaw := fmt.Sprintf(
+		"szAgentId=%s&szOrderId=%s&szPhoneNum=%s&nDemo=%s&fSalePrice=%s&nFlag=%s&szKey=%s",
+		params["szAgentId"],
+		params["szOrderId"],
+		params["szPhoneNum"],
+		params["nDemo"],
+		params["fSalePrice"],
+		params["nFlag"],
+		account.AppSecret,
+	)
 
+	// 计算两种串的MD5（小写）与对方回调的签名（小写），仅记录对比，不拦截
+	calcSignNormalized := signature.GetMD5(signStr)
+	calcSignRaw := signature.GetMD5(signStrRaw)
+	receivedSign := strings.ToLower(params["szVerifyString"])
+
+	// 对签名串进行脱敏（隐藏密钥）
+	maskedSignStr := strings.ReplaceAll(signStr, account.AppSecret, "******")
+	maskedSignStrRaw := strings.ReplaceAll(signStrRaw, account.AppSecret, "******")
+
+	// 灰度策略：启用“原样拼接”作为当前生效的签名计算方式，但不拦截验签失败
+	// 对签名串进行脱敏（隐藏密钥）
+	// maskedSignStr := strings.ReplaceAll(signStr, account.AppSecret, "******")
+	// maskedSignStrRaw := strings.ReplaceAll(signStrRaw, account.AppSecret, "******")
+
+	signMode := "strict_raw"
+	activeSignStrMasked := maskedSignStrRaw
+	activeSignMD5 := calcSignRaw
+	equalWithActive := activeSignMD5 == receivedSign
+
+	// 构造安全参数日志（脱敏手机号）
+	safeParams := map[string]string{}
+	for k, v := range params {
+		if k == "szPhoneNum" && len(v) >= 7 {
+			safeParams[k] = v[:3] + "****" + v[len(v)-4:]
+		} else {
+			safeParams[k] = v
+		}
+	}
+
+	logger.Info("【mishi 回调签名调试】",
+		"userid", userIDStr,
+		"content_type", ctx.GetHeader("Content-Type"),
+		"user_agent", ctx.GetHeader("User-Agent"),
+		"sign_mode", signMode,
+		"received_params", safeParams,
+		"received_sign", receivedSign,
+		"active_sign_str_masked", activeSignStrMasked,
+		"active_sign_md5", activeSignMD5,
+		"equal_with_active", equalWithActive,
+		"our_sign_str_normalized_masked", maskedSignStr,
+		"our_sign_md5_normalized", calcSignNormalized,
+		"our_sign_str_raw_masked", maskedSignStrRaw,
+		"our_sign_md5_raw", calcSignRaw,
+		"equal_with_normalized", calcSignNormalized == receivedSign,
+		"equal_with_raw", calcSignRaw == receivedSign,
+	)
+
+	// 严格模式：若按原样拼接校验不通过，则直接返回 401
+	if !equalWithActive {
+		logger.Error("mishi 回调签名校验失败", "userid", userIDStr, "received_sign", receivedSign, "expected_sign", activeSignMD5)
+		utils.ErrorWithStatus(ctx, 401, 401, "签名校验失败")
+		return
+	}
+
+	fmt.Println(signStr)
 	// 业务处理交给 service
 	if err := c.rechargeService.HandleCallback(ctx, "mishi", body); err != nil {
 		logger.Error("返回：500 处理回调失败", zap.Error(err))

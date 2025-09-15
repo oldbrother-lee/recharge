@@ -34,37 +34,44 @@ func NewExternalAPIPlatform(db *gorm.DB) *ExternalAPIPlatform {
 
 // GetName 获取平台名称
 func (p *ExternalAPIPlatform) GetName() string {
-	return "external_api"
+	return "internal_api"
 }
 
 // getAPIKeyAndSecret 获取API密钥和密钥
 func (p *ExternalAPIPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int64) (string, string, string, string, error) {
+	logger.Info("【获取外部API账号与平台信息】", "account_id", accountID)
 	account, err := p.platformRepo.GetAccountByID(ctx, accountID)
 	if err != nil {
+		logger.Error("【获取平台账号失败】", "account_id", accountID, "error", err)
 		return "", "", "", "", fmt.Errorf("get platform account failed: %v", err)
 	}
-	api, err := p.platformRepo.GetPlatformByCode(ctx, "external_api")
-	if err != nil {
-		return "", "", "", "", fmt.Errorf("get platform api failed: %v", err)
-	}
-	return account.AccountName, account.AppKey, account.AppSecret, api.URL, nil
+	// 不再在此处查询平台记录，URL 由调用方根据 api/url 字段传入或回退
+	return account.AccountName, account.AppKey, account.AppSecret, "", nil
 }
 
 // SubmitOrder 提交订单到外部API
 func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-	logger.Info(fmt.Sprintf("【开始提交外部API订单】order_number: %s", order.OrderNumber))
+	logger.Info("【开始提交外部API订单】", "order_id", order.ID, "order_number", order.OrderNumber, "api_id", api.ID, "api_account_id", api.AccountID, "platform_id", api.PlatformID, "api_code", api.Code, "param_id", apiParam.ID)
 
 	// 获取API密钥和URL
 	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
 	if err != nil {
 		return fmt.Errorf("get api key and secret failed: %v", err)
 	}
+	// 若未取到 URL，回退为 api.URL
+	apiBaseURL := apiURL
+	if apiBaseURL == "" {
+		apiBaseURL = api.URL
+	}
 
 	// 确定回调地址：优先使用apiParam中的CallbackURL，如果为空则使用api中的CallbackURL
 	callbackURL := apiParam.CallbackURL
+	callbackFrom := "api_param"
 	if callbackURL == "" {
 		callbackURL = api.CallbackURL
+		callbackFrom = "api"
 	}
+	logger.Info("【选择回调地址】", "order_id", order.ID, "callback_url", callbackURL, "from", callbackFrom)
 
 	// 构建请求参数
 	params := map[string]interface{}{
@@ -94,32 +101,38 @@ func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Orde
 	sign := p.generateSign(params, appSecret)
 	params["sign"] = sign
 
+	logger.Info("【准备发送外部API请求】", "url", apiBaseURL+"/external/order", "order_number", order.OrderNumber, "param_keys", func() []string { keys := make([]string, 0, len(params)); for k := range params { if k != "sign" { keys = append(keys, k) } }; return keys }())
+
 	// 发送请求到外部API
-	resp, err := p.sendRequest(ctx, appKey, apiURL+"/external/order", params)
+	resp, err := p.sendRequest(ctx, appKey, apiBaseURL+"/external/order", params)
 	if err != nil {
-		logger.Error(fmt.Sprintf("【提交到外部系统订单失败】url:%s order_id: %s, error: %v", apiURL+"/external/order", order.OrderNumber, err))
+		logger.Error("【提交到外部系统订单失败】", "url", apiBaseURL+"/external/order", "order_number", order.OrderNumber, "error", err)
 		return fmt.Errorf("submit order failed: %v", err)
 	}
 
 	// 检查响应
 	if resp.Code != 200 {
-		logger.Error(fmt.Sprintf("【提交订单失败】order_id: %s, code: %d, message: %s",
-			order.OrderNumber, resp.Code, resp.Message))
+		logger.Error("【提交订单失败】", "order_number", order.OrderNumber, "code", resp.Code, "message", resp.Message)
 		return fmt.Errorf("submit order failed: %s", resp.Message)
 	}
 
-	logger.Info(fmt.Sprintf("【外部API提交订单成功】order_id: %s", order.OrderNumber))
+	logger.Info("【外部API提交订单成功】", "order_number", order.OrderNumber)
 	return nil
 }
 
 // QueryOrderStatus 查询订单状态
 func (p *ExternalAPIPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-	logger.Info("external_api 查询订单状态", "order_id", order.ID, "order_number", order.OrderNumber)
+	logger.Info("internal_api 查询订单状态", "order_id", order.ID, "order_number", order.OrderNumber)
 
 	// 获取API密钥和URL
 	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, order.PlatformAccountID)
 	if err != nil {
 		return model.OrderStatusFailed, fmt.Errorf("get api key and secret failed: %v", err)
+	}
+	// 若未取到 URL，回退为订单记录中的 PlatformURL
+	apiBaseURL := apiURL
+	if apiBaseURL == "" {
+		apiBaseURL = order.PlatformURL
 	}
 
 	// 构建查询参数
@@ -135,7 +148,7 @@ func (p *ExternalAPIPlatform) QueryOrderStatus(ctx context.Context, order *model
 	params["sign"] = sign
 
 	// 发送查询请求
-	resp, err := p.sendQueryRequest(ctx, appKey, apiURL+"/external/order/query", params)
+	resp, err := p.sendQueryRequest(ctx, appKey, apiBaseURL+"/external/order/query", params)
 	if err != nil {
 		return model.OrderStatusFailed, fmt.Errorf("query order status failed: %v", err)
 	}
@@ -205,7 +218,7 @@ func (p *ExternalAPIPlatform) ParseCallbackData(data []byte) (*model.CallbackDat
 		CallbackType:  "order_status",
 		Sign:          callbackData.Sign,
 		Timestamp:     timestampStr,
-		TransactionID: "external_api_" + orderID,
+		TransactionID: "internal_api_" + orderID,
 	}, nil
 }
 
@@ -295,8 +308,7 @@ type APIResponse struct {
 
 // sendRequest 发送HTTP请求
 func (p *ExternalAPIPlatform) sendRequest(ctx context.Context, app_key, url string, params map[string]interface{}) (*APIResponse, error) {
-	// 序列化请求参数
-	fmt.Printf("发送请求%+v\n", params)
+	// 序列化请求参数（不打印敏感字段）
 	jsonData, err := json.Marshal(params)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request params failed: %v", err)
@@ -336,14 +348,17 @@ func (p *ExternalAPIPlatform) sendRequest(ctx context.Context, app_key, url stri
 		return nil, fmt.Errorf("read response failed: %v", err)
 	}
 
-	// 调试输出响应内容
-	fmt.Printf("响应状态码: %d\n", resp.StatusCode)
-	fmt.Printf("响应内容: %s\n", string(body))
+	// 调试输出响应内容（截断避免过长）
+	bodyStr := string(body)
+	if len(bodyStr) > 1000 {
+		bodyStr = bodyStr[:1000] + "..."
+	}
+	logger.Info("【外部API响应】", "url", url, "status_code", resp.StatusCode, "body_preview", bodyStr)
 
 	// 解析响应
 	var apiResp APIResponse
 	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("unmarshal response failed: %v, response body: %s", err, string(body))
+		return nil, fmt.Errorf("unmarshal response failed: %v, response body: %s", err, bodyStr)
 	}
 
 	return &apiResp, nil

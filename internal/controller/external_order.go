@@ -97,7 +97,7 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 
 	// 初始化日志
 	logData = model.ExternalOrderLog{
-		Platform:  "external_api",
+		Platform:  "internal_api",
 		BizType:   "create_order",
 		Status:    0, // 默认失败
 		Timestamp: time.Now().Unix(),
@@ -294,7 +294,7 @@ func (c *ExternalOrderController) GetOrder(ctx *gin.Context) {
 
 	// 初始化日志
 	logData = model.ExternalOrderLog{
-		Platform:  "external_api",
+		Platform:  "internal_api",
 		BizType:   "query_order",
 		Status:    0, // 默认失败
 		Timestamp: time.Now().Unix(),

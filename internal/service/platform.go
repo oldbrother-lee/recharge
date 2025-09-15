@@ -201,7 +201,7 @@ func (s *PlatformService) SendNotification(ctx context.Context, order *model.Ord
 			return fmt.Errorf("上报订单结果失败: %w", err)
 		}
 		return nil
-	case "external_api":
+	case "internal_api":
 		// 外部API通知处理
 		return s.sendExternalAPINotification(ctx, order)
 	case "xianyinke":

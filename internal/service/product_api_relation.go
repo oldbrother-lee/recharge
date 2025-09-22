@@ -27,13 +27,15 @@ func NewProductAPIRelationService(repo repository.ProductAPIRelationRepository) 
 // Create 创建商品接口关联
 func (s *productAPIRelationService) Create(ctx context.Context, req *model.ProductAPIRelationCreateRequest) error {
 	relation := &model.ProductAPIRelation{
-		ProductID: req.ProductID,
-		APIID:     req.APIID,
-		ParamID:   req.ParamID,
-		Sort:      req.Sort,
-		Status:    req.Status,
-		RetryNum:  req.RetryNum,
-		ISP:       req.Isp,
+		ProductID:               req.ProductID,
+		APIID:                   req.APIID,
+		ParamID:                 req.ParamID,
+		Sort:                    req.Sort,
+		Status:                  req.Status,
+		RetryNum:                req.RetryNum,
+		ISP:                     req.Isp,
+		SameChannelRetryEnabled: req.SameChannelRetryEnabled,
+		SameChannelRetryTimes:   req.SameChannelRetryTimes,
 	}
 	return s.repo.Create(ctx, relation)
 }
@@ -41,14 +43,16 @@ func (s *productAPIRelationService) Create(ctx context.Context, req *model.Produ
 // Update 更新商品接口关联
 func (s *productAPIRelationService) Update(ctx context.Context, req *model.ProductAPIRelationUpdateRequest) error {
 	relation := &model.ProductAPIRelation{
-		ID:        req.ID,
-		ProductID: req.ProductID,
-		APIID:     req.APIID,
-		ParamID:   req.ParamID,
-		Sort:      req.Sort,
-		Status:    req.Status,
-		RetryNum:  req.RetryNum,
-		ISP:       req.Isp,
+		ID:                      req.ID,
+		ProductID:               req.ProductID,
+		APIID:                   req.APIID,
+		ParamID:                 req.ParamID,
+		Sort:                    req.Sort,
+		Status:                  req.Status,
+		RetryNum:                req.RetryNum,
+		ISP:                     req.Isp,
+		SameChannelRetryEnabled: req.SameChannelRetryEnabled,
+		SameChannelRetryTimes:   req.SameChannelRetryTimes,
 	}
 	return s.repo.Update(ctx, relation)
 }

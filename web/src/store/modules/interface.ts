@@ -5,12 +5,21 @@ import type { PaginationParams } from '@/api/interface'
 
 export interface Interface {
   id: number
-  name: string
+  name?: string
   status: number
-  type: number
-  created_at: string
-  updated_at: string
-  isp?: string
+  type?: number
+  created_at?: string
+  updated_at?: string
+  // product_api_relations 扩展字段
+  product_name?: string
+  api_name?: string
+  api_id?: number
+  param_id?: number
+  sort?: number
+  retry_num?: number
+  isp?: string | number[]
+  same_channel_retry_enabled?: boolean | number | string
+  same_channel_retry_times?: number | string
 }
 
 export const useInterfaceStore = defineStore('interface', () => {
@@ -58,4 +67,4 @@ export const useInterfaceStore = defineStore('interface', () => {
     getAllInterfaces,
     updateProductInterfaces
   }
-}) 
+})

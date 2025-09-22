@@ -56,21 +56,20 @@ func (h *KekebangHandler) GenerateSignature(ctx context.Context, params map[stri
 
 // BuildRequestParams 构建客客帮请求参数
 func (h *KekebangHandler) BuildRequestParams(ctx context.Context, order *model.Order, api *model.PlatformAPI) (map[string]interface{}, error) {
+	// 优先使用 OutTradeNum 作为上游商户订单号；若为空则回退到 OrderNumber
+	orderID := order.OutTradeNum
+	if orderID == "" {
+		orderID = order.OrderNumber
+	}
+
 	params := map[string]interface{}{
 		"appid":      h.config.AppID,
 		"timestamp":  time.Now().Unix(),
-		"order_id":   order.OrderNumber,
+		"order_id":   orderID,
 		"mobile":     order.Mobile,
 		"amount":     order.TotalPrice,
 		"product_id": order.ProductID,
 	}
-
-	// 添加其他必要参数
-	// if api != nil && api.ExtraParams != nil {
-	// 	for k, v := range api.ExtraParams {
-	// 		params[k] = v
-	// 	}
-	// }
 
 	// 生成签名
 	sign, err := h.GenerateSignature(ctx, params)

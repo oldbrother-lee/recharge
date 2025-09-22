@@ -88,6 +88,8 @@ type OrderRepository interface {
 	UpdateHasException(ctx context.Context, orderID int64, hasException bool) error
 	// FindDuplicateOrder 查找重复订单
 	FindDuplicateOrder(ctx context.Context, mobile string, denom float64, isp int, productID int64, statuses []model.OrderStatus) (*model.Order, error)
+	// UpdateOutTradeNum 更新订单的外部交易号（同通道重试时使用）
+	UpdateOutTradeNum(ctx context.Context, orderID int64, outTradeNum string) error
 }
 
 // OrderRepositoryImpl 订单仓库实现
@@ -208,10 +210,29 @@ func (r *OrderRepositoryImpl) Delete(ctx context.Context, id int64) error {
 // GetOrderByOutTradeNum 根据外部交易号获取订单
 func (r *OrderRepositoryImpl) GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error) {
 	var order model.Order
-	if err := r.db.Where("out_trade_num = ? AND is_del = 0", outTradeNum).First(&order).Error; err != nil {
+	// 1) 优先使用 order_number 匹配
+	if err := r.db.WithContext(ctx).Where("order_number = ? AND is_del = 0", outTradeNum).First(&order).Error; err == nil {
+		return &order, nil
+	} else if err != gorm.ErrRecordNotFound {
 		return nil, err
 	}
-	return &order, nil
+
+	// 2) 通过 active_out_trade_num 映射回订单（同通道重试换单号场景）
+	var retryRec model.OrderRetryRecord
+	if err := r.db.WithContext(ctx).Where("active_out_trade_num = ?", outTradeNum).Order("id DESC").First(&retryRec).Error; err == nil {
+		return r.GetByID(ctx, retryRec.OrderID)
+	} else if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+
+	// 3) 最后使用 out_trade_num 匹配
+	if err := r.db.WithContext(ctx).Where("out_trade_num = ? AND is_del = 0", outTradeNum).First(&order).Error; err == nil {
+		return &order, nil
+	} else if err != gorm.ErrRecordNotFound {
+		return nil, err
+	}
+
+	return nil, gorm.ErrRecordNotFound
 }
 
 // GetOrders 获取订单列表
@@ -649,8 +670,8 @@ func (r *OrderRepositoryImpl) CountByStatuses(ctx context.Context, statuses []mo
 // CountProcessingOrders 统计处理中的订单数量（充值中和处理中状态）
 func (r *OrderRepositoryImpl) CountProcessingOrders(ctx context.Context) (int64, error) {
 	processingStatuses := []model.OrderStatus{
-		model.OrderStatusRecharging,  // 充值中 (3)
-		model.OrderStatusProcessing,  // 处理中 (10)
+		model.OrderStatusRecharging, // 充值中 (3)
+		model.OrderStatusProcessing, // 处理中 (10)
 	}
 	return r.CountByStatuses(ctx, processingStatuses)
 }
@@ -663,10 +684,18 @@ func (r *OrderRepositoryImpl) UpdateHasException(ctx context.Context, orderID in
 // FindDuplicateOrder 查找重复订单
 func (r *OrderRepositoryImpl) FindDuplicateOrder(ctx context.Context, mobile string, denom float64, isp int, productID int64, statuses []model.OrderStatus) (*model.Order, error) {
 	var order model.Order
-	err := r.db.Where("mobile = ? AND denom = ? AND isp = ? AND product_id = ? AND status IN ? AND is_del = 0", 
+	err := r.db.Where("mobile = ? AND denom = ? AND isp = ? AND product_id = ? AND status IN ? AND is_del = 0",
 		mobile, denom, isp, productID, statuses).First(&order).Error
 	if err != nil {
 		return nil, err
 	}
 	return &order, nil
+}
+
+// UpdateOutTradeNum 更新订单的外部交易号（同通道重试使用）
+func (r *OrderRepositoryImpl) UpdateOutTradeNum(ctx context.Context, orderID int64, outTradeNum string) error {
+	return r.db.WithContext(ctx).
+		Model(&model.Order{}).
+		Where("id = ?", orderID).
+		Update("out_trade_num", outTradeNum).Error
 }

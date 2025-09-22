@@ -13,6 +13,7 @@ type RetryRepository interface {
 	GetByID(ctx context.Context, id int64) (*model.OrderRetryRecord, error)
 	GetPendingRetries(ctx context.Context) ([]*model.OrderRetryRecord, error)
 	GetByOrderID(ctx context.Context, orderID int64) ([]*model.OrderRetryRecord, error)
+	GetByActiveOutTradeNum(ctx context.Context, activeOutTradeNum string) (*model.OrderRetryRecord, error)
 }
 
 type retryRepository struct {
@@ -55,4 +56,15 @@ func (r *retryRepository) GetByOrderID(ctx context.Context, orderID int64) ([]*m
 		Where("order_id = ?", orderID).
 		Find(&records).Error
 	return records, err
+}
+
+func (r *retryRepository) GetByActiveOutTradeNum(ctx context.Context, activeOutTradeNum string) (*model.OrderRetryRecord, error) {
+	var record model.OrderRetryRecord
+	err := r.db.WithContext(ctx).
+		Where("active_out_trade_num = ?", activeOutTradeNum).
+		First(&record).Error
+	if err != nil {
+		return nil, err
+	}
+	return &record, nil
 }

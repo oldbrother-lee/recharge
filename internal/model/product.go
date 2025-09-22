@@ -89,18 +89,20 @@ type ProductGradePrice struct {
 
 // ProductAPIRelation 商品API关联
 type ProductAPIRelation struct {
-	ID          int64     `json:"id" gorm:"primaryKey;type:bigint"`
-	ProductID   int64     `json:"product_id" gorm:"type:bigint;not null;comment:商品ID"`
-	APIID       int64     `json:"api_id" gorm:"type:bigint;not null;comment:API接口ID"`
-	ParamID     int64     `json:"param_id" gorm:"type:bigint;not null;comment:API参数ID"`
-	Sort        int       `json:"sort" gorm:"type:bigint;default:0;comment:排序"`
-	Status      int       `json:"status" gorm:"type:bigint;default:1;comment:状态：1-启用，0-禁用"`
-	RetryNum    int       `json:"retry_num" gorm:"type:bigint;default:0;comment:重试次数"`
-	ISP         string    `json:"isp" gorm:"size:50;default:1,2,3;comment:支持运营商:1移动 2电信 3联通"`
-	ProductName string    `json:"product_name"`
-	APIName     string    `json:"api_name"`
-	CreatedAt   time.Time `json:"created_at" gorm:"type:datetime;autoCreateTime"`
-	UpdatedAt   time.Time `json:"updated_at" gorm:"type:datetime;autoUpdateTime"`
+	ID                        int64     `json:"id" gorm:"primaryKey;type:bigint"`
+	ProductID                 int64     `json:"product_id" gorm:"type:bigint;not null;comment:商品ID"`
+	APIID                     int64     `json:"api_id" gorm:"type:bigint;not null;comment:API接口ID"`
+	ParamID                   int64     `json:"param_id" gorm:"type:bigint;not null;comment:API参数ID"`
+	Sort                      int       `json:"sort" gorm:"type:bigint;default:0;comment:排序"`
+	Status                    int       `json:"status" gorm:"type:bigint;default:1;comment:状态：1-启用，0-禁用"`
+	RetryNum                  int       `json:"retry_num" gorm:"type:bigint;default:0;comment:重试次数"`
+	ISP                       string    `json:"isp" gorm:"size:50;default:1,2,3;comment:支持运营商:1移动 2电信 3联通"`
+	ProductName               string    `json:"product_name"`
+	APIName                   string    `json:"api_name"`
+	SameChannelRetryEnabled   bool      `json:"same_channel_retry_enabled" gorm:"type:tinyint(1);default:0;comment:是否启用同通道重试"`
+	SameChannelRetryTimes     int       `json:"same_channel_retry_times" gorm:"type:int;default:0;comment:同通道重试次数"`
+	CreatedAt                 time.Time `json:"created_at" gorm:"type:datetime;autoCreateTime"`
+	UpdatedAt                 time.Time `json:"updated_at" gorm:"type:datetime;autoUpdateTime"`
 }
 
 // TableName 指定表名

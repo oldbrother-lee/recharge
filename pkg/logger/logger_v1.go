@@ -141,10 +141,26 @@ func parseFields(fields ...interface{}) []zap.Field {
 
 // WithContext 添加上下文信息
 func WithContext(ctx context.Context) *zap.Logger {
-	return Log.With(
-		zap.String("trace_id", ctx.Value("trace_id").(string)),
-		zap.String("user_id", ctx.Value("user_id").(string)),
-	)
+	fields := make([]zap.Field, 0, 3)
+
+	if v := ctx.Value("trace_id"); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			fields = append(fields, zap.String("trace_id", s))
+		}
+	}
+	if v := ctx.Value("user_id"); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			fields = append(fields, zap.String("user_id", s))
+		}
+	}
+	// 新增：注入订单号，开启全链路追踪
+	if v := ctx.Value("order_number"); v != nil {
+		if s, ok := v.(string); ok && s != "" {
+			fields = append(fields, zap.String("order_number", s))
+		}
+	}
+
+	return Log.With(fields...)
 }
 
 // NewLogger 创建新的日志实例

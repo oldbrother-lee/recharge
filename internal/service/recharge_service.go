@@ -357,10 +357,17 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	// 1. 解析回调数据
 	callbackData, err := s.manager.ParseCallbackData(platformName, data)
 	if err != nil {
-		logger.Error(fmt.Sprintf("解析回调数据失败: %v", err))
+		logger.WithContext(ctx).Error("解析回调数据失败", logger.ErrorV2(err))
 		return fmt.Errorf("parse callback data failed service 层: %v", err)
 	}
-	logger.Info(fmt.Sprintf("收到%s回调，解析回调数据成功: %+v", platformName, callbackData))
+	// 注入订单号至上下文，便于全链路日志
+	if callbackData.OrderNumber != "" {
+		ctx = logger.InjectOrderNumber(ctx, callbackData.OrderNumber)
+	}
+	logger.WithContext(ctx).Info("收到回调，解析成功",
+		logger.String("platform", platformName),
+		logger.String("callback_type", callbackData.CallbackType),
+	)
 
 	// 2. 检查是否已处理过该回调（使用订单号、回调类型和平台交易ID进行精确匹配）
 	// 优先使用平台交易ID进行重复检查，避免换通道重试时的误判
@@ -372,27 +379,34 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 			// 如果有平台交易ID，使用更精确的检查
 			exists, err = s.callbackLogRepo.GetByOrderIDTypeAndPlatformID(ctx, callbackData.OrderNumber, callbackData.CallbackType, callbackData.TransactionID)
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
+				logger.WithContext(ctx).Error("检查回调记录失败", logger.ErrorV2(err))
 				return err
 			}
 			if exists != nil {
-				logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s, platform_id: %s", callbackData.OrderNumber, callbackData.CallbackType, callbackData.TransactionID))
+				logger.WithContext(ctx).Info("回调已处理过",
+					logger.String("order_number", callbackData.OrderNumber),
+					logger.String("callback_type", callbackData.CallbackType),
+					logger.String("platform_id", callbackData.TransactionID),
+				)
 				return nil
 			}
 		} else {
 			// 如果没有平台交易ID，使用原有的检查方式
 			exists, err = s.callbackLogRepo.GetByOrderIDAndType(ctx, callbackData.OrderNumber, callbackData.CallbackType)
 			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				logger.Error(fmt.Sprintf("检查回调记录失败: %v", err))
+				logger.WithContext(ctx).Error("检查回调记录失败", logger.ErrorV2(err))
 				return err
 			}
 			if exists != nil {
-				logger.Info(fmt.Sprintf("回调已处理过: order_number: %s, callback_type: %s", callbackData.OrderNumber, callbackData.CallbackType))
+				logger.WithContext(ctx).Info("回调已处理过",
+					logger.String("order_number", callbackData.OrderNumber),
+					logger.String("callback_type", callbackData.CallbackType),
+				)
 				return nil
 			}
 		}
 	} else {
-		logger.Warn("回调数据中OrderNumber为空，跳过重复检查")
+		logger.WithContext(ctx).Warn("回调数据中OrderNumber为空，跳过重复检查")
 	}
 
 	// 3. 开启事务
@@ -406,7 +420,7 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	// 4. 处理回调
 	if err := s.manager.HandleCallback(ctx, platformName, data); err != nil {
 		tx.Rollback()
-		logger.Error("处理回调失败: %v", err)
+		logger.WithContext(ctx).Error("处理回调失败", logger.ErrorV2(err))
 		return fmt.Errorf("handle callback failed: %v", err)
 	}
 
@@ -427,19 +441,56 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		orderState = model.OrderStatusRecharging
 	default:
 		tx.Rollback()
-		logger.Error(fmt.Sprintf("未知的订单状态: %s", callbackData.Status))
+		logger.WithContext(ctx).Error("未知的订单状态", logger.String("status", callbackData.Status))
 		return fmt.Errorf("unknown order status: %s", callbackData.Status)
 	}
 
 	// 获取订单信息
-	logger.Info("【查询订单】正在查询订单号: %s", callbackData.OrderNumber)
+	logger.WithContext(ctx).Info("查询订单", logger.String("callback_order_number", callbackData.OrderNumber))
 	order, err := s.orderRepo.GetByOrderID(ctx, callbackData.OrderNumber)
 	if err != nil {
-		tx.Rollback()
-		logger.Error("获取订单信息失败: %v", err)
-		return fmt.Errorf("get order failed: %v", err)
+		// 如果按订单号找不到，尝试通过ActiveOutTradeNum反向查找原始订单
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			logger.WithContext(ctx).Info("按订单号未找到，尝试通过ActiveOutTradeNum查找重试记录",
+				logger.String("callback_order_number", callbackData.OrderNumber),
+			)
+
+			// 通过ActiveOutTradeNum查找重试记录
+			retryRecord, retryErr := s.retryRepo.GetByActiveOutTradeNum(ctx, callbackData.OrderNumber)
+			if retryErr != nil {
+				tx.Rollback()
+				logger.WithContext(ctx).Error("通过ActiveOutTradeNum查找重试记录失败", logger.ErrorV2(retryErr))
+				return fmt.Errorf("get retry record by active_out_trade_num failed: %v", retryErr)
+			}
+
+			// 通过重试记录的OrderID查找原始订单
+			order, err = s.orderRepo.GetByID(ctx, retryRecord.OrderID)
+			if err != nil {
+				tx.Rollback()
+				logger.WithContext(ctx).Error("通过重试记录OrderID查找原始订单失败", logger.ErrorV2(err))
+				return fmt.Errorf("get original order by retry record failed: %v", err)
+			}
+
+			// 覆盖注入原始订单号
+			ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+			logger.WithContext(ctx).Info("通过ActiveOutTradeNum成功找到原始订单",
+				logger.String("callback_order_number", callbackData.OrderNumber),
+				logger.String("original_order_number", order.OrderNumber),
+				logger.Int64("order_id", order.ID),
+				logger.Int64("retry_record_id", retryRecord.ID),
+			)
+		} else {
+			tx.Rollback()
+			logger.WithContext(ctx).Error("获取订单信息失败", logger.ErrorV2(err))
+			return fmt.Errorf("get order failed: %v", err)
+		}
 	}
-	logger.Info("【查询订单结果】订单ID: %d, 订单号: %s, 状态: %d, 产品ID: %d", order.ID, order.OrderNumber, order.Status, order.ProductID)
+	logger.WithContext(ctx).Info("查询订单结果",
+		logger.Int64("order_id", order.ID),
+		logger.String("order_number", order.OrderNumber),
+		logger.String("status", fmt.Sprintf("%v", order.Status)),
+		logger.Int64("product_id", order.ProductID),
+	)
 
 	// 检查订单当前状态，如果已经是最终状态，忽略后续回调
 	// if order.Status == model.OrderStatusSuccess || order.Status == model.OrderStatusFailed {
@@ -469,15 +520,15 @@ func (s *rechargeService) handleFailedOrderCallback(ctx context.Context, tx *gor
 	if s.unifiedOrderService != nil {
 		hasAvailableChannel, err := s.unifiedOrderService.CheckAndHandleFailedOrderRetry(ctx, order)
 		if err != nil {
-			logger.Error("检查可用通道失败", "order_id", order.ID, "error", err)
+			logger.WithContext(ctx).Error("检查可用通道失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 			// 继续处理，不因为检查失败而中断
 		} else if hasAvailableChannel {
 			// 有可用通道，记录回调但不更新订单状态，等待重试完成
 			tx.Rollback()
-			logger.Info("发现可用通道，已推送重试任务，暂不更新订单状态",
-				"order_id", order.ID,
-				"order_number", order.OrderNumber,
-				"platform", platformName)
+			logger.WithContext(ctx).Info("发现可用通道，已推送重试任务，暂不更新订单状态",
+				logger.Int64("order_id", order.ID),
+				logger.String("order_number", order.OrderNumber),
+				logger.String("platform", platformName))
 
 			// 记录回调日志但不触发状态更新
 			platformID := callbackData.TransactionID
@@ -495,42 +546,42 @@ func (s *rechargeService) handleFailedOrderCallback(ctx context.Context, tx *gor
 				UpdateTime:   time.Now(),
 			}
 			if err := s.callbackLogRepo.Create(ctx, log); err != nil {
-				logger.Error("记录回调日志失败", "error", err)
+				logger.WithContext(ctx).Error("记录回调日志失败", logger.ErrorV2(err))
 			}
 			return nil
 		}
 	}
 
 	// 没有可用通道或检查失败，进行最终失败处理
-	logger.Info("没有可用通道，进行最终失败处理",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"platform", platformName)
+	logger.WithContext(ctx).Info("没有可用通道，进行最终失败处理",
+		logger.Int64("order_id", order.ID),
+		logger.String("order_number", order.OrderNumber),
+		logger.String("platform", platformName))
 
 	// 更新订单状态为失败
 	if s.unifiedOrderService != nil {
-		logger.Info("使用统一订单服务处理失败状态更新", "order_id", order.ID)
-		if err := s.unifiedOrderService.ProcessOrderStatusChangeWithBalanceCheck(ctx, order.ID, model.OrderStatusFailed, "platform", true); err != nil {
+		logger.WithContext(ctx).Info("使用统一订单服务处理失败状态更新", logger.Int64("order_id", order.ID))
+		if err := s.unifiedOrderService.ProcessOrderStatusChangeWithBalanceCheck(ctx, order.ID, model.OrderStatusFailed, "平台", true); err != nil {
 			tx.Rollback()
-			logger.Error("统一订单状态更新失败", "order_id", order.ID, "error", err)
+			logger.WithContext(ctx).Error("统一订单状态更新失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 			return fmt.Errorf("unified order status update failed: %v", err)
 		}
 	} else {
 		// 降级处理：手动退款和更新状态
-		logger.Warn("统一订单服务未初始化，使用手动退款和状态更新", "order_id", order.ID)
+		logger.WithContext(ctx).Warn("统一订单服务未初始化，使用手动退款和状态更新", logger.Int64("order_id", order.ID))
 		
 		// 退款
 		err := s.balanceService.RefundBalance(ctx, order.CustomerID, order.Price, order.ID, "订单失败退还余额")
 		if err != nil {
 			tx.Rollback()
-			logger.Error("订单失败退款失败", "order_id", order.ID, "error", err)
+			logger.WithContext(ctx).Error("订单失败退款失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 			return fmt.Errorf("订单失败退款失败: %v", err)
 		}
 		
 		// 更新订单状态
 		if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
 			tx.Rollback()
-			logger.Error("更新订单状态失败", "order_id", order.ID, "error", err)
+			logger.WithContext(ctx).Error("更新订单状态失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 			return fmt.Errorf("update order status failed: %v", err)
 		}
 	}
@@ -539,10 +590,10 @@ func (s *rechargeService) handleFailedOrderCallback(ctx context.Context, tx *gor
 	if s.unifiedOrderService == nil {
 		if nErr := s.sendOrderStatusNotificationWithIdempotency(ctx, order, model.OrderStatusFailed); nErr != nil {
 			tx.Rollback()
-			logger.Error("发送订单失败通知失败", "order_id", order.ID, "error", nErr)
+			logger.WithContext(ctx).Error("发送订单失败通知失败", logger.Int64("order_id", order.ID), logger.ErrorV2(nErr))
 			return fmt.Errorf("push notification to queue failed: %v", nErr)
 		}
-		logger.Info("订单失败推送通知到队列成功", "order_id", order.ID)
+		logger.WithContext(ctx).Info("订单失败推送通知到队列成功", logger.Int64("order_id", order.ID))
 	}
 
 	// 记录回调日志
@@ -563,17 +614,17 @@ func (s *rechargeService) handleFailedOrderCallback(ctx context.Context, tx *gor
 	}
 	if err := s.callbackLogRepo.Create(ctx, log); err != nil {
 		tx.Rollback()
-		logger.Error("记录回调日志失败", "order_id", order.ID, "error", err)
+		logger.WithContext(ctx).Error("记录回调日志失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 		return fmt.Errorf("create callback log failed: %v", err)
 	}
 
 	// 提交事务
 	if err := tx.Commit().Error; err != nil {
-		logger.Error("提交事务失败", "order_id", order.ID, "error", err)
+		logger.WithContext(ctx).Error("提交事务失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 		return fmt.Errorf("commit transaction failed: %v", err)
 	}
 
-	logger.Info("失败订单回调处理完成", "order_id", order.ID, "order_number", order.OrderNumber)
+	logger.WithContext(ctx).Info("失败订单回调处理完成", logger.Int64("order_id", order.ID), logger.String("order_number", order.OrderNumber))
 	return nil
 }
 
@@ -582,34 +633,49 @@ func (s *rechargeService) handleSuccessOrderCallback(ctx context.Context, tx *go
 	// 处理成功订单回调日志
 	
 	// 使用统一订单处理服务更新订单状态
-	logger.Info(fmt.Sprintf("准备更新订单状态: 订单号%s, 订单id%d, 当前状态%s, 目标状态%s", order.OrderNumber, order.ID, order.Status, orderState))
+	logger.WithContext(ctx).Info("准备更新订单状态",
+		logger.String("order_number", order.OrderNumber),
+		logger.Int64("order_id", order.ID),
+		logger.String("from_to", fmt.Sprintf("%v->%v", order.Status, orderState)),
+	)
 	if s.unifiedOrderService != nil {
-		logger.Info("使用统一订单服务处理状态更新", "order_id", order.ID, "target_status", orderState)
-		if err := s.unifiedOrderService.ProcessOrderStatusChangeWithBalanceCheck(ctx, order.ID, orderState, "platform", true); err != nil {
+		logger.WithContext(ctx).Info("使用统一订单服务处理状态更新",
+			logger.Int64("order_id", order.ID),
+			logger.String("target_status", fmt.Sprintf("%v", orderState)),
+		)
+		if err := s.unifiedOrderService.ProcessOrderStatusChangeWithBalanceCheck(ctx, order.ID, orderState, "平台", true); err != nil {
 			tx.Rollback()
-			logger.Error("统一订单状态更新失败", "order_id", order.ID, "error", err)
+			logger.WithContext(ctx).Error("统一订单状态更新失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 			return fmt.Errorf("unified order status update failed: %v", err)
 		}
-		logger.Info(fmt.Sprintf("统一订单回调更新订单状态成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
+		logger.WithContext(ctx).Info("统一订单回调更新订单状态成功",
+			logger.String("order_number", order.OrderNumber),
+			logger.Int64("order_id", order.ID),
+			logger.String("status", fmt.Sprintf("%v", orderState)),
+		)
 	} else {
 		// 降级到原有的简单状态更新
-		logger.Warn("统一订单服务未初始化，使用原有的简单状态更新", "order_id", order.ID)
+		logger.WithContext(ctx).Warn("统一订单服务未初始化，使用原有的简单状态更新", logger.Int64("order_id", order.ID))
 		if err := s.orderRepo.UpdateStatus(ctx, order.ID, orderState); err != nil {
 			tx.Rollback()
-			logger.Error("更新订单状态失败", "order_id", order.ID, "error", err)
+			logger.WithContext(ctx).Error("更新订单状态失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 			return fmt.Errorf("update order status failed: %v", err)
 		}
-		logger.Info(fmt.Sprintf("订单回调更新订单状态成功: 订单号%s, 订单id%d, 状态%s", order.OrderNumber, order.ID, orderState))
+		logger.WithContext(ctx).Info("订单回调更新订单状态成功",
+			logger.String("order_number", order.OrderNumber),
+			logger.Int64("order_id", order.ID),
+			logger.String("status", fmt.Sprintf("%v", orderState)),
+		)
 	}
 
 	// 发送状态变更通知（幂等）- 仅在未使用统一订单服务时
 	if s.unifiedOrderService == nil {
 		if nErr := s.sendOrderStatusNotificationWithIdempotency(ctx, order, orderState); nErr != nil {
 			tx.Rollback()
-			logger.Error("发送订单状态通知失败", "order_id", order.ID, "status", orderState, "error", nErr)
+			logger.WithContext(ctx).Error("发送订单状态通知失败", logger.Int64("order_id", order.ID), logger.String("status", fmt.Sprintf("%v", orderState)), logger.ErrorV2(nErr))
 			return fmt.Errorf("push notification to queue failed: %v", nErr)
 		}
-		logger.Info("订单推送通知到队列成功", "order_id", order.ID, "status", orderState)
+		logger.WithContext(ctx).Info("订单推送通知到队列成功", logger.Int64("order_id", order.ID), logger.String("status", fmt.Sprintf("%v", orderState)))
 	}
 
 	// 记录回调日志
@@ -630,17 +696,21 @@ func (s *rechargeService) handleSuccessOrderCallback(ctx context.Context, tx *go
 	}
 	if err := s.callbackLogRepo.Create(ctx, log); err != nil {
 		tx.Rollback()
-		logger.Error("记录回调日志失败", "order_id", order.ID, "error", err)
+		logger.WithContext(ctx).Error("记录回调日志失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 		return fmt.Errorf("create callback log failed: %v", err)
 	}
 
 	// 提交事务
 	if err := tx.Commit().Error; err != nil {
-		logger.Error("提交事务失败", "order_id", order.ID, "error", err)
+		logger.WithContext(ctx).Error("提交事务失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 		return fmt.Errorf("commit transaction failed: %v", err)
 	}
 
-	logger.Info("成功订单回调处理完成", "order_id", order.ID, "order_number", order.OrderNumber, "status", orderState)
+	logger.WithContext(ctx).Info("成功订单回调处理完成",
+		logger.Int64("order_id", order.ID),
+		logger.String("order_number", order.OrderNumber),
+		logger.String("status", fmt.Sprintf("%v", orderState)),
+	)
 	return nil
 }
 
@@ -648,21 +718,21 @@ func (s *rechargeService) handleSuccessOrderCallback(ctx context.Context, tx *go
 func (s *rechargeService) GetPendingTasks(ctx context.Context, limit int) ([]*model.Order, error) {
 	// 从Redis队列中获取待处理的订单ID
 	if s.redisClient == nil {
-		logger.Error("【Redis客户端为空】")
+		logger.WithContext(ctx).Error("【Redis客户端为空】")
 		return nil, fmt.Errorf("redis client is nil")
 	}
 
 	// 获取队列中的订单ID列表
 	orderIDs, err := s.redisClient.LRange(ctx, "recharge_queue", 0, int64(limit-1)).Result()
 	if err != nil {
-		logger.Error("【从Redis队列获取订单ID失败】", "error", err)
+		logger.WithContext(ctx).Error("【从Redis队列获取订单ID失败】", logger.ErrorV2(err))
 		return nil, fmt.Errorf("get order IDs from queue failed: %v", err)
 	}
 
-	logger.Info("【调试：从Redis获取的订单ID列表】", "order_ids", orderIDs, "limit", limit)
+	logger.WithContext(ctx).Info("【调试：从Redis获取的订单ID列表】", logger.Any("order_ids", orderIDs), logger.Int("limit", limit))
 
 	if len(orderIDs) == 0 {
-		logger.Info("【Redis队列中没有待处理订单】")
+		logger.WithContext(ctx).Info("【Redis队列中没有待处理订单】")
 		return []*model.Order{}, nil
 	}
 
@@ -672,33 +742,41 @@ func (s *rechargeService) GetPendingTasks(ctx context.Context, limit int) ([]*mo
 	for _, orderIDStr := range orderIDs {
 		orderID, err := strconv.ParseInt(orderIDStr, 10, 64)
 		if err != nil {
-			logger.Error("【解析订单ID失败】", "order_id_str", orderIDStr, "error", err)
+			logger.WithContext(ctx).Error("【解析订单ID失败】", logger.String("order_id_str", orderIDStr), logger.ErrorV2(err))
 			continue
 		}
 
 		// 获取订单信息
 		order, err := s.orderRepo.GetByID(ctx, orderID)
 		if err != nil {
-			logger.Error("【获取订单信息失败】", "order_id", orderID, "error", err)
+			logger.WithContext(ctx).Error("【获取订单信息失败】", logger.Int64("order_id", orderID), logger.ErrorV2(err))
 			// 从Redis队列中移除该订单
 			if removeErr := s.redisClient.LRem(ctx, "recharge_queue", 0, orderIDStr).Err(); removeErr != nil {
-				logger.Error("【从队列移除失效订单失败】", "order_id", orderID, "error", removeErr)
+				logger.WithContext(ctx).Error("【从队列移除失效订单失败】", logger.Int64("order_id", orderID), logger.ErrorV2(removeErr))
 			} else {
-				logger.Info("【成功从队列移除失效订单】", "order_id", orderID)
+				logger.WithContext(ctx).Info("【成功从队列移除失效订单】", logger.Int64("order_id", orderID))
 			}
 			continue
 		}
 
-		logger.Info("【调试：检查订单】", "order_id", orderID, "status", order.Status, "created_at", order.CreatedAt, "updated_at", order.UpdatedAt)
+		logger.WithContext(ctx).Info("【调试：检查订单】",
+			logger.Int64("order_id", orderID),
+			logger.String("status", fmt.Sprintf("%v", order.Status)),
+			logger.Any("created_at", order.CreatedAt),
+			logger.Any("updated_at", order.UpdatedAt),
+		)
 
 		// 检查订单状态和时间过滤条件
 		if order.Status != model.OrderStatusPendingRecharge {
-			logger.Info("【订单状态不是待充值，从队列中移除】", "order_id", orderID, "status", order.Status)
+			logger.WithContext(ctx).Info("【订单状态不是待充值，从队列中移除】",
+				logger.Int64("order_id", orderID),
+				logger.String("status", fmt.Sprintf("%v", order.Status)),
+			)
 			// 从Redis队列中移除该订单
 			if err := s.redisClient.LRem(ctx, "recharge_queue", 0, orderIDStr).Err(); err != nil {
-				logger.Error("【从队列移除订单失败】", "order_id", orderID, "error", err)
+				logger.WithContext(ctx).Error("【从队列移除订单失败】", logger.Int64("order_id", orderID), logger.ErrorV2(err))
 			} else {
-				logger.Info("【成功从队列移除订单】", "order_id", orderID)
+				logger.WithContext(ctx).Info("【成功从队列移除订单】", logger.Int64("order_id", orderID))
 			}
 			continue
 		}
@@ -708,10 +786,14 @@ func (s *rechargeService) GetPendingTasks(ctx context.Context, limit int) ([]*mo
 		timeDiff := order.UpdatedAt.Sub(order.CreatedAt)
 		isNewOrder := timeDiff < 5*time.Second // 5秒内的时间差认为是新订单
 
-		logger.Info("【调试：时间检查】", "order_id", orderID, "time_diff", timeDiff, "is_new_order", isNewOrder)
+		logger.WithContext(ctx).Info("【调试：时间检查】",
+			logger.Int64("order_id", orderID),
+			logger.Any("time_diff", timeDiff),
+			logger.Any("is_new_order", isNewOrder),
+		)
 
 		if !isNewOrder && order.UpdatedAt.Add(1*time.Minute).After(now) {
-			logger.Info("【订单最近1分钟内被处理过，跳过】", "order_id", orderID)
+			logger.WithContext(ctx).Info("【订单最近1分钟内被处理过，跳过】", logger.Int64("order_id", orderID))
 			continue
 		}
 
@@ -723,39 +805,42 @@ func (s *rechargeService) GetPendingTasks(ctx context.Context, limit int) ([]*mo
 		}
 
 		if !createTime.IsZero() && createTime.Add(24*time.Hour).Before(now) {
-			logger.Info("【订单创建时间超过24小时，跳过】", "order_id", orderID, "create_time", createTime)
+			logger.WithContext(ctx).Info("【订单创建时间超过24小时，跳过】",
+				logger.Int64("order_id", orderID),
+				logger.Any("create_time", createTime),
+			)
 			continue
 		}
 
 		orders = append(orders, order)
 	}
 
-	logger.Info("【获取到待处理订单】", "count", len(orders))
+	logger.WithContext(ctx).Info("【获取到待处理订单】", logger.Int("count", len(orders)))
 	return orders, nil
 }
 
 // ProcessRechargeTask 处理充值任务
 func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.Order) error {
-	logger.Info("【开始处理充值任务】",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"mobile", order.Mobile)
+	logger.WithContext(ctx).Info("【开始处理充值任务】",
+		logger.Int64("order_id", order.ID),
+		logger.String("order_number", order.OrderNumber),
+		logger.String("mobile", order.Mobile))
 
 	// 1. 获取商品信息，检查是否开启重复检查
 	product, err := s.productRepo.GetByID(ctx, order.ProductID)
 	if err != nil {
-		logger.Error("【获取商品信息失败】",
-			"order_id", order.ID,
-			"product_id", order.ProductID,
-			"error", err)
+		logger.WithContext(ctx).Error("【获取商品信息失败】",
+			logger.Int64("order_id", order.ID),
+			logger.Int64("product_id", order.ProductID),
+			logger.ErrorV2(err))
 		return fmt.Errorf("获取商品信息失败: %v", err)
 	}
 
 	// 2. 防重复充值检查（仅在商品开启重复检查时执行）
 	if product.DuplicateCheck {
-		logger.Info("【商品已开启重复检查，开始执行重复订单检查】",
-			"order_id", order.ID,
-			"product_id", order.ProductID)
+		logger.WithContext(ctx).Info("【商品已开启重复检查，开始执行重复订单检查】",
+			logger.Int64("order_id", order.ID),
+			logger.Int64("product_id", order.ProductID))
 
 		// 查询相同手机号、金额、运营商、商品ID的进行中订单（排除当前订单）
 		processingStatuses := []model.OrderStatus{
@@ -767,54 +852,61 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 
 		existingOrder, err := s.orderRepo.FindDuplicateOrder(ctx, order.Mobile, order.Denom, order.ISP, order.ProductID, processingStatuses)
 		if err != nil && err != gorm.ErrRecordNotFound {
-			logger.Error("【检查重复订单失败】",
-				"order_id", order.ID,
-				"error", err)
+			logger.WithContext(ctx).Error("【检查重复订单失败】",
+				logger.Int64("order_id", order.ID),
+				logger.ErrorV2(err))
 			return fmt.Errorf("检查重复订单失败: %v", err)
 		}
 
 		if existingOrder != nil && existingOrder.ID != order.ID {
-			logger.Error("【检测到重复充值，设置订单为失败】",
-				"order_id", order.ID,
-				"mobile", order.Mobile,
-				"denom", order.Denom,
-				"isp", order.ISP,
-				"product_id", order.ProductID,
-				"existing_order_id", existingOrder.ID,
-				"existing_order_number", existingOrder.OrderNumber)
+			logger.WithContext(ctx).Error("【检测到重复充值，设置订单为失败】",
+				logger.Int64("order_id", order.ID),
+				logger.String("mobile", order.Mobile),
+				logger.Any("denom", order.Denom),
+				logger.Int("isp", order.ISP),
+				logger.Int64("product_id", order.ProductID),
+				logger.Int64("existing_order_id", existingOrder.ID),
+				logger.String("existing_order_number", existingOrder.OrderNumber))
 
 			// 直接设置订单为失败
 			errorMsg := fmt.Sprintf("检测到重复充值：手机号 %s，金额 %.2f，运营商 %d，商品ID %d 存在进行中的订单 %s",
 				order.Mobile, order.Denom, order.ISP, order.ProductID, existingOrder.OrderNumber)
 			if failErr := s.orderService.ProcessOrderFail(ctx, order.ID, errorMsg); failErr != nil {
-				logger.Error("【设置订单失败状态失败】",
-					"order_id", order.ID,
-					"error", failErr)
+				logger.WithContext(ctx).Error("【设置订单失败状态失败】",
+					logger.Int64("order_id", order.ID),
+					logger.ErrorV2(failErr))
 				return failErr
 			}
 			return nil // 返回nil表示任务处理完成，不需要重试
 		}
 	} else {
-		logger.Info("【商品未开启重复检查，跳过重复订单检查】",
-			"order_id", order.ID,
-			"product_id", order.ProductID)
+		logger.WithContext(ctx).Info("【商品未开启重复检查，跳过重复订单检查】",
+			logger.Int64("order_id", order.ID),
+			logger.Int64("product_id", order.ProductID))
 	}
 
 	// 3. 充值前查询余额并记录
 	// 检查余额验证开关
 	balanceVerificationEnabled, err := s.systemConfigService.GetBoolValue(ctx, "balance_verification_enabled")
 	if err != nil {
-		logger.Error(fmt.Sprintf("【获取余额验证开关配置失败】order_id: %d, error: %v", order.ID, err))
+		logger.WithContext(ctx).Error("【获取余额验证开关配置失败】",
+			logger.Int64("order_id", order.ID),
+			logger.ErrorV2(err))
 		// 配置获取失败时，默认启用余额验证以保证安全性
 		balanceVerificationEnabled = true
 	}
 
 	if !balanceVerificationEnabled {
-		logger.Info(fmt.Sprintf("【余额验证已关闭，跳过充值前余额查询】order_id: %d", order.ID))
+		logger.WithContext(ctx).Info("【余额验证已关闭，跳过充值前余额查询】", logger.Int64("order_id", order.ID))
 	} else {
-		logger.Info(fmt.Sprintf("【调试：余额查询条件检查】order_id: %d, phoneQueryService_nil: %v, mobile: %s", order.ID, s.phoneQueryService == nil, order.Mobile))
+		logger.WithContext(ctx).Info("【调试：余额查询条件检查】",
+			logger.Int64("order_id", order.ID),
+			logger.Bool("phoneQueryService_nil", s.phoneQueryService == nil),
+			logger.String("mobile", order.Mobile))
 		if s.phoneQueryService != nil && order.Mobile != "" {
-			logger.Info(fmt.Sprintf("【充值前查询余额】order_id: %d, mobile: %s", order.ID, order.Mobile))
+			logger.WithContext(ctx).Info("【充值前查询余额】",
+				logger.Int64("order_id", order.ID),
+				logger.String("mobile", order.Mobile))
 
 			// 根据订单信息确定运营商类型
 			ispType := s.getISPTypeFromOrder(order)
@@ -822,11 +914,16 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			// 查询充值前余额
 			preBalance, err := s.phoneQueryService.QueryBalanceWithRetry(ctx, order.Mobile, ispType, 3)
 			if err != nil {
-				logger.Error(fmt.Sprintf("【充值前余额查询失败】order_id: %d, mobile: %s, error: %v", order.ID, order.Mobile, err))
+				logger.WithContext(ctx).Error("【充值前余额查询失败】",
+					logger.Int64("order_id", order.ID),
+					logger.String("mobile", order.Mobile),
+					logger.ErrorV2(err))
 				// 余额查询失败不阻断充值流程，只记录日志
 			} else {
-				logger.Info(fmt.Sprintf("【充值前余额查询成功】order_id: %d, mobile: %s, balance: %s",
-					order.ID, order.Mobile, preBalance.Data))
+				logger.WithContext(ctx).Info("【充值前余额查询成功】",
+					logger.Int64("order_id", order.ID),
+					logger.String("mobile", order.Mobile),
+					logger.String("balance", preBalance.Data))
 
 				// 保存余额查询记录到独立表
 				balanceRecord := &model.BalanceQueryRecord{
@@ -842,9 +939,13 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 
 				// 保存到余额查询记录表
 				if err := s.balanceQueryRecordRepo.Create(ctx, balanceRecord); err != nil {
-					logger.Error(fmt.Sprintf("【保存余额查询记录失败】order_id: %d, error: %v", order.ID, err))
+					logger.WithContext(ctx).Error("【保存余额查询记录失败】",
+						logger.Int64("order_id", order.ID),
+						logger.ErrorV2(err))
 				} else {
-					logger.Info(fmt.Sprintf("【余额查询记录保存成功】order_id: %d, balance: %s", order.ID, preBalance.Data))
+					logger.WithContext(ctx).Info("【余额查询记录保存成功】",
+						logger.Int64("order_id", order.ID),
+						logger.String("balance", preBalance.Data))
 				}
 			}
 		}
@@ -852,41 +953,41 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 
 	api, apiParam, err := s.getPlatformAPIByOrder(ctx, order)
 	if err != nil {
-		logger.Error("【获取API信息失败】",
-			"error", err,
-			"order_id", order.ID)
+		logger.WithContext(ctx).Error("【获取API信息失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", order.ID))
 		return fmt.Errorf("get platform API failed: %v", err)
 	}
-	logger.Info("【获取API信息成功】",
-		"order_id", order.ID,
-		"api_id", api.ID,
-		"api_name", api.Name)
+	logger.WithContext(ctx).Info("【获取API信息成功】",
+		logger.Int64("order_id", order.ID),
+		logger.Int64("api_id", api.ID),
+		logger.String("api_name", api.Name))
 
 	// 原子性锁定订单，防止并发重复处理
 	// 只有当前 api_id 对应的订单状态为 'pending_recharge' 时，才允许锁定
 	locked, err := s.orderRepo.UpdateStatusCAS(ctx, order.ID, model.OrderStatusPendingRecharge, model.OrderStatusProcessing, api.ID)
 	if err != nil {
-		logger.Error("【订单状态原子更新失败】",
-			"error", err,
-			"order_id", order.ID)
+		logger.WithContext(ctx).Error("【订单状态原子更新失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", order.ID))
 		return err
 	}
 	if !locked {
-		logger.Info("【订单已被其他worker处理，跳过】", "order_id", order.ID)
+		logger.WithContext(ctx).Info("【订单已被其他worker处理，跳过】", logger.Int64("order_id", order.ID))
 		return nil
 	}
 
 	// 获取订单信息
 	order, err = s.orderRepo.GetByID(ctx, order.ID)
 	if err != nil {
-		logger.Error("【获取订单信息失败】",
-			"error", err,
-			"order_id", order.ID)
+		logger.WithContext(ctx).Error("【获取订单信息失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", order.ID))
 		return fmt.Errorf("get order failed: %v", err)
 	}
-	logger.Info("【获取订单信息成功】",
-		"order_id", order.ID,
-		"status", order.Status)
+	logger.WithContext(ctx).Info("【获取订单信息成功】",
+		logger.Int64("order_id", order.ID),
+		logger.String("status", fmt.Sprintf("%v", order.Status)))
 
 	// 检查订单状态
 	if order.Status == model.OrderStatusRecharging || order.Status == model.OrderStatusSuccess {
@@ -895,23 +996,23 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 
 	// 检查是否需要扣款（外部订单在创建时已扣款）
 	if order.Client == 2 { // 外部API订单
-		logger.Info("【外部订单已预扣款，跳过扣款步骤】",
-			"order_id", order.ID,
-			"client", order.Client)
+		logger.WithContext(ctx).Info("【外部订单已预扣款，跳过扣款步骤】",
+			logger.Int64("order_id", order.ID),
+			logger.Int("client", order.Client))
 	} else {
 		// 平台订单：从平台账号扣款（支持授信额度）
-		logger.Info("【平台订单开始扣款】",
-			"order_id", order.ID,
-			"platform_account_id", order.PlatformAccountID,
-			"amount", order.Price)
+		logger.WithContext(ctx).Info("【平台订单开始扣款】",
+			logger.Int64("order_id", order.ID),
+			logger.Int64("platform_account_id", order.PlatformAccountID),
+			logger.Any("amount", order.Price))
 
 		// 使用平台账号余额服务进行扣款（支持授信额度）
 		balanceService := s.GetBalanceService()
 		if err := balanceService.DeductBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单充值扣除"); err != nil {
-			logger.Error("【扣除平台账号余额失败】",
-				"error", err,
-				"platform_account_id", order.PlatformAccountID,
-				"amount", order.Price)
+			logger.WithContext(ctx).Error("【扣除平台账号余额失败】",
+				logger.ErrorV2(err),
+				logger.Int64("platform_account_id", order.PlatformAccountID),
+				logger.Any("amount", order.Price))
 
 			// 使用事务处理订单状态更新
 			txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -926,42 +1027,42 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			})
 
 			if txErr != nil {
-				logger.Error("更新订单状态失败", "error", txErr, "order_id", order.ID)
+				logger.WithContext(ctx).Error("更新订单状态失败", logger.ErrorV2(txErr), logger.Int64("order_id", order.ID))
 			} else {
 				// 事务提交成功后，发送状态变更通知（幂等）
 				if nErr := s.sendOrderStatusNotificationWithIdempotency(ctx, order, model.OrderStatusFailed); nErr != nil {
-					logger.Error("发送扣款失败通知失败", "order_id", order.ID, "error", nErr)
+					logger.WithContext(ctx).Error("发送扣款失败通知失败", logger.Int64("order_id", order.ID), logger.ErrorV2(nErr))
 				} else {
-					logger.Info("推送扣款失败通知到队列成功", "order_id", order.ID)
+					logger.WithContext(ctx).Info("推送扣款失败通知到队列成功", logger.Int64("order_id", order.ID))
 				}
 			}
 
 			return fmt.Errorf("deduct platform account balance failed: %v", err)
 		}
-		logger.Info("【扣除平台账号余额成功】",
-			"platform_account_id", order.PlatformAccountID,
-			"amount", order.Price)
+		logger.WithContext(ctx).Info("【扣除平台账号余额成功】",
+			logger.Int64("platform_account_id", order.PlatformAccountID),
+			logger.Any("amount", order.Price))
 	}
 
 	// 提交订单到平台
 	if err := s.SubmitOrder(ctx, order, api, apiParam); err != nil {
-		logger.Error("【提交订单到平台失败1】",
-			"error", err,
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
-			"product_id", order.ProductID,
-			"api_id", api.ID,
-			"param_id", apiParam.ID,
-			"platform_id", api.PlatformID,
-			"api_code", api.Code,
-			"api_account_id", api.AccountID)
+		logger.WithContext(ctx).Error("【提交订单到平台失败1】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", order.ID),
+			logger.String("order_number", order.OrderNumber),
+			logger.Int64("product_id", order.ProductID),
+			logger.Int64("api_id", api.ID),
+			logger.Int64("param_id", apiParam.ID),
+			logger.Int64("platform_id", api.PlatformID),
+			logger.String("api_code", api.Code),
+			logger.Int64("api_account_id", api.AccountID))
 
 		// 获取所有可用的API关系
 		relations, err2 := s.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
 		if err2 != nil {
-			logger.Error("【获取API关系失败】",
-				"error", err2,
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【获取API关系失败】",
+				logger.ErrorV2(err2),
+				logger.Int64("order_id", order.ID))
 			return fmt.Errorf("get API relations failed: %v", err2)
 		}
 
@@ -969,9 +1070,9 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		var usedAPIs []map[string]interface{}
 		if order.UsedAPIs != "" {
 			if err := json.Unmarshal([]byte(order.UsedAPIs), &usedAPIs); err != nil {
-				logger.Error("【解析已使用API列表失败】",
-					"error", err,
-					"order_id", order.ID)
+				logger.WithContext(ctx).Error("【解析已使用API列表失败】",
+					logger.ErrorV2(err),
+					logger.Int64("order_id", order.ID))
 				usedAPIs = []map[string]interface{}{}
 			}
 		}
@@ -1001,23 +1102,26 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		}
 
 		if nextAPIID == 0 {
-			logger.Error("【没有可用的API】",
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【没有可用的API】", logger.Int64("order_id", order.ID))
 			// 调用订单失败处理方法，会自动退还余额和创建通知
 			if err := s.orderService.ProcessOrderFail(ctx, order.ID, "无可用API"); err != nil {
-				logger.Error("处理订单失败时出错", "error", err, "order_id", order.ID)
+				logger.WithContext(ctx).Error("处理订单失败时出错", logger.ErrorV2(err), logger.Int64("order_id", order.ID))
 			}
 			return fmt.Errorf("no available API")
 		}
 
-		logger.Info("【准备更新订单状态与切换API】", "order_id", order.ID, "from_api_id", api.ID, "to_api_id", nextAPIID, "used_apis_count", len(usedAPIs))
+		logger.WithContext(ctx).Info("【准备更新订单状态与切换API】",
+			logger.Int64("order_id", order.ID),
+			logger.Int64("from_api_id", api.ID),
+			logger.Int64("to_api_id", nextAPIID),
+			logger.Int("used_apis_count", len(usedAPIs)))
 		if err2 := s.orderRepo.UpdateStatusAndAPIID(ctx, order.ID, model.OrderStatusPendingRecharge, nextAPIID, string(usedAPIsJSON)); err2 != nil {
-			logger.Error("【更新订单状态和API ID失败】", "error", err2, "order_id", order.ID, "to_api_id", nextAPIID)
+			logger.WithContext(ctx).Error("【更新订单状态和API ID失败】", logger.ErrorV2(err2), logger.Int64("order_id", order.ID), logger.Int64("to_api_id", nextAPIID))
 			return fmt.Errorf("update order status and API ID failed: %v", err2)
 		}
-		logger.Info("【更新订单状态与API成功】", "order_id", order.ID, "new_api_id", nextAPIID)
+		logger.WithContext(ctx).Info("【更新订单状态与API成功】", logger.Int64("order_id", order.ID), logger.Int64("new_api_id", nextAPIID))
 
-		logger.Info("【准备创建重试记录】", "order_id", order.ID)
+		logger.WithContext(ctx).Info("【准备创建重试记录】", logger.Int64("order_id", order.ID))
 		submitErr := err // 保存 SubmitOrder 的错误
 		retryParams := map[string]interface{}{
 			"order_id":  order.ID,
@@ -1031,7 +1135,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		fmt.Println("retryParams =", retryParams)
 		retryParamsJSON, _ := json.Marshal(retryParams)
 
-		logger.Info("【重试参数已构建】", "order_id", order.ID, "params_keys", func() []string { keys := make([]string, 0, len(retryParams)); for k := range retryParams { keys = append(keys, k) }; return keys }())
+		logger.WithContext(ctx).Info("【重试参数已构建】", logger.Int64("order_id", order.ID), logger.Any("params_keys", func() []string { keys := make([]string, 0, len(retryParams)); for k := range retryParams { keys = append(keys, k) }; return keys }()))
 		// 计算重试时间：首次切换平台立即重试，后续重试延迟5分钟
 		nextRetryTime := time.Now()
 		if len(usedAPIs) > 1 {
@@ -1053,114 +1157,114 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 		fmt.Println("retryRecord =", retryRecord)
 
 		if s.retryRepo == nil {
-			logger.Error("【严重错误】retryRecordRepo 为空！",
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【严重错误】retryRecordRepo 为空！",
+				logger.Int64("order_id", order.ID))
 			return fmt.Errorf("retry repository is nil")
 		}
 
-		logger.Info("【准备调用Create方法】",
-			"order_id", order.ID)
+		logger.WithContext(ctx).Info("【准备调用Create方法】",
+			logger.Int64("order_id", order.ID))
 		if err := s.retryRepo.Create(ctx, retryRecord); err != nil {
-			logger.Error("【创建重试记录失败】",
-				"error", err,
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【创建重试记录失败】",
+				logger.ErrorV2(err),
+				logger.Int64("order_id", order.ID))
 			return fmt.Errorf("create retry record failed: %v", err)
 		}
-		logger.Info("【创建重试记录成功】",
-			"order_id", order.ID,
-			"retry_id", retryRecord.ID)
+		logger.WithContext(ctx).Info("【创建重试记录成功】",
+			logger.Int64("order_id", order.ID),
+			logger.Int64("retry_id", retryRecord.ID))
 
 		// 从处理队列中移除
 		if err := s.RemoveFromProcessingQueue(ctx, order.ID); err != nil {
-			logger.Error("【从处理队列移除失败】",
-				"error", err,
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【从处理队列移除失败】",
+				logger.ErrorV2(err),
+				logger.Int64("order_id", order.ID))
 		}
 
-		logger.Info("【充值任务处理完成】",
-			"order_id", order.ID,
-			"order_number", order.OrderNumber)
+		logger.WithContext(ctx).Info("【充值任务处理完成】",
+			logger.Int64("order_id", order.ID),
+			logger.String("order_number", order.OrderNumber))
 		return fmt.Errorf("submit order failed: %v", err)
 	}
 
 	// 更新订单状态为充值中
 	if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusRecharging); err != nil {
-		logger.Error("【更新订单状态失败】",
-			"error", err,
-			"order_id", order.ID)
+		logger.WithContext(ctx).Error("【更新订单状态失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", order.ID))
 		return fmt.Errorf("update order status failed: %v", err)
 	}
-	logger.Info("【订单状态更新成功】",
-		"order_id", order.ID,
-		"status", model.OrderStatusRecharging)
+	logger.WithContext(ctx).Info("【订单状态更新成功】",
+		logger.Int64("order_id", order.ID),
+		logger.String("status", fmt.Sprintf("%v", model.OrderStatusRecharging)))
 
 	// 更新订单成本价
 	err = s.orderRepo.DB().Model(&model.Order{}).
 		Where("id = ?", order.ID).
 		Update("const_price", apiParam.Price).Error
 	if err != nil {
-		logger.Error("【更新订单成本价失败】", "order_id", order.ID, "error", err)
+		logger.WithContext(ctx).Error("【更新订单成本价失败】", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 	} else {
-		logger.Info("【更新订单成本价成功】", "order_id", order.ID, "const_price", apiParam.Price)
+		logger.WithContext(ctx).Info("【更新订单成本价成功】", logger.Int64("order_id", order.ID), logger.Any("const_price", apiParam.Price))
 	}
 
 	// 从处理队列中移除
 	if err := s.RemoveFromProcessingQueue(ctx, order.ID); err != nil {
-		logger.Error("【从处理队列移除失败】",
-			"error", err,
-			"order_id", order.ID)
+		logger.WithContext(ctx).Error("【从处理队列移除失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", order.ID))
 	}
 
-	logger.Info("【充值任务处理完成】",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber)
+	logger.WithContext(ctx).Info("【充值任务处理完成】",
+		logger.Int64("order_id", order.ID),
+		logger.String("order_number", order.OrderNumber))
 	return nil
 }
 
 // CreateRechargeTask 创建充值任务
 func (s *rechargeService) CreateRechargeTask(ctx context.Context, orderID int64) error {
-	logger.Info("【开始创建充值任务】",
-		"order_id", orderID)
+	logger.WithContext(ctx).Info("【开始创建充值任务】",
+		logger.Int64("order_id", orderID))
 
 	// 获取订单信息
 	order, err := s.orderRepo.GetByID(ctx, orderID)
 	if err != nil {
-		logger.Error("【获取订单信息失败】",
-			"error", err,
-			"order_id", orderID)
+		logger.WithContext(ctx).Error("【获取订单信息失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", orderID))
 		return fmt.Errorf("get order failed: %v", err)
 	}
-	logger.Info("【获取订单信息成功】",
-		"order_id", orderID,
-		"order_number", order.OrderNumber,
-		"status", order.Status)
+	logger.WithContext(ctx).Info("【获取订单信息成功】",
+		logger.Int64("order_id", orderID),
+		logger.String("order_number", order.OrderNumber),
+		logger.Any("status", order.Status))
 
 	// 检查订单状态是否为待充值
 	if order.Status != model.OrderStatusPendingRecharge {
-		logger.Warn("【订单状态不是待充值，跳过创建充值任务】",
-			"order_id", orderID,
-			"current_status", order.Status,
-			"expected_status", model.OrderStatusPendingRecharge)
+		logger.WithContext(ctx).Warn("【订单状态不是待充值，跳过创建充值任务】",
+			logger.Int64("order_id", orderID),
+			logger.Any("current_status", order.Status),
+			logger.Any("expected_status", model.OrderStatusPendingRecharge))
 		return fmt.Errorf("order status is not pending recharge, current status: %d", order.Status)
 	}
 
-	logger.Info("【订单状态验证通过，状态为待充值】",
-		"order_id", orderID,
-		"status", order.Status)
+	logger.WithContext(ctx).Info("【订单状态验证通过，状态为待充值】",
+		logger.Int64("order_id", orderID),
+		logger.Any("status", order.Status))
 
 	// 将订单推送到充值队列
 	if err := s.PushToRechargeQueue(ctx, orderID); err != nil {
-		logger.Error("【推送订单到充值队列失败】",
-			"error", err,
-			"order_id", orderID)
+		logger.WithContext(ctx).Error("【推送订单到充值队列失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", orderID))
 		return fmt.Errorf("push to recharge queue failed: %v", err)
 	}
-	logger.Info("【推送订单到充值队列成功】",
-		"order_id", orderID)
+	logger.WithContext(ctx).Info("【推送订单到充值队列成功】",
+		logger.Int64("order_id", orderID))
 
-	logger.Info("【充值任务创建完成】",
-		"order_id", orderID,
-		"order_number", order.OrderNumber)
+	logger.WithContext(ctx).Info("【充值任务创建完成】",
+		logger.Int64("order_id", orderID),
+		logger.String("order_number", order.OrderNumber))
 	return nil
 }
 
@@ -1168,22 +1272,24 @@ func (s *rechargeService) CreateRechargeTask(ctx context.Context, orderID int64)
 // getPlatformAPIByOrder 直接使用订单对象获取平台API信息
 func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *model.Order) (*model.PlatformAPI, *model.PlatformAPIParam, error) {
 
-	logger.Info("【获取平台API信息】", "order_id", order.ID, "product_id", order.ProductID)
+	logger.WithContext(ctx).Info("【获取平台API信息】",
+		logger.Int64("order_id", order.ID),
+		logger.Int64("product_id", order.ProductID))
 
 	//product_api_relations
 	r, err := s.productAPIRelationRepo.GetByProductID(ctx, order.ProductID)
 	if err != nil {
 		// 将订单设置为失败状态
 		if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
-			logger.Error("【更新订单状态失败】",
-				"error", err,
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【更新订单状态失败】",
+				logger.ErrorV2(err),
+				logger.Int64("order_id", order.ID))
 		}
 		// 更新订单备注
 		if err := s.orderRepo.UpdateRemark(ctx, order.ID, "商品未绑定接口"); err != nil {
-			logger.Error("【更新订单备注失败】",
-				"error", err,
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【更新订单备注失败】",
+				logger.ErrorV2(err),
+				logger.Int64("order_id", order.ID))
 		}
 		return nil, nil, fmt.Errorf("商品未绑定接口: %v", err)
 	}
@@ -1194,15 +1300,15 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 		if errors.Is(err, repository.ErrNoAPIForProduct) {
 			// 将订单设置为失败状态
 			if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
-				logger.Error("【更新订单状态失败】",
-					"error", err,
-					"order_id", order.ID)
+				logger.WithContext(ctx).Error("【更新订单状态失败】",
+					logger.ErrorV2(err),
+					logger.Int64("order_id", order.ID))
 			}
 			// 更新订单备注
 			if err := s.orderRepo.UpdateRemark(ctx, order.ID, "商品未绑定接口"); err != nil {
-				logger.Error("【更新订单备注失败】",
-					"error", err,
-					"order_id", order.ID)
+				logger.WithContext(ctx).Error("【更新订单备注失败】",
+					logger.ErrorV2(err),
+					logger.Int64("order_id", order.ID))
 			}
 			return nil, nil, fmt.Errorf("商品未绑定接口")
 		}
@@ -1215,15 +1321,15 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 		if errors.Is(err, repository.ErrNoAPIForProduct) {
 			// 将订单设置为失败状态
 			if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
-				logger.Error("【更新订单状态失败】",
-					"error", err,
-					"order_id", order.ID)
+				logger.WithContext(ctx).Error("【更新订单状态失败】",
+					logger.ErrorV2(err),
+					logger.Int64("order_id", order.ID))
 			}
 			// 更新订单备注
 			if err := s.orderRepo.UpdateRemark(ctx, order.ID, "商品未绑定接口"); err != nil {
-				logger.Error("【更新订单备注失败】",
-					"error", err,
-					"order_id", order.ID)
+				logger.WithContext(ctx).Error("【更新订单备注失败】",
+					logger.ErrorV2(err),
+					logger.Int64("order_id", order.ID))
 			}
 			return nil, nil, fmt.Errorf("商品未绑定接口")
 		}
@@ -1232,22 +1338,22 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 
 	// 检查平台API状态
 	if api.Status != 1 {
-		logger.Error("【平台API已禁用】",
-			"api_id", api.ID,
-			"api_code", api.Code,
-			"status", api.Status,
-			"order_id", order.ID)
+		logger.WithContext(ctx).Error("【平台API已禁用】",
+			logger.Int64("api_id", api.ID),
+			logger.String("api_code", api.Code),
+			logger.Int("status", api.Status),
+			logger.Int64("order_id", order.ID))
 		// 将订单设置为失败状态
 		if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
-			logger.Error("【更新订单状态失败】",
-				"error", err,
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【更新订单状态失败】",
+				logger.ErrorV2(err),
+				logger.Int64("order_id", order.ID))
 		}
 		// 更新订单备注
 		if err := s.orderRepo.UpdateRemark(ctx, order.ID, "平台API已禁用"); err != nil {
-			logger.Error("【更新订单备注失败】",
-				"error", err,
-				"order_id", order.ID)
+			logger.WithContext(ctx).Error("【更新订单备注失败】",
+				logger.ErrorV2(err),
+				logger.Int64("order_id", order.ID))
 		}
 		return nil, nil, fmt.Errorf("平台API已禁用: api_id=%d, status=%d", api.ID, api.Status)
 	}
@@ -1267,12 +1373,12 @@ func (s *rechargeService) GetPlatformAPIByOrderID(ctx context.Context, orderID s
 
 // PushToRechargeQueue 将订单推送到充值队列
 func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64) error {
-	logger.Info("【准备推送订单到充值队列】",
-		"order_id", orderID)
+	logger.WithContext(ctx).Info("【准备推送订单到充值队列】",
+		logger.Int64("order_id", orderID))
 
 	if s.redisClient == nil {
-		logger.Error("【Redis客户端为空】",
-			"order_id", orderID)
+		logger.WithContext(ctx).Error("【Redis客户端为空】",
+			logger.Int64("order_id", orderID))
 		return fmt.Errorf("redis client is nil")
 	}
 
@@ -1280,38 +1386,37 @@ func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64
 	orderIDStr := strconv.FormatInt(orderID, 10)
 	exists, err := s.redisClient.LPos(ctx, "recharge_queue", orderIDStr, redisV8.LPosArgs{}).Result()
 	if err == nil {
-		logger.Info("【订单已在充值队列中，跳过推送】",
-			"order_id", orderID,
-			"position", exists)
+		logger.WithContext(ctx).Info("【订单已在充值队列中，跳过推送】",
+			logger.Int64("order_id", orderID),
+			logger.Int64("position", exists))
 		return nil
 	}
 	// 如果是redis.Nil错误，说明订单不在队列中，可以继续推送
 	if err != redisV8.Nil {
-		logger.Error("【检查订单是否在队列中失败】",
-			"error", err,
-			"order_id", orderID)
+		logger.WithContext(ctx).Error("【检查订单是否在队列中失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", orderID))
 		// 即使检查失败，也继续推送，避免丢失订单
 	}
 
 	err = s.redisClient.LPush(ctx, "recharge_queue", orderID).Err()
 	if err != nil {
-		logger.Error("【推送订单到充值队列失败】",
-			"error", err,
-			"order_id", orderID)
+		logger.WithContext(ctx).Error("【推送订单到充值队列失败】",
+			logger.ErrorV2(err),
+			logger.Int64("order_id", orderID))
 		return err
 	}
 
-	logger.Info("【推送订单到充值队列成功】",
-		"order_id", orderID)
+	logger.WithContext(ctx).Info("【推送订单到充值队列成功】", logger.Int64("order_id", orderID))
 	return nil
 }
 
 // PopFromRechargeQueue 从充值队列获取订单
 func (s *rechargeService) PopFromRechargeQueue(ctx context.Context) (int64, error) {
-	logger.Debug("【准备从充值队列获取订单】")
+	logger.WithContext(ctx).Debug("【准备从充值队列获取订单】")
 
 	if s.redisClient == nil {
-		logger.Error("【Redis客户端为空】")
+		logger.WithContext(ctx).Error("【Redis客户端为空】")
 		return 0, fmt.Errorf("redis client is nil")
 	}
 
@@ -1319,24 +1424,20 @@ func (s *rechargeService) PopFromRechargeQueue(ctx context.Context) (int64, erro
 	result, err := s.redisClient.BRPopLPush(ctx, "recharge_queue", "recharge_processing", 0).Result()
 	if err != nil {
 		if err == redisV8.Nil {
-			logger.Debug("【充值队列为空】")
+			logger.WithContext(ctx).Debug("【充值队列为空】")
 			return 0, nil
 		}
-		logger.Error("【从充值队列获取订单失败】",
-			"error", err)
+		logger.WithContext(ctx).Error("【从充值队列获取订单失败】", logger.ErrorV2(err))
 		return 0, err
 	}
 
 	orderID, err := strconv.ParseInt(result, 10, 64)
 	if err != nil {
-		logger.Error("【解析订单ID失败】",
-			"error", err,
-			"result", result)
+		logger.WithContext(ctx).Error("【解析订单ID失败】", logger.ErrorV2(err), logger.String("result", result))
 		return 0, fmt.Errorf("parse order id failed: %v", err)
 	}
 
-	logger.Info("【从充值队列获取订单成功】",
-		"order_id", orderID)
+	logger.WithContext(ctx).Info("【从充值队列获取订单成功】", logger.Int64("order_id", orderID))
 	return orderID, nil
 }
 
@@ -1352,40 +1453,47 @@ func (s *rechargeService) GetOrderByID(ctx context.Context, orderID int64) (*mod
 
 // CheckRechargingOrders 检查充值中订单
 func (s *rechargeService) CheckRechargingOrders(ctx context.Context) error {
-	logger.Info("【开始检查充值中订单】开始执行定时检查任务")
+	logger.WithContext(ctx).Info("【开始检查充值中订单】开始执行定时检查任务")
 
 	// 获取所有充值中的订单
 	orders, err := s.orderRepo.GetByStatus(ctx, model.OrderStatusRecharging)
 	if err != nil {
-		logger.Error("【获取充值中订单失败】error: %v", err)
+		logger.WithContext(ctx).Error("【获取充值中订单失败】", logger.ErrorV2(err))
 		return fmt.Errorf("get recharging orders failed: %v", err)
 	}
 
-	logger.Info("【获取充值中订单成功】共获取到 %d 个订单", len(orders))
+	logger.WithContext(ctx).Info("【获取充值中订单成功】", logger.Int("total", len(orders)))
 
 	now := time.Now()
 	checkedCount := 0
 	for _, order := range orders {
 		// 检查订单是否超过5分钟
 		if order.UpdatedAt.Add(5 * time.Minute).Before(now) {
-			logger.Info("【发现超时订单】order_id: %d, order_number: %s, 最后更新时间: %s, 已超时: %v",
-				order.ID, order.OrderNumber, order.UpdatedAt.Format("2006-01-02 15:04:05"), now.Sub(order.UpdatedAt))
+			logger.WithContext(ctx).Info("【发现超时订单】", 
+				logger.Int64("order_id", order.ID), 
+				logger.String("order_number", order.OrderNumber), 
+				logger.String("last_update", order.UpdatedAt.Format("2006-01-02 15:04:05")), 
+				logger.String("overdue", now.Sub(order.UpdatedAt).String()))
 
 			// 查询订单状态
 			if err := s.manager.QueryOrderStatus(ctx, order); err != nil {
-				logger.Error("【查询订单状态失败】order_id: %d, order_number: %s, error: %v",
-					order.ID, order.OrderNumber, err)
+				logger.WithContext(ctx).Error("【查询订单状态失败】", 
+					logger.Int64("order_id", order.ID), 
+					logger.String("order_number", order.OrderNumber), 
+					logger.ErrorV2(err))
 				continue
 			}
 
-			logger.Info("【订单状态查询完成】order_id: %d, order_number: %s",
-				order.ID, order.OrderNumber)
+			logger.WithContext(ctx).Info("【订单状态查询完成】", 
+				logger.Int64("order_id", order.ID), 
+				logger.String("order_number", order.OrderNumber))
 			checkedCount++
 		}
 	}
 
-	logger.Info("【充值中订单检查完成】共检查 %d 个订单，其中 %d 个订单需要查询状态",
-		len(orders), checkedCount)
+	logger.WithContext(ctx).Info("【充值中订单检查完成】", 
+		logger.Int("total", len(orders)), 
+		logger.Int("checked_count", checkedCount))
 	return nil
 }
 
@@ -1407,7 +1515,7 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			logger.Error("【事务回滚】order_id: %d, panic: %v", order.ID, r)
+			logger.WithContext(ctx).Error("【事务回滚】", logger.Int64("order_id", order.ID), logger.Any("panic", r))
 		}
 	}()
 
@@ -1418,108 +1526,91 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 	})
 	if result.Error != nil {
 		tx.Rollback()
-		logger.Error("【更新订单状态和成本价失败】order_id: %d, error: %v", order.ID, result.Error)
+		logger.WithContext(ctx).Error("【更新订单状态和成本价失败】", logger.Int64("order_id", order.ID), logger.ErrorV2(result.Error))
 		return fmt.Errorf("update order status and cost price failed: %v", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		tx.Rollback()
-		logger.Error("【更新订单状态和成本价失败】order_id: %d, 没有记录被更新", order.ID)
+		logger.WithContext(ctx).Error("【更新订单状态和成本价失败】", logger.Int64("order_id", order.ID), logger.String("reason", "没有记录被更新"))
 		return fmt.Errorf("no record updated")
 	}
 
 	// 提交事务
 	if err := tx.Commit().Error; err != nil {
-		logger.Error("【提交事务失败】order_id: %d, error: %v", order.ID, err)
+		logger.WithContext(ctx).Error("【提交事务失败】", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 		return fmt.Errorf("commit transaction failed: %v", err)
 	}
 
-	logger.Info(fmt.Sprintf("【订单状态和成本价更新成功】order_id: %d, status: %d, const_price: %f",
-		order.ID, model.OrderStatusRecharging, apiParam.Price))
+	logger.WithContext(ctx).Info("【订单状态和成本价更新成功】", logger.Int64("order_id", order.ID), logger.Int("status", int(model.OrderStatusRecharging)), logger.Any("const_price", apiParam.Price))
 	return nil
 }
 
 // ProcessRetryTask 处理重试任务
 func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *model.OrderRetryRecord) error {
-	logger.Info("【开始处理重试任务】retry_id: %d, order_id: %d", retryRecord.ID, retryRecord.OrderID)
+	logger.WithContext(ctx).Info("【开始处理重试任务】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID))
 
 	// 1. 获取订单信息
 	order, err := s.orderRepo.GetByID(ctx, retryRecord.OrderID)
 	if err != nil {
-		logger.Error("【获取订单信息失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, err)
+		logger.WithContext(ctx).Error("【获取订单信息失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 		return fmt.Errorf("get order failed: %v", err)
 	}
-	logger.Info("【获取订单信息成功】retry_id: %d, order_id: %d, status: %d, order_number: %s",
-		retryRecord.ID, retryRecord.OrderID, order.Status, order.OrderNumber)
+	logger.WithContext(ctx).Info("【获取订单信息成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Int("status", int(order.Status)), logger.String("order_number", order.OrderNumber))
 
 	// 2. 获取平台API信息
 	api, err := s.platformRepo.GetAPIByID(ctx, retryRecord.APIID)
 	if err != nil {
-		logger.Error("【获取平台API信息失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, err)
+		logger.WithContext(ctx).Error("【获取平台API信息失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 		return fmt.Errorf("get platform api failed: %v", err)
 	}
-	logger.Info("【获取平台API信息成功】retry_id: %d, order_id: %d, api_id: %d, api_name: %s",
-		retryRecord.ID, retryRecord.OrderID, api.ID, api.Name)
+	logger.WithContext(ctx).Info("【获取平台API信息成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Int64("api_id", api.ID), logger.String("api_name", api.Name))
 
 	// 3. 获取API参数信息
 	apiParam, err := s.platformAPIParamRepo.GetByID(ctx, retryRecord.ParamID)
 	if err != nil {
-		logger.Error("【获取API参数信息失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, err)
+		logger.WithContext(ctx).Error("【获取API参数信息失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 		return err
 	}
-	logger.Info("【获取API参数信息成功】retry_id: %d, order_id: %d, param_id: %d",
-		retryRecord.ID, retryRecord.OrderID, apiParam.ID)
+	logger.WithContext(ctx).Info("【获取API参数信息成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Int64("param_id", apiParam.ID))
 
 	// 4. 提交订单到平台
-	logger.Info("【开始提交订单到平台】retry_id: %d, order_id: %d, order_number: %s",
-		retryRecord.ID, retryRecord.OrderID, order.OrderNumber)
+	logger.WithContext(ctx).Info("【开始提交订单到平台】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.String("order_number", order.OrderNumber))
 	if err := s.manager.SubmitOrder(ctx, order, api, apiParam); err != nil {
-		logger.Error("【提交订单到平台失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, err)
+		logger.WithContext(ctx).Error("【提交订单到平台失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 		return fmt.Errorf("submit order failed: %v", err)
 	}
-	logger.Info("【提交订单到平台成功】retry_id: %d, order_id: %d, order_number: %s",
-		retryRecord.ID, retryRecord.OrderID, order.OrderNumber)
+	logger.WithContext(ctx).Info("【提交订单到平台成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.String("order_number", order.OrderNumber))
 
 	// 5. 开启事务
-	logger.Info("【开始更新订单状态和平台信息】retry_id: %d, order_id: %d, order_number: %s",
-		retryRecord.ID, retryRecord.OrderID, order.OrderNumber)
+	logger.WithContext(ctx).Info("【开始更新订单状态和平台信息】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.String("order_number", order.OrderNumber))
 	tx := s.orderRepo.(*repository.OrderRepositoryImpl).DB().Begin()
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			logger.Error("【事务回滚】retry_id: %d, order_id: %d, panic: %v",
-				retryRecord.ID, retryRecord.OrderID, r)
+			logger.WithContext(ctx).Error("【事务回滚】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Any("panic", r))
 		}
 	}()
 
 	// 6. 更新订单状态
-	logger.Info("【开始更新订单状态】retry_id: %d, order_id: %d, order_number: %s, old_status: %d, new_status: %d",
-		retryRecord.ID, retryRecord.OrderID, order.OrderNumber, order.Status, model.OrderStatusRecharging)
+	logger.WithContext(ctx).Info("【开始更新订单状态】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.String("order_number", order.OrderNumber), logger.Int("old_status", int(order.Status)), logger.Int("new_status", int(model.OrderStatusRecharging)))
 	result := tx.Model(&model.Order{}).Where("id = ?", retryRecord.OrderID).Updates(map[string]interface{}{
 		"status":      model.OrderStatusRecharging,
 		"const_price": apiParam.Price,
 	})
 	if result.Error != nil {
 		tx.Rollback()
-		logger.Error("【更新订单状态失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, result.Error)
+		logger.WithContext(ctx).Error("【更新订单状态失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(result.Error))
 		return fmt.Errorf("update order status failed: %v", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		tx.Rollback()
-		logger.Error("【更新订单状态失败】retry_id: %d, order_id: %d, 没有记录被更新",
-			retryRecord.ID, retryRecord.OrderID)
+		logger.WithContext(ctx).Error("【更新订单状态失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.String("reason", "没有记录被更新"))
 		return fmt.Errorf("no record updated")
 	}
-	logger.Info("【更新订单状态和成本价成功】retry_id: %d, order_id: %d, rows_affected: %d, const_price: %f",
-		retryRecord.ID, retryRecord.OrderID, result.RowsAffected, apiParam.Price)
+	logger.WithContext(ctx).Info("【更新订单状态和成本价成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Int64("rows_affected", result.RowsAffected), logger.Any("const_price", apiParam.Price))
 
 	// 7. 更新平台信息
-	logger.Info("【开始更新平台信息】retry_id: %d, order_id: %d, platform_id: %d, api_id: %d, param_id: %d",
-		retryRecord.ID, retryRecord.OrderID, api.ID, api.ID, apiParam.ID)
+	logger.WithContext(ctx).Info("【开始更新平台信息】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Int64("platform_id", api.ID), logger.Int64("api_id", api.ID), logger.Int64("param_id", apiParam.ID))
 	result = tx.Model(&model.Order{}).Where("id = ?", retryRecord.OrderID).Updates(map[string]interface{}{
 		"platform_id":      api.ID,
 		"api_cur_id":       api.ID,
@@ -1529,63 +1620,55 @@ func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *mod
 	})
 	if result.Error != nil {
 		tx.Rollback()
-		logger.Error("【更新平台信息失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, result.Error)
+		logger.WithContext(ctx).Error("【更新平台信息失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(result.Error))
 		return fmt.Errorf("update platform info failed: %v", result.Error)
 	}
 	if result.RowsAffected == 0 {
 		tx.Rollback()
-		logger.Error("【更新平台信息失败】retry_id: %d, order_id: %d, 没有记录被更新",
-			retryRecord.ID, retryRecord.OrderID)
+		logger.WithContext(ctx).Error("【更新平台信息失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.String("reason", "没有记录被更新"))
 		return fmt.Errorf("no record updated")
 	}
-	logger.Info("【更新平台信息成功】retry_id: %d, order_id: %d, rows_affected: %d",
-		retryRecord.ID, retryRecord.OrderID, result.RowsAffected)
+	logger.WithContext(ctx).Info("【更新平台信息成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Int64("rows_affected", result.RowsAffected))
 
 	// 8. 更新重试记录状态
-	logger.Info("【开始更新重试记录状态】retry_id: %d, order_id: %d", retryRecord.ID, retryRecord.OrderID)
+	logger.WithContext(ctx).Info("【开始更新重试记录状态】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID))
 	if err := tx.Model(&model.OrderRetryRecord{}).Where("id = ?", retryRecord.ID).Updates(map[string]interface{}{
 		"status":      1, // 1: 处理成功
 		"retry_count": retryRecord.RetryCount + 1,
 	}).Error; err != nil {
 		tx.Rollback()
-		logger.Error("【更新重试记录状态失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, err)
+		logger.WithContext(ctx).Error("【更新重试记录状态失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 		return fmt.Errorf("update retry record failed: %v", err)
 	}
-	logger.Info("【更新重试记录状态成功】retry_id: %d, order_id: %d", retryRecord.ID, retryRecord.OrderID)
+	logger.WithContext(ctx).Info("【更新重试记录状态成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID))
 
 	// 9. 提交事务
 	if err := tx.Commit().Error; err != nil {
-		logger.Error("【提交事务失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, err)
+		logger.WithContext(ctx).Error("【提交事务失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 		return fmt.Errorf("commit transaction failed: %v", err)
 	}
-	logger.Info("【提交事务成功】retry_id: %d, order_id: %d", retryRecord.ID, retryRecord.OrderID)
+	logger.WithContext(ctx).Info("【提交事务成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID))
 
 	// 9.1 更新订单成本价
-	logger.Info("【开始更新订单成本价】retry_id: %d, order_id: %d, const_price: %f", retryRecord.ID, retryRecord.OrderID, apiParam.Price)
+	logger.WithContext(ctx).Info("【开始更新订单成本价】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Any("const_price", apiParam.Price))
 	err = s.orderRepo.DB().Model(&model.Order{}).
 		Where("id = ?", retryRecord.OrderID).
 		Update("const_price", apiParam.Price).Error
 	if err != nil {
-		logger.Error("【更新订单成本价失败】retry_id: %d, order_id: %d, error: %v", retryRecord.ID, retryRecord.OrderID, err)
+		logger.WithContext(ctx).Error("【更新订单成本价失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 	} else {
-		logger.Info("【更新订单成本价成功】retry_id: %d, order_id: %d, const_price: %f", retryRecord.ID, retryRecord.OrderID, apiParam.Price)
+		logger.WithContext(ctx).Info("【更新订单成本价成功】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.Any("const_price", apiParam.Price))
 	}
 
 	// 10. 验证更新结果
 	updatedOrder, err := s.orderRepo.GetByID(ctx, retryRecord.OrderID)
 	if err != nil {
-		logger.Error("【验证更新结果失败】retry_id: %d, order_id: %d, error: %v",
-			retryRecord.ID, retryRecord.OrderID, err)
+		logger.WithContext(ctx).Error("【验证更新结果失败】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 	} else {
-		logger.Info("【验证更新结果】retry_id: %d, order_id: %d, order_number: %s, status: %d, platform_id: %d",
-			retryRecord.ID, retryRecord.OrderID, updatedOrder.OrderNumber, updatedOrder.Status, updatedOrder.PlatformId)
+		logger.WithContext(ctx).Info("【验证更新结果】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.String("order_number", updatedOrder.OrderNumber), logger.Int("status", int(updatedOrder.Status)), logger.Any("platform_id", updatedOrder.PlatformId))
 	}
 
-	logger.Info("【重试任务处理完成】retry_id: %d, order_id: %d, order_number: %s",
-		retryRecord.ID, retryRecord.OrderID, order.OrderNumber)
+	logger.WithContext(ctx).Info("【重试任务处理完成】", logger.Int64("retry_id", retryRecord.ID), logger.Int64("order_id", retryRecord.OrderID), logger.String("order_number", order.OrderNumber))
 	return nil
 }
 

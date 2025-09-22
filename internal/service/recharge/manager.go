@@ -35,6 +35,8 @@ func NewManager(db *gorm.DB) *Manager {
 			"chongzhi":     reflect.TypeOf((*ChongzhiPlatform)(nil)).Elem(),
 			"payc2":        reflect.TypeOf((*Payc2Platform)(nil)).Elem(),
 			"lingshi":      reflect.TypeOf((*LingshiPlatform)(nil)).Elem(),
+			// 新增对 xianyinke 的支持（作为 external_api 的别名）
+			"xianyinke":    reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 		},
 	}
 }
@@ -86,6 +88,9 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewPayc2Platform(m.platformRepo.GetDB())
 	case "lingshi":
 		platform = NewLingshiPlatform(m.platformRepo.GetDB())
+	case "xianyinke":
+		// 将 xianyinke 作为 external_api 的别名平台，避免启动时报不支持
+		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}
@@ -168,6 +173,9 @@ func (m *Manager) getPlatformTypeByName(name string) reflect.Type {
 		return reflect.TypeOf((*MishiPlatform)(nil)).Elem()
 	case "chongzhi":
 		return reflect.TypeOf((*ChongzhiPlatform)(nil)).Elem()
+	case "xianyinke":
+		// 将 xianyinke 视为 external_api 类型
+		return reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem()
 	default:
 		return nil
 	}
@@ -181,44 +189,38 @@ func (m *Manager) QueryOrderStatus(ctx context.Context, order *model.Order) erro
 		return fmt.Errorf("failed to get platform: %v", err)
 	}
 
-	// 查询订单状态
 	status, err := platform.QueryOrderStatus(ctx, order)
 	if err != nil {
-		return err
+		return fmt.Errorf("query order status failed: %v", err)
 	}
 
 	// 更新订单状态
-	order.Status = model.OrderStatus(status)
+	order.Status = status
 	return nil
 }
 
-// HandleCallback 处理平台回调
+// HandleCallback 处理回调
 func (m *Manager) HandleCallback(ctx context.Context, platformCode string, data []byte) error {
-	// 获取平台实例
 	platform, err := m.GetPlatform(platformCode)
 	if err != nil {
 		return fmt.Errorf("failed to get platform: %v", err)
 	}
 
-	// 解析回调数据
 	callbackData, err := platform.ParseCallbackData(data)
 	if err != nil {
-		return fmt.Errorf("failed to parse callback data: %v", err)
+		return fmt.Errorf("parse callback data failed: %v", err)
 	}
 
-	// TODO: 处理回调数据
+	// TODO: 根据 callbackData 更新订单状态
 	_ = callbackData
 	return nil
 }
 
 // ParseCallbackData 解析回调数据
 func (m *Manager) ParseCallbackData(platformCode string, data []byte) (*model.CallbackData, error) {
-	// 获取平台实例
 	platform, err := m.GetPlatform(platformCode)
 	if err != nil {
-		return nil, fmt.Errorf("get platform failed: %v", err)
+		return nil, fmt.Errorf("failed to get platform: %v", err)
 	}
-
-	// 调用平台的 ParseCallbackData 方法
 	return platform.ParseCallbackData(data)
 }

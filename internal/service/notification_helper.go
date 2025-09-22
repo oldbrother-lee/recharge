@@ -46,63 +46,72 @@ func (h *NotificationHelper) SendOrderStatusNotification(ctx context.Context, or
 	if err == nil {
 		switch existing.Status {
 		case 3: // 已成功
-			logger.Info("已存在成功的状态变更通知，跳过重复创建",
-				"order_id", order.ID,
-				"target_status", int(newStatus),
-				"notification_id", existing.ID)
+			logger.WithContext(ctx).Info("已存在成功的状态变更通知，跳过重复创建",
+				logger.Int64("order_id", order.ID),
+				logger.Int("target_status", int(newStatus)),
+				logger.Int64("notification_id", existing.ID),
+			)
 			return nil
 		case 1, 2: // 待处理/处理中，复用并重推
-			logger.Info("已存在待处理/处理中通知，复用并重推到队列",
-				"order_id", order.ID,
-				"target_status", int(newStatus),
-				"notification_id", existing.ID)
+			logger.WithContext(ctx).Info("已存在待处理/处理中通知，复用并重推到队列",
+				logger.Int64("order_id", order.ID),
+				logger.Int("target_status", int(newStatus)),
+				logger.Int64("notification_id", existing.ID),
+			)
 			if pushErr := h.queue.Push(ctx, "notification_queue", &existing); pushErr != nil {
-				logger.Error("重推通知到队列失败",
-					"order_id", order.ID,
-					"notification_id", existing.ID,
-					"error", pushErr)
+				logger.WithContext(ctx).Error("重推通知到队列失败",
+					logger.Int64("order_id", order.ID),
+					logger.Int64("notification_id", existing.ID),
+					logger.ErrorV2(pushErr),
+				)
 				return pushErr
 			}
-			logger.Info("重推通知到队列成功",
-				"order_id", order.ID,
-				"notification_id", existing.ID)
+			logger.WithContext(ctx).Info("重推通知到队列成功",
+				logger.Int64("order_id", order.ID),
+				logger.Int64("notification_id", existing.ID),
+			)
 			return nil
 		case 4: // 失败，重置为待处理并重推
-			logger.Info("存在失败通知，重置为待处理并重推",
-				"order_id", order.ID,
-				"target_status", int(newStatus),
-				"notification_id", existing.ID)
+			logger.WithContext(ctx).Info("存在失败通知，重置为待处理并重推",
+				logger.Int64("order_id", order.ID),
+				logger.Int("target_status", int(newStatus)),
+				logger.Int64("notification_id", existing.ID),
+			)
 			if updErr := h.notificationRepo.UpdateStatus(ctx, existing.ID, 1); updErr != nil {
-				logger.Error("重置失败通知状态失败",
-					"order_id", order.ID,
-					"notification_id", existing.ID,
-					"error", updErr)
+				logger.WithContext(ctx).Error("重置失败通知状态失败",
+					logger.Int64("order_id", order.ID),
+					logger.Int64("notification_id", existing.ID),
+					logger.ErrorV2(updErr),
+				)
 				// 继续尝试推送
 			}
 			if pushErr := h.queue.Push(ctx, "notification_queue", &existing); pushErr != nil {
-				logger.Error("重推失败通知到队列失败",
-					"order_id", order.ID,
-					"notification_id", existing.ID,
-					"error", pushErr)
+				logger.WithContext(ctx).Error("重推失败通知到队列失败",
+					logger.Int64("order_id", order.ID),
+					logger.Int64("notification_id", existing.ID),
+					logger.ErrorV2(pushErr),
+				)
 				return pushErr
 			}
-			logger.Info("失败通知重推成功",
-				"order_id", order.ID,
-				"notification_id", existing.ID)
+			logger.WithContext(ctx).Info("失败通知重推成功",
+				logger.Int64("order_id", order.ID),
+				logger.Int64("notification_id", existing.ID),
+			)
 			return nil
 		}
 	} else if err != gorm.ErrRecordNotFound {
 		// 查询错误，记录日志但不中断创建流程
-		logger.Error("查询现有通知记录失败，继续走创建流程",
-			"order_id", order.ID,
-			"target_status", int(newStatus),
-			"error", err)
+		logger.WithContext(ctx).Error("查询现有通知记录失败，继续走创建流程",
+			logger.Int64("order_id", order.ID),
+			logger.Int("target_status", int(newStatus)),
+			logger.ErrorV2(err),
+		)
 	}
 
 	// 序列化订单快照
 	orderData, mErr := json.Marshal(order)
 	if mErr != nil {
-		logger.Error("序列化订单快照失败", "order_id", order.ID, "error", mErr)
+		logger.WithContext(ctx).Error("序列化订单快照失败", logger.Int64("order_id", order.ID), logger.ErrorV2(mErr))
 		return mErr
 	}
 
@@ -122,23 +131,26 @@ func (h *NotificationHelper) SendOrderStatusNotification(ctx context.Context, or
 		if err := tx.Create(notification).Error; err != nil {
 			// 避免唯一约束冲突导致报错，这里做一次容错处理
 			if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "duplicate") {
-				logger.Warn("检测到通知记录唯一键冲突，复用已有记录",
-					"order_id", order.ID,
-					"target_status", int(newStatus),
-					"error", err)
+				logger.WithContext(ctx).Warn("检测到通知记录唯一键冲突，复用已有记录",
+					logger.Int64("order_id", order.ID),
+					logger.Int("target_status", int(newStatus)),
+					logger.ErrorV2(err),
+				)
 				var exist2 notificationModel.NotificationRecord
 				if qErr := tx.
 					Where("order_id = ? AND notification_type = ? AND target_status = ?", order.ID, "order_status_changed", int(newStatus)).
 					Order("id DESC").
 					First(&exist2).Error; qErr == nil {
-					logger.Info("复用已有通知记录并推送到队列",
-						"order_id", order.ID,
-						"notification_id", exist2.ID)
+					logger.WithContext(ctx).Info("复用已有通知记录并推送到队列",
+						logger.Int64("order_id", order.ID),
+						logger.Int64("notification_id", exist2.ID),
+					)
 					if pushErr := h.queue.Push(ctx, "notification_queue", &exist2); pushErr != nil {
-						logger.Error("推送已有通知到队列失败",
-							"order_id", order.ID,
-							"notification_id", exist2.ID,
-							"error", pushErr)
+						logger.WithContext(ctx).Error("推送已有通知到队列失败",
+							logger.Int64("order_id", order.ID),
+							logger.Int64("notification_id", exist2.ID),
+							logger.ErrorV2(pushErr),
+						)
 						return pushErr
 					}
 					return nil
@@ -146,27 +158,30 @@ func (h *NotificationHelper) SendOrderStatusNotification(ctx context.Context, or
 				// 查询不到则返回原始错误
 				return err
 			}
-			logger.Error("创建通知记录失败", "order_id", order.ID, "error", err)
+			logger.WithContext(ctx).Error("创建通知记录失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
 			return err
 		}
 
 		// 推送通知到队列
-		logger.Info("准备推送通知到队列",
-			"order_id", order.ID,
-			"new_status", int(newStatus),
-			"notification_id", notification.ID)
+		logger.WithContext(ctx).Info("准备推送通知到队列",
+			logger.Int64("order_id", order.ID),
+			logger.Int("new_status", int(newStatus)),
+			logger.Int64("notification_id", notification.ID),
+		)
 
 		if err := h.queue.Push(ctx, "notification_queue", notification); err != nil {
-			logger.Error("推送通知到队列失败",
-				"order_id", order.ID,
-				"notification_id", notification.ID,
-				"error", err)
+			logger.WithContext(ctx).Error("推送通知到队列失败",
+				logger.Int64("order_id", order.ID),
+				logger.Int64("notification_id", notification.ID),
+				logger.ErrorV2(err),
+			)
 			return err
 		}
 
-		logger.Info("推送通知到队列成功",
-			"order_id", order.ID,
-			"notification_id", notification.ID)
+		logger.WithContext(ctx).Info("推送通知到队列成功",
+			logger.Int64("order_id", order.ID),
+			logger.Int64("notification_id", notification.ID),
+		)
 		return nil
 	})
 }
@@ -202,6 +217,10 @@ func (h *NotificationHelper) SendOrderCallbackNotification(ctx context.Context, 
 		return fmt.Errorf("推送到通知队列失败: %w", err)
 	}
 
-	logger.Info("订单回调通知已推送到队列", "order_id", orderID, "order_number", order.OrderNumber, "platform_code", platformCode)
+	logger.WithContext(ctx).Info("订单回调通知已推送到队列",
+		logger.Int64("order_id", orderID),
+		logger.String("order_number", order.OrderNumber),
+		logger.String("platform_code", platformCode),
+	)
 	return nil
 }

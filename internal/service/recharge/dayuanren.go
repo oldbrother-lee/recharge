@@ -134,42 +134,42 @@ func (p *DayuanrenPlatform) SubmitOrder(ctx context.Context, order *model.Order,
 		form.Add(k, v)
 	}
 
-	logger.Info("大猿人请求参数", "order_id", order.ID, "order_number", order.OrderNumber, "url", api.URL+"/index/recharge", "form", form.Encode())
+	logger.Info("大猿人请求参数", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "url", api.URL+"/index/recharge", "form", form.Encode())
 
 	resp, err := http.PostForm(api.URL+"/index/recharge", form)
 	if err != nil {
-		logger.Error("大猿人请求失败", "order_id", order.ID, "order_number", order.OrderNumber, "error", err, "url", api.URL+"/index/recharge", "form", form.Encode())
+		logger.Error("大猿人请求失败", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "error", err, "url", api.URL+"/index/recharge", "form", form.Encode())
 		return fmt.Errorf("请求失败: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Error("读取大猿人响应失败", "order_id", order.ID, "order_number", order.OrderNumber, "error", err)
+		logger.Error("读取大猿人响应失败", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "error", err)
 		return fmt.Errorf("读取响应失败: %v", err)
 	}
-	logger.Info("大猿人响应原文", "order_id", order.ID, "order_number", order.OrderNumber, "body", string(body))
+	logger.Info("大猿人响应原文", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "body", string(body))
 
 	var respData Response
 	if err := json.Unmarshal(body, &respData); err != nil {
-		logger.Error("解析大猿人响应失败", "order_id", order.ID, "order_number", order.OrderNumber, "error", err, "body", string(body))
+		logger.Error("解析大猿人响应失败", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "error", err, "body", string(body))
 		return fmt.Errorf("解析响应失败: %v", err)
 	}
-	logger.Info("大猿人响应结构体", "order_id", order.ID, "order_number", order.OrderNumber, "respData", respData)
+	logger.Info("大猿人响应结构体", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "respData", respData)
 
 	if respData.Errno != 0 {
-		logger.Error("大猿人API错误", "order_id", order.ID, "order_number", order.OrderNumber, "errno", respData.Errno, "errmsg", respData.Errmsg)
+		logger.Error("大猿人API错误", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "errno", respData.Errno, "errmsg", respData.Errmsg)
 		return fmt.Errorf("API错误: %s", respData.Errmsg)
 	}
 
 	var rechargeResp RechargeResponse
 	if err := json.Unmarshal(respData.Data, &rechargeResp); err != nil {
-		logger.Error("解析大猿人data失败", "order_id", order.ID, "order_number", order.OrderNumber, "error", err, "data", string(respData.Data))
+		logger.Error("解析大猿人data失败", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "error", err, "data", string(respData.Data))
 		return fmt.Errorf("解析数据失败: %v", err)
 	}
-	logger.Info("大猿人充值响应结构体", "order_id", order.ID, "order_number", order.OrderNumber, "rechargeResp", rechargeResp)
+	logger.Info("大猿人充值响应结构体", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "rechargeResp", rechargeResp)
 
-	logger.Info("提交大猿人订单成功", "order_id", order.ID, "order_number", order.OrderNumber, "api_order_id", rechargeResp.OrderNumber)
+	logger.Info("提交大猿人订单成功", "order_id", order.ID, "order_number", order.OrderNumber, "out_trade_num", req.OutTradeNum, "api_order_id", rechargeResp.OrderNumber)
 	return nil
 }
 
@@ -300,19 +300,26 @@ func (p *DayuanrenPlatform) ParseCallbackData(data []byte) (*model.CallbackData,
 	logger.Info("大猿人回调参数", "params", params)
 
 	state, _ := strconv.Atoi(params["state"])
-	_, statusStr := p.mapOrderState(state, params["out_trade_num"])
+
+	// 确定订单ID，优先使用out_trade_num（重试时的新订单号），其次使用order_number（原始订单号）
+	orderID := params["out_trade_num"]
+	if orderID == "" {
+		orderID = params["order_number"]
+	}
+
+	_, statusStr := p.mapOrderState(state, orderID)
 
 	callbackData := &model.CallbackData{
-		OrderID:       params["out_trade_num"],
+		OrderID:       orderID,
 		Status:        statusStr,
 		Message:       params["remark"],
 		Amount:        params["charge_amount"],
 		Sign:          params["sign"],
 		Timestamp:     params["otime"],
-		OrderNumber:   params["out_trade_num"],
-		TransactionID: "dayuanren_" + params["out_trade_num"], // 使用平台前缀+订单号作为TransactionID
+		OrderNumber:   orderID,
+		TransactionID: "dayuanren_" + orderID, // 使用平台前缀+订单号作为TransactionID
 	}
-	logger.Info("大猿人回调解析完成", "callbackData", callbackData)
+	logger.Info("大猿人回调解析完成", "callbackData", callbackData, "original_order_number", params["order_number"], "out_trade_num", params["out_trade_num"])
 	return callbackData, nil
 }
 

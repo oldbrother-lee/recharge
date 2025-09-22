@@ -93,25 +93,29 @@ type ProductUpdateRequest struct {
 
 // ProductAPIRelationCreateRequest 创建商品接口关联请求
 type ProductAPIRelationCreateRequest struct {
-	ProductID int64  `json:"product_id" binding:"required"`
-	APIID     int64  `json:"api_id" binding:"required"`
-	ParamID   int64  `json:"param_id" binding:"required"`
-	Sort      int    `json:"sort"`
-	Status    int    `json:"status" binding:"oneof=0 1"`
-	RetryNum  int    `json:"retry_num"`
-	Isp       string `json:"isp" binding:"required"`
+	ProductID                 int64  `json:"product_id" binding:"required"`
+	APIID                     int64  `json:"api_id" binding:"required"`
+	ParamID                   int64  `json:"param_id" binding:"required"`
+	Sort                      int    `json:"sort"`
+	Status                    int    `json:"status" binding:"oneof=0 1"`
+	RetryNum                  int    `json:"retry_num"`
+	Isp                       string `json:"isp" binding:"required"`
+	SameChannelRetryEnabled   bool   `json:"same_channel_retry_enabled"`
+	SameChannelRetryTimes     int    `json:"same_channel_retry_times"`
 }
 
 // ProductAPIRelationUpdateRequest 更新商品接口关联请求
 type ProductAPIRelationUpdateRequest struct {
-	ID        int64  `json:"id" binding:"required"`
-	ProductID int64  `json:"product_id" binding:"required"`
-	APIID     int64  `json:"api_id" binding:"required"`
-	ParamID   int64  `json:"param_id" binding:"required"`
-	Sort      int    `json:"sort"`
-	Status    int    `json:"status" binding:"oneof=0 1"`
-	RetryNum  int    `json:"retry_num"`
-	Isp       string `json:"isp" binding:"required"`
+	ID                        int64  `json:"id" binding:"required"`
+	ProductID                 int64  `json:"product_id" binding:"required"`
+	APIID                     int64  `json:"api_id" binding:"required"`
+	ParamID                   int64  `json:"param_id" binding:"required"`
+	Sort                      int    `json:"sort"`
+	Status                    int    `json:"status" binding:"oneof=0 1"`
+	RetryNum                  int    `json:"retry_num"`
+	Isp                       string `json:"isp" binding:"required"`
+	SameChannelRetryEnabled   bool   `json:"same_channel_retry_enabled"`
+	SameChannelRetryTimes     int    `json:"same_channel_retry_times"`
 }
 
 // ProductAPIRelationListRequest 获取商品接口关联列表请求

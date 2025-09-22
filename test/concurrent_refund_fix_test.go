@@ -284,6 +284,7 @@ type MockNotificationRepo struct{}
 
 func (m *MockNotificationRepo) Create(ctx context.Context, notification *notificationModel.NotificationRecord) error { return nil }
 func (m *MockNotificationRepo) GetByID(ctx context.Context, id int64) (*notificationModel.NotificationRecord, error) { return nil, nil }
+func (m *MockNotificationRepo) GetByOrderID(ctx context.Context, orderID int64) (*notificationModel.NotificationRecord, error) { return nil, nil }
 func (m *MockNotificationRepo) Update(ctx context.Context, notification *notificationModel.NotificationRecord) error { return nil }
 func (m *MockNotificationRepo) Delete(ctx context.Context, id int64) error { return nil }
 func (m *MockNotificationRepo) List(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*notificationModel.NotificationRecord, int64, error) { return nil, 0, nil }
@@ -291,6 +292,7 @@ func (m *MockNotificationRepo) GetPendingRecords(ctx context.Context, limit int)
 func (m *MockNotificationRepo) UpdateStatus(ctx context.Context, id int64, status int) error { return nil }
 func (m *MockNotificationRepo) IncrementRetryCount(ctx context.Context, id int64) error { return nil }
 func (m *MockNotificationRepo) DeleteByOrderIDs(ctx context.Context, orderIDs []int64) error { return nil }
+func (m *MockNotificationRepo) DeleteCompletedByOrderIDs(ctx context.Context, orderIDs []int64) error { return nil }
 
 // MockQueue 模拟队列
 type MockQueue struct{}

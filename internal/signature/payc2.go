@@ -66,20 +66,25 @@ func (h *Payc2Handler) GenerateSignature(ctx context.Context, params map[string]
 
 // BuildRequestParams 构建payc2请求参数
 func (h *Payc2Handler) BuildRequestParams(ctx context.Context, order *model.Order, api *model.PlatformAPI) (map[string]interface{}, error) {
+	// 优先使用 OutTradeNum；为空则回退到 OrderNumber
+	orderNo := order.OutTradeNum
+	if orderNo == "" {
+		orderNo = order.OrderNumber
+	}
+
 	// 构建基础参数
 	params := map[string]interface{}{
-		"merch":         h.config.AppID,                     // 商户号
-		"orderNo":       order.OrderNumber,                  // 商户订单号（可选）
-		"amount":        int(order.Denom),                   // 订单金额（整数）
-		"notifyUrl":     api.CallbackURL,                    // 回调通知地址
-		"timeoutSecond": 360,                                // 超时时间（30分钟）
-		"phone":         order.Mobile,                       // 手机号
+		"merch":         h.config.AppID,              // 商户号
+		"amount":        int(order.Denom),            // 订单金额（整数）
+		"notifyUrl":     api.CallbackURL,             // 回调通知地址
+		"timeoutSecond": 360,                         // 超时时间（30分钟）
+		"phone":         order.Mobile,                // 手机号
 		"telco":         h.getTelcoFromOrder(order), // 运营商
 	}
 
-	// 如果没有设置orderNo，则不传递该参数（参数如果没有传递，则不参与签名）
-	if order.OrderNumber == "" {
-		delete(params, "orderNo")
+	// 仅当有订单号时才包含该字段（未设置则不参与签名）
+	if orderNo != "" {
+		params["orderNo"] = orderNo
 	}
 
 	// 生成签名

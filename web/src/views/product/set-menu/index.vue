@@ -266,8 +266,17 @@
             <NRadio :value="0">禁用</NRadio>
           </NRadioGroup>
         </NFormItem>
-        <NFormItem label="重试次数" path="retry_num">
-          <NInputNumber v-model:value="relationForm.retry_num" :min="0" />
+        <!-- 重试次数字段已隐藏：仍通过 relationForm.retry_num 提交给后端，避免后端报错 -->
+        <NFormItem label="同通道重试" path="same_channel_retry_enabled">
+          <NSwitch v-model:value="relationForm.same_channel_retry_enabled" />
+        </NFormItem>
+        <NFormItem label="同通道重试次数" path="same_channel_retry_times">
+          <NInputNumber
+            v-model:value="relationForm.same_channel_retry_times"
+            :min="0"
+            :show-button="false"
+            :disabled="!relationForm.same_channel_retry_enabled"
+          />
         </NFormItem>
         <NFormItem label="运营商" path="isp">
           <NCheckboxGroup v-model:value="relationForm.isp">
@@ -438,7 +447,8 @@ const columns: DataTableColumns<Product> = [
     align: 'center',
     width: 150,
     render(row) {
-      return formatISP(row.isp);
+      const ispStr = Array.isArray(row.isp) ? row.isp.join(',') : (row.isp as string);
+      return formatISP(ispStr);
     }
   },
   {
@@ -737,6 +747,8 @@ const relationForm = ref({
   sort: 0,
   status: 1,
   retry_num: 0,
+  same_channel_retry_enabled: false,
+  same_channel_retry_times: 0,
   isp: [] as number[]
 });
 
@@ -770,6 +782,27 @@ const relationRules: FormRules = {
     type: 'number',
     message: '请输入重试次数',
     trigger: ['blur', 'change']
+  },
+  same_channel_retry_enabled: {
+    type: 'boolean',
+    required: false,
+    trigger: ['change']
+  },
+  same_channel_retry_times: {
+    type: 'number',
+    required: false,
+    trigger: ['blur', 'change'],
+    validator: (_: any, value: number) => {
+      if (relationForm.value.same_channel_retry_enabled) {
+        if (value === null || value === undefined || Number.isNaN(value)) {
+          return new Error('请输入同通道重试次数');
+        }
+        if (value < 1) {
+          return new Error('同通道重试次数需大于等于1');
+        }
+      }
+      return true;
+    }
   },
   isp: {
     required: true,
@@ -819,7 +852,9 @@ const interfaceColumns: DataTableColumns<Interface> = [
     align: 'center',
     width: 100,
     render(row) {
-      return row.isp ? formatISP(row.isp) : '-';
+      if (!row.isp) return '-';
+      const ispStr = Array.isArray(row.isp) ? row.isp.join(',') : (row.isp as string);
+      return formatISP(ispStr);
     }
   },
   {
@@ -962,13 +997,30 @@ const handleEditRelation = (row: any) => {
   isEdit.value = true;
   currentRelationId.value = row.id;
   showCreateRelationDialog.value = true;
+
+  // 兼容后端返回的多种类型，稳妥回填原始数据
+  const ispVal = (row as any).isp;
+  const ispArray = Array.isArray(ispVal)
+    ? ispVal
+    : (typeof ispVal === 'string' && ispVal.length > 0)
+      ? ispVal.split(',').map((n: string) => Number(n)).filter((n: any) => !Number.isNaN(n))
+      : [];
+
+  const scrEnabledRaw = (row as any).same_channel_retry_enabled;
+  const sameChannelEnabled = scrEnabledRaw === true || scrEnabledRaw === 1 || scrEnabledRaw === '1' || scrEnabledRaw === 'true';
+
+  const scrTimesRaw = (row as any).same_channel_retry_times;
+  const sameChannelTimes = scrTimesRaw != null ? Number(scrTimesRaw) : 0;
+
   relationForm.value = {
-    api_id: row.api_id,
-    param_id: row.param_id,
-    sort: row.sort,
-    status: row.status,
-    retry_num: row.retry_num,
-    isp: row.isp.split(',').map(Number)
+    api_id: (row as any).api_id,
+    param_id: (row as any).param_id,
+    sort: (row as any).sort,
+    status: (row as any).status,
+    retry_num: (row as any).retry_num,
+    same_channel_retry_enabled: sameChannelEnabled,
+    same_channel_retry_times: Number.isFinite(sameChannelTimes) ? sameChannelTimes : 0,
+    isp: ispArray
   };
 };
 
@@ -1016,6 +1068,8 @@ const handleCreateRelation = async () => {
       sort: 0,
       status: 1,
       retry_num: 0,
+      same_channel_retry_enabled: false,
+      same_channel_retry_times: 0,
       isp: []
     };
     isEdit.value = false;
@@ -1042,6 +1096,8 @@ const handleOpenCreateRelation = () => {
     sort: 0,
     status: 1,
     retry_num: 0,
+    same_channel_retry_enabled: false,
+    same_channel_retry_times: 0,
     isp: []
   };
 };

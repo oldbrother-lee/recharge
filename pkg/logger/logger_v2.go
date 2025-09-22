@@ -220,10 +220,23 @@ func (l *LoggerV2) WithContext(ctx context.Context) *LoggerV2 {
 		fields = append(fields, String("trace_id", traceID.(string)))
 	}
 
+	// 添加订单号
+	if orderNumber := ctx.Value("order_number"); orderNumber != nil {
+		fields = append(fields, String("order_number", orderNumber.(string)))
+	}
+
 	return &LoggerV2{
 		Logger: l.Logger.With(fields...),
 		config: l.config,
 	}
+}
+
+// InjectOrderNumber 将订单号注入到上下文，便于全链路日志携带
+func InjectOrderNumber(ctx context.Context, orderNumber string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, "order_number", orderNumber)
 }
 
 // WithFields 添加字段

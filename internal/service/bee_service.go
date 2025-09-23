@@ -130,11 +130,11 @@ type BeeEditSupplyGoodItem struct {
 
 // BeeEditSupplyGoodResponse 修改商品报价响应
 type BeeEditSupplyGoodResponse struct {
-	Code    int                        `json:"code"`
-	Message string                     `json:"message"`
-	Stime   float64                    `json:"stime"`
-	Etime   float64                    `json:"etime"`
-	Data    BeeEditSupplyGoodData      `json:"data"`
+	Code    int                   `json:"code"`
+	Message string                `json:"message"`
+	Stime   float64               `json:"stime"`
+	Etime   float64               `json:"etime"`
+	Data    BeeEditSupplyGoodData `json:"data"`
 }
 
 // BeeEditSupplyGoodData 修改商品报价响应数据
@@ -335,7 +335,7 @@ func (s *BeeService) makeRequest(endpoint string, params map[string]string, acco
 
 	// 构建请求URL
 	requestURL := s.baseURL + endpoint
-	logger.Info("bee update price", "params", params)
+	logger.Info("bee update price", "params", params, "endpoint", endpoint)
 	// 构建POST数据
 	data := url.Values{}
 	for k, v := range params {

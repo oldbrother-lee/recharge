@@ -89,7 +89,16 @@
       <!-- 商品列表 -->
       <NCard :bordered="false">
         <template #header>
-          <span style="font-weight: 600;">商品列表</span>
+          <div class="flex justify-between items-center">
+            <span style="font-weight: 600;">商品列表</span>
+            <NSpace>
+              <NButton v-if="!isEditing" type="primary" @click="handleToggleEdit(true)">批量编辑</NButton>
+              <template v-else>
+                <NButton type="primary" @click="handleBatchSave">保存</NButton>
+                <NButton @click="handleCancelEdit">取消</NButton>
+              </template>
+            </NSpace>
+          </div>
         </template>
         <NDataTable
           :columns="columns"
@@ -138,10 +147,13 @@ const productList = ref<BeeProduct[]>([]);
 const total = ref(0);
 const currentPage = ref(1);
 const pageSize = ref(20);
-const priceFormRef = ref<ProductPriceFormInstance>();
-
+// 全局编辑模式：默认关闭，点击“编辑”才进入可编辑状态
+const isEditing = ref(false);
 // 本地库存编辑映射：goods_id -> 临时库存值
 const editStockMap = ref<Record<number, number | null>>({});
+// 本地价格编辑映射：goods_id -> 临时报价(万分比 number)
+const editPriceMap = ref<Record<number, number | null>>({});
+const priceFormRef = ref<ProductPriceFormInstance>();
 
 // 状态选项
 const statusOptions = [
@@ -317,20 +329,58 @@ const columns: DataTableColumns<BeeProduct> = [
     key: 'user_quote_stock_info',
     width: 120,
     render(row: any) {
-      let payment = null;
-      if (row._provinceData && row._provinceData.user_quote_payment) {
-        payment = row._provinceData.user_quote_payment;
-      } else if (row.user_quote_stock_info && row.user_quote_stock_info.user_quote_payment) {
-        payment = row.user_quote_stock_info.user_quote_payment;
+      // 省份行：仅展示金额
+      if (row._isExpanded && row._provinceData) {
+        const payment = row._provinceData?.user_quote_payment;
+        if (!payment && payment !== 0) return '-';
+        const price = parseFloat(payment);
+        return isNaN(price) ? '-' : `¥${price.toFixed(3)}`;
       }
-      if (!payment && payment !== 0) {
-        return '-';
+      // 普通商品行：编辑万分比，展示金额
+      const currentDiscount = (() => {
+        const discount = row.user_quote_stock_info?.user_quote_discount;
+        if (discount || discount === 0) return Number(discount);
+        const payment = row.user_quote_stock_info?.user_quote_payment;
+        const face = row.user_payment;
+        if ((payment || payment === 0) && (face || face === 0)) return Number(payment) / Number(face) * 10000;
+        return null;
+      })();
+      const modelValue = editPriceMap.value[row.goods_id] ?? (currentDiscount as number | null);
+      if (!isEditing.value) {
+        // 优先展示金额，如无金额则由万分比和面值计算
+        const payment = row.user_quote_stock_info?.user_quote_payment;
+        let display: number | null = null;
+        if (payment || payment === 0) display = Number(payment);
+        else if ((modelValue || modelValue === 0) && (row.user_payment || row.user_payment === 0)) {
+          display = Number(modelValue) / 10000 * Number(row.user_payment);
+        }
+        return display === null || isNaN(Number(display)) ? '-' : `¥${Number(display).toFixed(3)}`;
       }
-      const price = parseFloat(payment);
-      if (isNaN(price)) {
-        return '-';
-      }
-      return `¥${price.toFixed(3)}`;
+      return h(NSpace, { size: 6, vertical: true }, {
+        default: () => {
+          const face = row.user_payment;
+          const discountToUse = (editPriceMap.value[row.goods_id] ?? (currentDiscount as number | null));
+          const calc = (discountToUse !== null && discountToUse !== undefined && (face || face === 0))
+            ? Number(discountToUse) / 10000 * Number(face)
+            : null;
+          const calcText = (calc === null || isNaN(Number(calc))) ? '—' : `${Number(calc).toFixed(3)}元`;
+          return [
+            h(NInputNumber, {
+              size: 'small',
+              min: 0,
+              max: 10000,
+              step: 1,
+              style: 'width: 110px;',
+              value: modelValue as number | null,
+              placeholder: currentDiscount === null ? '—' : String(Math.round(Number(currentDiscount))),
+              'onUpdate:value': (v: number | null) => {
+                editPriceMap.value[row.goods_id] = (v === null ? null : Number(v));
+              }
+            }),
+            h('div', { style: 'font-size: 12px; color: #E83E3E;' }, `报价计算：${calcText}`)
+          ];
+        }
+      });
     }
   },
   {
@@ -348,6 +398,10 @@ const columns: DataTableColumns<BeeProduct> = [
         ? Number(row.user_quote_stock_info.usable_stock)
         : null;
       const modelValue = editStockMap.value[row.goods_id] ?? currentStock;
+      // 非编辑模式：仅展示库存数值
+      if (!isEditing.value) {
+        return (modelValue || modelValue === 0) ? String(modelValue) : '-';
+      }
       return h(NSpace, { size: 6 }, {
         default: () => [
           h(NInputNumber, {
@@ -360,14 +414,7 @@ const columns: DataTableColumns<BeeProduct> = [
             'onUpdate:value': (v: number | null) => {
               editStockMap.value[row.goods_id] = (v === null ? null : Math.max(0, Math.floor(v)));
             }
-          }),
-          h(NButton, {
-            size: 'small',
-            type: 'primary',
-            tertiary: true,
-            disabled: modelValue === null || modelValue === undefined || (currentStock !== null && Number(modelValue) === Number(currentStock)),
-            onClick: () => handleSaveStock(row)
-          }, { default: () => '保存' })
+          })
         ]
       });
     }
@@ -426,6 +473,7 @@ const columns: DataTableColumns<BeeProduct> = [
         h(NButton, {
           type: 'primary',
           size: 'small',
+          disabled: isEditing.value,
           onClick: () => handleEditPrice(row)
         }, { default: () => '修改报价' })
       ]);
@@ -453,13 +501,24 @@ const fetchProductList = async () => {
       total.value = response.data.total || 0;
       // 初始化本地库存编辑映射
       const map: Record<number, number | null> = {};
+      const priceMap: Record<number, number | null> = {};
       productList.value.forEach((p: any) => {
         const stock = p?.user_quote_stock_info?.usable_stock;
         if (stock || stock === 0) {
           map[p.goods_id] = Number(stock);
+        } else {
+          map[p.goods_id] = null;
         }
+        const discount = p?.user_quote_stock_info?.user_quote_discount;
+        const payment = p?.user_quote_stock_info?.user_quote_payment;
+        const face = p?.user_payment;
+        const base = (discount || discount === 0)
+          ? Number(discount)
+          : ((payment || payment === 0) && (face || face === 0) ? (Number(payment) / Number(face) * 10000) : null);
+        priceMap[p.goods_id] = (base || base === 0) ? Number(base) : null;
       });
       editStockMap.value = map;
+      editPriceMap.value = priceMap;
     } else {
       window.$message?.error('获取商品列表失败');
     }
@@ -489,6 +548,97 @@ const handleReset = () => {
 // 刷新列表
 const handleRefresh = () => {
   fetchProductList();
+};
+
+// 切换编辑模式
+const handleToggleEdit = (flag: boolean) => {
+  isEditing.value = flag;
+};
+
+// 取消编辑：恢复本地编辑映射并退出编辑模式
+const handleCancelEdit = () => {
+  const map: Record<number, number | null> = {};
+  const priceMap: Record<number, number | null> = {};
+  productList.value.forEach((p: any) => {
+    const stock = p?.user_quote_stock_info?.usable_stock;
+    if (stock || stock === 0) {
+      map[p.goods_id] = Number(stock);
+    } else {
+      map[p.goods_id] = null;
+    }
+    const discount = p?.user_quote_stock_info?.user_quote_discount;
+    const payment = p?.user_quote_stock_info?.user_quote_payment;
+    const base = (payment || payment === 0) ? Number(payment) : ((discount || discount === 0) ? Number(discount) : null);
+    priceMap[p.goods_id] = (base || base === 0) ? base : null;
+  });
+  editStockMap.value = map;
+  editPriceMap.value = priceMap;
+  isEditing.value = false;
+};
+
+// 批量填充价格功能已移除，保留逐行编辑报价并统一保存
+
+// 批量保存库存与价格（统一使用 status=1 确保库存与价格生效）
+const handleBatchSave = async () => {
+  try {
+    const accountId = currentAccountId.value || props.accountId;
+    if (!accountId) {
+      window.$message?.error('账户ID不能为空');
+      return;
+    }
+    const goods: any[] = [];
+    productList.value.forEach((row: any) => {
+      if (row._isExpanded && row._provinceData) return; // 省份行忽略
+      const currentStock = row.user_quote_stock_info && row.user_quote_stock_info.usable_stock !== undefined
+        ? Number(row.user_quote_stock_info.usable_stock)
+        : null;
+      const currentDiscount = (() => {
+        const discount = row.user_quote_stock_info?.user_quote_discount;
+        if (discount || discount === 0) return Number(discount);
+        const payment = row.user_quote_stock_info?.user_quote_payment;
+        const face = row.user_payment;
+        if ((payment || payment === 0) && (face || face === 0)) return Number(payment) / Number(face) * 10000;
+        return null;
+      })();
+      const editedStock = editStockMap.value[row.goods_id];
+      const editedDiscount = editPriceMap.value[row.goods_id];
+      const item: any = { goods_id: row.goods_id, status: 1 };
+      let changed = false;
+      if (editedStock !== null && editedStock !== undefined && (currentStock === null || Number(editedStock) !== Number(currentStock))) {
+        item.user_quote_stock = Math.max(0, Math.floor(Number(editedStock)));
+        changed = true;
+      }
+      if (editedDiscount !== null && editedDiscount !== undefined && (currentDiscount === null || Number(editedDiscount) !== Number(currentDiscount))) {
+        // 按万分比保存
+        item.user_quote_payment = Number(editedDiscount);
+        changed = true;
+      }
+      if (changed) goods.push(item);
+    });
+    if (goods.length === 0) {
+      window.$message?.warning('没有需要保存的变更');
+      return;
+    }
+    await editBeeSupplyGoodManageStock(accountId, { goods } as any);
+    window.$message?.success('批量保存成功');
+    // 同步本地库存与折扣，并刷新
+    goods.forEach((g: any) => {
+      const target = productList.value.find(p => (p as any).goods_id === g.goods_id) as any;
+      if (target?.user_quote_stock_info) {
+        if (g.user_quote_stock !== undefined) {
+          target.user_quote_stock_info.usable_stock = g.user_quote_stock;
+        }
+        if (g.user_quote_payment !== undefined) {
+          target.user_quote_stock_info.user_quote_discount = g.user_quote_payment;
+        }
+      }
+    });
+    isEditing.value = false;
+    handleRefresh();
+  } catch (error: any) {
+    console.error('批量保存失败:', error);
+    window.$message?.error(error?.message || '批量保存失败');
+  }
 };
 
 // 保存库存

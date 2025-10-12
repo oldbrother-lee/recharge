@@ -37,6 +37,8 @@ func NewManager(db *gorm.DB) *Manager {
 			"lingshi":      reflect.TypeOf((*LingshiPlatform)(nil)).Elem(),
 			// 新增对 xianyinke 的支持（作为 external_api 的别名）
 			"xianyinke":    reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
+			// 新增卡速售平台类型
+			"kasushou":     reflect.TypeOf((*KasushouPlatform)(nil)).Elem(),
 		},
 	}
 }
@@ -91,6 +93,8 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 	case "xianyinke":
 		// 将 xianyinke 作为 external_api 的别名平台，避免启动时报不支持
 		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
+	case "kasushou":
+		platform = NewKasushouPlatform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}
@@ -176,6 +180,8 @@ func (m *Manager) getPlatformTypeByName(name string) reflect.Type {
 	case "xianyinke":
 		// 将 xianyinke 视为 external_api 类型
 		return reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem()
+	case "kasushou":
+		return reflect.TypeOf((*KasushouPlatform)(nil)).Elem()
 	default:
 		return nil
 	}

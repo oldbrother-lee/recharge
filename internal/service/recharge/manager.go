@@ -39,6 +39,8 @@ func NewManager(db *gorm.DB) *Manager {
 			"xianyinke":    reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
 			// 新增卡速售平台类型
 			"kasushou":     reflect.TypeOf((*KasushouPlatform)(nil)).Elem(),
+			// 新增商腾科技平台类型
+			"shangteng":    reflect.TypeOf((*ShangtengPlatform)(nil)).Elem(),
 		},
 	}
 }
@@ -95,6 +97,8 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewExternalAPIPlatform(m.platformRepo.GetDB())
 	case "kasushou":
 		platform = NewKasushouPlatform(m.platformRepo.GetDB())
+	case "shangteng":
+		platform = NewShangtengPlatform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}
@@ -182,6 +186,8 @@ func (m *Manager) getPlatformTypeByName(name string) reflect.Type {
 		return reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem()
 	case "kasushou":
 		return reflect.TypeOf((*KasushouPlatform)(nil)).Elem()
+	case "shangteng":
+		return reflect.TypeOf((*ShangtengPlatform)(nil)).Elem()
 	default:
 		return nil
 	}

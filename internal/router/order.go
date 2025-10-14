@@ -166,5 +166,6 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 	orders := r.Group("/orders")
 	{
 		orders.GET("/statistics", orderController.GetOrderStatistics) // 获取订单统计
+		orders.GET("/statistics/isp-denom-success", orderController.GetSuccessStatsByIspAndDenom) // 按运营商与面值统计成功订单
 	}
 }

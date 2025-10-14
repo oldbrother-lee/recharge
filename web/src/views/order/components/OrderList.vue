@@ -1,5 +1,5 @@
 <script setup lang="tsx">
-import { ref, onMounted, watch, nextTick } from 'vue';
+import { ref, onMounted, watch, nextTick, computed } from 'vue';
 import OrderSearchForm from './OrderSearchForm.vue';
 import { request } from '@/service/request';
 import type { Order } from '@/typings/api';
@@ -7,6 +7,8 @@ import { NDataTable, NCard, useMessage, NTag, NButton, NModal, NInput, NForm, NF
 import type { DataTableColumns } from 'naive-ui';
 import { useAuthStore } from '@/store/modules/auth';
 import { formatISP } from '@/utils/format';
+// 本地定义 RowKey 类型以兼容 Naive UI DataTable 的选中键类型
+type RowKey = string | number;
 
 
 const authStore = useAuthStore();
@@ -26,6 +28,35 @@ const loading = ref(false);
 const data = ref<Order[]>([]);
 const pagination = ref({ page: 1, pageSize: 10, itemCount: 0 });
 const searchParams = ref<any>({});
+// 成功统计（按运营商与面值）
+const successStatsLoading = ref(false);
+const successStats = ref<Array<{ isp: number; denom: number; successCount: number; successAmount: number }>>([]);
+const hasSearch = computed(() => {
+  const p = searchParams.value || {};
+  return Object.keys(p).length > 0;
+});
+// 成功统计总计
+const successStatsTotals = computed(() => {
+  const list = successStats.value || [];
+  const count = list.reduce((acc, r) => acc + Number(r.successCount || 0), 0);
+  const amount = list.reduce((acc, r) => acc + Number(r.successAmount || 0), 0);
+  return { count, amount };
+});
+
+// 成功统计分组（按运营商）
+const successStatsGroups = computed(() => {
+  const map = new Map<string, Array<{ denom: number; successCount: number; successAmount: number }>>();
+  for (const r of successStats.value || []) {
+    const ispLabel = formatISP(String(r.isp));
+    if (!map.has(ispLabel)) map.set(ispLabel, []);
+    map.get(ispLabel)!.push({
+      denom: Number(r.denom || 0),
+      successCount: Number(r.successCount || 0),
+      successAmount: Number(r.successAmount || 0)
+    });
+  }
+  return Array.from(map.entries()).map(([isp, items]) => ({ isp, items }));
+});
 const showFailModal = ref(false);
 const failRemark = ref('');
 const currentFailOrder = ref<Order | null>(null);
@@ -38,7 +69,7 @@ const cleanupRange = ref<{ startTime: number | null; endTime: number | null }>({
 const cleanupLoading = ref(false);
 
 // 多选相关状态
-const selectedRowKeys = ref<string[]>([]);
+const selectedRowKeys = ref<RowKey[]>([]);
 const showBatchDeleteModal = ref(false);
 const showBatchSuccessModal = ref(false);
 const showBatchFailModal = ref(false);
@@ -216,7 +247,7 @@ const confirmBatchNotification = async () => {
     await request({
       url: '/order/batch-notification',
       method: 'POST',
-      data: { order_ids: selectedRowKeys.value.map(id => Number(id)) }
+      data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
     });
     message.success(`成功推送 ${selectedRowKeys.value.length} 个订单到通知队列`);
     selectedRowKeys.value = [];
@@ -235,7 +266,7 @@ const confirmBatchDelete = async () => {
     await request({
       url: '/order/batch-delete',
       method: 'POST',
-      data: { order_ids: selectedRowKeys.value.map(id => Number(id)) }
+      data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
     });
     message.success(`成功删除 ${selectedRowKeys.value.length} 个订单`);
     selectedRowKeys.value = [];
@@ -254,7 +285,7 @@ const confirmBatchSuccess = async () => {
     await request({
       url: '/order/batch-success',
       method: 'POST',
-      data: { order_ids: selectedRowKeys.value.map(id => Number(id)) }
+      data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
     });
     message.success(`成功设置 ${selectedRowKeys.value.length} 个订单为成功`);
     selectedRowKeys.value = [];
@@ -278,7 +309,7 @@ const confirmBatchFail = async () => {
       url: '/order/batch-fail',
       method: 'POST',
       data: { 
-        order_ids: selectedRowKeys.value.map(id => Number(id)),
+        order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)),
         remark: batchFailRemark.value 
       }
     });
@@ -346,7 +377,9 @@ const columns: DataTableColumns<Order> = [
     align: 'center', 
     width: 120,
     render(row) {
-      return formatISP(row.isp);
+      const value = (row as any).isp;
+      const s = typeof value === 'string' ? value : Array.isArray(value) ? value.join(',') : '';
+      return formatISP(s);
     }
   },
   { key: 'account_location', title: '归属地', align: 'center', width: 100 },
@@ -376,7 +409,7 @@ const columns: DataTableColumns<Order> = [
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     }
   },
-    {
+  {
     key: 'notification_status',
     title: '通知状态',
     align: 'center',
@@ -386,7 +419,7 @@ const columns: DataTableColumns<Order> = [
       if (!status) {
         return '-';
       }
-      const statusMap: { [key: string]: { type: string; text: string } } = {
+      const statusMap: { [key: string]: { type: 'default' | 'error' | 'info' | 'success' | 'warning'; text: string } } = {
         '1': { type: 'warning', text: '待通知' },
         '2': { type: 'info', text: '通知中' },
         '3': { type: 'success', text: '成功' },
@@ -439,28 +472,109 @@ const columns: DataTableColumns<Order> = [
   }
 ];
 
+// 成功统计列表列定义
+const successStatsColumns: DataTableColumns<any> = [
+  { key: 'isp', title: '运营商', align: 'center', width: 120, render(row) {
+      const v = String(row.isp);
+      return formatISP(v);
+    }
+  },
+  { key: 'denom', title: '面值', align: 'center', width: 100 },
+  { key: 'successCount', title: '成功笔数', align: 'center', width: 120 },
+  { key: 'successAmount', title: '成功金额', align: 'center', width: 120, render(row) {
+      const amt = Number(row.successAmount || 0);
+      return amt.toFixed(2);
+    }
+  }
+];
+
 const fetchOrders = async () => {
   try {
     loading.value = true;
+    // 规范化查询参数：
+    const normalizeParams = (raw: any) => {
+      const p: any = { ...raw };
+      // 日期范围转换为后端需要的 start_time / end_time 字符串
+      if (Array.isArray(p.date_range) && p.date_range.length === 2 && p.date_range[0] && p.date_range[1]) {
+        const startMs = Number(p.date_range[0]);
+        const endMs = Number(p.date_range[1]);
+        // 包含结束当日：设为当天 23:59:59
+        const endOfDayMs = endMs + 24 * 60 * 60 * 1000 - 1000;
+        const fmt = (ms: number) => {
+          const d = new Date(ms);
+          const pad = (n: number) => n.toString().padStart(2, '0');
+          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        };
+        p.start_time = fmt(startMs);
+        p.end_time = fmt(endOfDayMs);
+        delete p.date_range;
+      }
+      return p;
+    };
     const params: any = {
       page: pagination.value.page,
-      pageSize: pagination.value.pageSize,
-      ...searchParams.value
+      page_size: pagination.value.pageSize,
+      ...normalizeParams(searchParams.value)
     };
     if (props.platform_code) {
       params.platform_code = props.platform_code;
     } else if (props.platform && props.platform !== 'all') {
       params.platform = props.platform;
     }
-    const res = await request({ url: '/order/list', method: 'GET', params });
-    if (res.data) {
-      data.value = res.data.list;
-      pagination.value.itemCount = res.data.total;
+    const res = await request<{ list: Order[]; total: number }>({ url: '/order/list', method: 'GET', params });
+    // createFlatRequest 返回 { data, error, response }
+    // 成功时使用 res.data.list / res.data.total
+    if (!res.error) {
+      data.value = Array.isArray(res.data?.list) ? res.data!.list : [];
+      pagination.value.itemCount = Number(res.data?.total || 0);
+    } else {
+      // 失败则重置为空，避免保留上一次内容
+      data.value = [];
+      pagination.value.itemCount = 0;
     }
   } catch (error) {
     message.error('获取订单列表失败');
+    // 发生错误时重置为空，避免保留上一次内容
+    data.value = [];
+    pagination.value.itemCount = 0;
   } finally {
     loading.value = false;
+  }
+};
+
+// 获取按运营商与面值的成功统计
+const fetchSuccessStats = async () => {
+  try {
+    successStatsLoading.value = true;
+    const normalizeParams = (raw: any) => {
+      const p: any = { ...raw };
+      if (Array.isArray(p.date_range) && p.date_range.length === 2 && p.date_range[0] && p.date_range[1]) {
+        const startMs = Number(p.date_range[0]);
+        const endMs = Number(p.date_range[1]);
+        const endOfDayMs = endMs + 24 * 60 * 60 * 1000 - 1000;
+        const fmt = (ms: number) => {
+          const d = new Date(ms);
+          const pad = (n: number) => n.toString().padStart(2, '0');
+          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        };
+        p.start_time = fmt(startMs);
+        p.end_time = fmt(endOfDayMs);
+        delete p.date_range;
+      }
+      return p;
+    };
+    const params: any = { ...normalizeParams(searchParams.value) };
+    if (props.platform_code) {
+      params.platform_code = props.platform_code;
+    } else if (props.platform && props.platform !== 'all') {
+      params.platform = props.platform;
+    }
+    const res = await request<{ list: Array<{ isp: number; denom: number; successCount: number; successAmount: number }>; total: number }>({ url: '/orders/statistics/isp-denom-success', method: 'GET', params });
+    successStats.value = Array.isArray(res.data?.list) ? res.data!.list : [];
+  } catch (error) {
+    message.error('获取成功统计失败');
+  } finally {
+    successStatsLoading.value = false;
   }
 };
 
@@ -468,6 +582,8 @@ const handleSearch = (params: any) => {
   searchParams.value = params;
   pagination.value.page = 1;
   fetchOrders();
+  // 触发成功统计数据的获取，仅在搜索后加载
+  fetchSuccessStats();
 };
 
 const handlePageChange = (page: number) => {
@@ -480,10 +596,9 @@ const handlePageSizeChange = (size: number) => {
   fetchOrders();
 };
 
-const handleRowKeysUpdate = async (keys: string[]) => {
+const handleRowKeysUpdate = (keys: RowKey[]) => {
   try {
     selectedRowKeys.value = keys;
-    await nextTick();
   } catch (error) {
     console.warn('更新选中行时出现错误:', error);
     // 如果出现错误，延迟更新
@@ -514,6 +629,24 @@ function formatLocalDatetime(ts: number | null) {
   <div class="min-h-1200px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
     <!-- 搜索表单 -->
     <OrderSearchForm @search="handleSearch" />
+    <!-- 成功统计（按运营商分组展示，置于卡片中） -->
+    <NCard v-if="hasSearch" size="small" class="stats-card" :class="{ 'opacity-60': successStatsLoading }">
+      <template #header>成功统计</template>
+      <div class="stats-text">
+        <div class="stats-summary">总笔数 {{ successStatsTotals.count }}，总金额 ¥{{ successStatsTotals.amount.toFixed(2) }}</div>
+        <div v-if="successStatsGroups.length === 0">暂无数据</div>
+        <div v-else class="stats-groups">
+          <div class="stats-group" v-for="group in successStatsGroups" :key="group.isp">
+            <span class="isp">{{ group.isp }}：</span>
+            <span class="detail">
+              <template v-for="(it, idx) in group.items" :key="idx">
+                {{ it.denom.toFixed(2) }}: {{ it.successCount }}笔/¥{{ it.successAmount.toFixed(2) }}<span v-if="idx < group.items.length - 1">；</span>
+              </template>
+            </span>
+          </div>
+        </div>
+      </div>
+    </NCard>
     
     <!-- 数据表格 -->
     <NCard size="small" class="sm:flex-1-hidden card-wrapper">
@@ -747,6 +880,27 @@ function formatLocalDatetime(ts: number | null) {
 }
 .gap-8px {
   gap: 8px;
+}
+/* 统计文字样式 */
+.stats-text {
+  font-size: 13px;
+  color: #666;
+}
+.stats-card {
+  /* 让统计卡片与列表保持一致的间距与视觉层级 */
+}
+.stats-summary {
+  margin-bottom: 4px;
+}
+.stats-groups {
+  margin-top: 2px;
+}
+.stats-group {
+  margin-top: 2px;
+}
+.stats-group .isp {
+  font-weight: 500;
+  color: #333;
 }
 
 /* 头部样式 */

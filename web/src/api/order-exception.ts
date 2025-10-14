@@ -100,7 +100,7 @@ export function fetchPendingExceptionCount() {
  */
 export function fetchOrderExceptionStatistics(startDate?: string, endDate?: string) {
   return request<OrderExceptionStatistics>({
-    url: '/order-exceptions/statistics',
+    url: '/order-exceptions/user-statistics',
     method: 'GET',
     params: {
       start_date: startDate,

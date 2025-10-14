@@ -40,6 +40,14 @@ func RegisterOrderExceptionRoutes(r *gin.RouterGroup, userService *service.UserS
 		exceptions.GET("/statistics", orderExceptionController.GetStatistics)
 	}
 
+	// 代理/认证用户可访问的异常统计路由（不强制管理员权限）
+	userExceptions := r.Group("/order-exceptions")
+	userExceptions.Use(middleware.Auth())
+	{
+		// 获取当前用户或指定用户（仅管理员可指定）的异常统计信息
+		userExceptions.GET("/user-statistics", orderExceptionController.GetStatisticsByUser)
+	}
+
 	// 订单相关的异常查询路由
 	orders := r.Group("/orders")
 	orders.Use(middleware.Auth())

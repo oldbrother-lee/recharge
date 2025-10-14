@@ -85,6 +85,14 @@ type OrderStatisticsTrend struct {
 
 // 按运营商分组统计订单总数结构体
 type OperatorOrderCount struct {
-	Operator int   `json:"operator"`
-	Total    int64 `json:"total"`
+    Operator int   `json:"operator"`
+    Total    int64 `json:"total"`
+}
+
+// IspDenomSuccessStat 按运营商与面值统计成功订单数与金额
+type IspDenomSuccessStat struct {
+    Isp           int     `json:"isp"`
+    Denom         float64 `json:"denom"`
+    SuccessCount  int64   `json:"successCount"`
+    SuccessAmount float64 `json:"successAmount"`
 }

@@ -90,6 +90,8 @@ type OrderRepository interface {
 	FindDuplicateOrder(ctx context.Context, mobile string, denom float64, isp int, productID int64, statuses []model.OrderStatus) (*model.Order, error)
 	// UpdateOutTradeNum 更新订单的外部交易号（同通道重试时使用）
 	UpdateOutTradeNum(ctx context.Context, orderID int64, outTradeNum string) error
+	// GetSuccessStatsByIspDenom 按运营商与面值统计成功订单数与金额
+	GetSuccessStatsByIspDenom(ctx context.Context, params map[string]interface{}) ([]model.IspDenomSuccessStat, error)
 }
 
 // OrderRepositoryImpl 订单仓库实现
@@ -243,6 +245,19 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 	query := r.db.Model(&model.Order{}).Where("is_del = 0")
 
 	// 添加查询条件
+	// 诊断日志：参数遍历前记录是否包含 user_id
+	var hasUserID bool
+	var userIDVal interface{}
+	if v, ok := params["user_id"]; ok {
+		hasUserID = true
+		userIDVal = v
+	}
+	logger.WithContext(ctx).Info("OrderRepository.GetOrders.begin",
+		logger.Bool("has_user_id", hasUserID),
+		logger.Any("user_id_val", userIDVal),
+		logger.Int("page", page),
+		logger.Int("page_size", pageSize),
+	)
 	for key, value := range params {
 		// 将 interface{} 转换为 string
 		strValue, ok := value.(string)
@@ -250,6 +265,12 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 			continue
 		}
 		fmt.Printf("key: %s, value: %s", key, strValue)
+		if key == "user_id" {
+			// 诊断日志：提示当前通用查询未应用 user_id 过滤
+			logger.WithContext(ctx).Info("OrderRepository.GetOrders.param_user_id_observed_but_not_applied",
+				logger.String("user_id_str", strValue),
+			)
+		}
 		switch key {
 		case "client":
 			// 将字符串转换为整数
@@ -283,8 +304,13 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 			query = query.Where("platform_code = ?", strValue)
 		case "isp":
 			query = query.Where("isp = ?", strValue)
-		case "out_trade_no":
+		case "out_trade_num":
 			query = query.Where("out_trade_num = ?", strValue)
+		case "denom":
+			// 面值为数字，进行数值匹配
+			if v, err := strconv.ParseFloat(strValue, 64); err == nil {
+				query = query.Where("denom = ?", v)
+			}
 		default:
 			// 对于其他字段，使用精确匹配
 			query = query.Where(key+" = ?", strValue)
@@ -299,6 +325,10 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 	if err := query.Order("create_time DESC").Offset(offset).Limit(pageSize).Find(&orders).Error; err != nil {
 		return nil, 0, err
 	}
+	logger.WithContext(ctx).Info("OrderRepository.GetOrders.end",
+		logger.Int64("total", total),
+		logger.Int("returned", len(orders)),
+	)
 
 	return orders, total, nil
 }
@@ -307,9 +337,43 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 func (r *OrderRepositoryImpl) GetOrdersWithNotification(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.OrderWithNotification, int64, error) {
 	var results []*model.OrderWithNotification
 	var total int64
+	// 诊断日志：仓储层入口
+	var hasUserID bool
+	var userIDVal interface{}
+	if v, ok := params["user_id"]; ok {
+		hasUserID = true
+		userIDVal = v
+	}
+	logger.WithContext(ctx).Info("OrderRepository.GetOrdersWithNotification",
+		logger.Bool("has_user_id", hasUserID),
+		logger.Any("user_id_val", userIDVal),
+		logger.Int("page", page),
+		logger.Int("page_size", pageSize),
+		logger.Any("params", params),
+	)
 
-	// 先查询订单列表
-	orders, total, err := r.GetOrders(ctx, params, page, pageSize)
+	// 分流：优先根据 user_id 使用按用户查询，否则使用通用查询
+	var orders []*model.Order
+	var err error
+	if uid, ok := params["user_id"]; ok {
+		var userID int64
+		switch t := uid.(type) {
+		case int:
+			userID = int64(t)
+		case int64:
+			userID = t
+		case string:
+			if parsed, perr := strconv.ParseInt(t, 10, 64); perr == nil {
+				userID = parsed
+			}
+		}
+		if userID > 0 {
+			orders, total, err = r.GetByUserID(ctx, userID, params, page, pageSize)
+		}
+	}
+	if orders == nil && err == nil {
+		orders, total, err = r.GetOrders(ctx, params, page, pageSize)
+	}
 	if err != nil {
 		return nil, 0, err
 	}
@@ -340,6 +404,80 @@ func (r *OrderRepositoryImpl) GetOrdersWithNotification(ctx context.Context, par
 	}
 
 	return results, total, nil
+}
+
+// GetSuccessStatsByIspDenom 按运营商与面值统计成功订单数与金额
+func (r *OrderRepositoryImpl) GetSuccessStatsByIspDenom(ctx context.Context, params map[string]interface{}) ([]model.IspDenomSuccessStat, error) {
+    var stats []model.IspDenomSuccessStat
+
+    query := r.db.WithContext(ctx).Model(&model.Order{}).
+        Where("is_del = 0 AND status = ?", model.OrderStatusSuccess)
+
+    // 应用用户范围限制（代理商）
+    if uid, ok := params["user_id"]; ok {
+        var userID int64
+        switch v := uid.(type) {
+        case int:
+            userID = int64(v)
+        case int64:
+            userID = v
+        case string:
+            if parsed, err := strconv.ParseInt(v, 10, 64); err == nil {
+                userID = parsed
+            }
+        }
+        if userID > 0 {
+            query = query.Where("customer_id = ?", userID)
+        }
+    }
+
+    // 复用列表查询的过滤逻辑
+    for key, value := range params {
+        if key == "user_id" { // 已应用
+            continue
+        }
+        strValue, ok := value.(string)
+        if !ok || strValue == "" {
+            continue
+        }
+        switch key {
+        case "client":
+            if clientID, err := strconv.ParseInt(strValue, 10, 64); err == nil && clientID > 0 {
+                query = query.Where("client = ?", clientID)
+            }
+        case "status":
+            // 已固定为成功，这里忽略传入的status
+        case "order_number":
+            query = query.Where("order_number LIKE ?", "%"+strValue+"%")
+        case "mobile":
+            query = query.Where("mobile LIKE ?", "%"+strValue+"%")
+        case "start_time":
+            query = query.Where("create_time >= ?", strValue)
+        case "end_time":
+            query = query.Where("create_time <= ?", strValue)
+        case "platform_code":
+            query = query.Where("platform_code = ?", strValue)
+        case "isp":
+            query = query.Where("isp = ?", strValue)
+        case "out_trade_num":
+            query = query.Where("out_trade_num = ?", strValue)
+        case "denom":
+            if v, err := strconv.ParseFloat(strValue, 64); err == nil {
+                query = query.Where("denom = ?", v)
+            }
+        default:
+            query = query.Where(key+" = ?", strValue)
+        }
+    }
+
+    if err := query.
+        Select("isp as isp, denom as denom, COUNT(*) as success_count, COALESCE(SUM(price), 0) as success_amount").
+        Group("isp, denom").
+        Scan(&stats).Error; err != nil {
+        return nil, err
+    }
+
+    return stats, nil
 }
 
 // GetByOrderID 根据订单号获取订单

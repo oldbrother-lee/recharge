@@ -8,7 +8,13 @@ const message = useMessage();
 const loading = ref(false);
 const data = ref<OrderException[]>([]);
 const pagination = ref({ page: 1, pageSize: 10, itemCount: 0 });
-const searchParams = ref<OrderExceptionListParams>({});
+type NTagType = 'default' | 'primary' | 'success' | 'info' | 'warning' | 'error';
+type DateValue = number | null;
+type OrderExceptionSearchParams = Omit<OrderExceptionListParams, 'start_date' | 'end_date'> & {
+  start_date?: DateValue;
+  end_date?: DateValue;
+};
+const searchParams = ref<OrderExceptionSearchParams>({});
 
 // 初始化默认日期范围（最近一天）
 const initDefaultDateRange = () => {
@@ -16,8 +22,8 @@ const initDefaultDateRange = () => {
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
   
-  searchParams.value.start_date = yesterday.toISOString().split('T')[0];
-  searchParams.value.end_date = today.toISOString().split('T')[0];
+  searchParams.value.start_date = yesterday.getTime();
+  searchParams.value.end_date = today.getTime();
 };
 const showStatusModal = ref(false);
 const currentException = ref<OrderException | null>(null);
@@ -33,7 +39,7 @@ const statistics = ref({
 });
 
 // 异常类型映射
-const exceptionTypeMap: Record<string, { color: string, text: string }> = {
+const exceptionTypeMap: Record<string, { color: NTagType, text: string }> = {
   'balance_verification': { color: 'warning', text: '余额验证异常' },
   'payment_timeout': { color: 'error', text: '支付超时' },
   'recharge_failed': { color: 'error', text: '充值失败' },
@@ -41,7 +47,7 @@ const exceptionTypeMap: Record<string, { color: string, text: string }> = {
 };
 
 // 状态映射
-const statusMap: Record<string, { color: string, text: string }> = {
+const statusMap: Record<string, { color: NTagType, text: string }> = {
   'pending': { color: 'warning', text: '待处理' },
   'processing': { color: 'info', text: '处理中' },
   'resolved': { color: 'success', text: '已解决' },
@@ -82,7 +88,7 @@ const columns: DataTableColumns<OrderException> = [
     width: 200,
     align: 'center',
     render(row) {
-      return row.order_number;
+      return row.order_id;
     }
   },
   {
@@ -91,7 +97,7 @@ const columns: DataTableColumns<OrderException> = [
     width: 120,
     align: 'center',
     render(row) {
-      return row.order?.mobile || '-';
+      return row.order?.phone || '-';
     }
   },
   {
@@ -100,7 +106,7 @@ const columns: DataTableColumns<OrderException> = [
     width: 100,
     align: 'center',
     render(row) {
-      return row.order?.denom ? `¥${row.order.denom}` : '-';
+      return typeof row.order?.amount === 'number' ? `¥${row.order.amount}` : '-';
     }
   },
 
@@ -111,7 +117,7 @@ const columns: DataTableColumns<OrderException> = [
     width: 100,
     align: 'center',
     render(row) {
-      const statusInfo = statusMap[row.status] || { color: 'default', text: row.status };
+      const statusInfo = statusMap[row.status as keyof typeof statusMap] || { color: 'default' as NTagType, text: row.status };
       return h(NTag, { type: statusInfo.color }, { default: () => statusInfo.text });
     }
   },
@@ -184,7 +190,27 @@ const fetchStatistics = async () => {
     const endDate = formatDateParam(searchParams.value.end_date);
     const res = await fetchOrderExceptionStatistics(startDate, endDate);
     if (res.data) {
-      statistics.value = res.data;
+      const raw: Record<string, number> = res.data as any;
+      const entries = Object.entries(raw || {});
+
+      const sumBy = (predicate: (key: string) => boolean) =>
+        entries.reduce((sum, [key, val]) => (predicate(key) ? sum + (val || 0) : sum), 0);
+
+      const total_count = entries.reduce((sum, [, val]) => sum + (val || 0), 0);
+      const pending_count = sumBy((k) => k.endsWith('_pending'));
+      const processing_count = sumBy((k) => k.endsWith('_processing'));
+      const resolved_count = sumBy((k) => k.endsWith('_resolved'));
+      const ignored_count = sumBy((k) => k.endsWith('_ignored'));
+      const balance_verification_count = sumBy((k) => k.startsWith('balance_verification_'));
+
+      statistics.value = {
+        total_count,
+        pending_count,
+        processing_count,
+        resolved_count,
+        ignored_count,
+        balance_verification_count
+      };
     }
   } catch (error) {
     console.error('获取统计信息失败:', error);
@@ -375,7 +401,7 @@ onMounted(() => {
         <div class="mb-4">
           <p><strong>订单ID:</strong> {{ currentException.order_id }}</p>
           <p><strong>异常类型:</strong> {{ exceptionTypeMap[currentException.exception_type]?.text || currentException.exception_type }}</p>
-          <p><strong>异常原因:</strong> {{ currentException.reason }}</p>
+          <p><strong>异常原因:</strong> {{ currentException.exception_reason }}</p>
           <p><strong>当前状态:</strong> {{ statusMap[currentException.status]?.text || currentException.status }}</p>
           <div v-if="currentException.data">
             <p><strong>异常数据:</strong></p>

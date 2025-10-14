@@ -27,8 +27,10 @@ type OrderExceptionService interface {
 	UpdateStatus(ctx context.Context, id int64, req *model.UpdateOrderExceptionRequest, operatorID int64) error
 	// GetPendingCount 获取待处理异常数量
 	GetPendingCount(ctx context.Context) (int64, error)
-	// GetStatistics 获取异常统计信息
-	GetStatistics(ctx context.Context, startDate, endDate time.Time) (map[string]int64, error)
+    // GetStatistics 获取异常统计信息
+    GetStatistics(ctx context.Context, startDate, endDate time.Time) (map[string]int64, error)
+    // GetStatisticsByUser 获取指定用户的异常统计信息
+    GetStatisticsByUser(ctx context.Context, startDate, endDate time.Time, userId int64) (map[string]int64, error)
 }
 
 type orderExceptionService struct {
@@ -182,10 +184,18 @@ func (s *orderExceptionService) UpdateStatus(ctx context.Context, id int64, req 
 
 // GetPendingCount 获取待处理异常数量
 func (s *orderExceptionService) GetPendingCount(ctx context.Context) (int64, error) {
-	return s.exceptionRepo.GetPendingCount(ctx)
+    return s.exceptionRepo.GetPendingCount(ctx)
 }
 
 // GetStatistics 获取异常统计信息
 func (s *orderExceptionService) GetStatistics(ctx context.Context, startDate, endDate time.Time) (map[string]int64, error) {
-	return s.exceptionRepo.GetStatistics(ctx, startDate, endDate)
+    return s.exceptionRepo.GetStatistics(ctx, startDate, endDate)
+}
+
+// GetStatisticsByUser 获取指定用户的异常统计信息
+func (s *orderExceptionService) GetStatisticsByUser(ctx context.Context, startDate, endDate time.Time, userId int64) (map[string]int64, error) {
+    if userId <= 0 {
+        return map[string]int64{}, nil
+    }
+    return s.exceptionRepo.GetStatisticsByUser(ctx, startDate, endDate, userId)
 }

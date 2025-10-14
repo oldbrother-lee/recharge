@@ -6,6 +6,8 @@ const searchForm = ref({
   order_number: '',
   out_trade_num: '',
   mobile: '',
+  isp: null,
+  denom: null,
   status: null,
   platform_code: null,
   date_range: null
@@ -18,6 +20,8 @@ const handleReset = () => {
     order_number: '',
     out_trade_num: '',
     mobile: '',
+    isp: null,
+    denom: null,
     status: null,
     platform_code: null,
     date_range: null
@@ -49,6 +53,24 @@ const handleReset = () => {
                   { label: '电信', value: 2 },
                 ]"
                 placeholder="请选择运营商"
+                clearable
+                class="form-select"
+              />
+            </n-form-item-gi>
+            <n-form-item-gi span="24 s:12 m:6" label="面值" path="denom" class="pr-24px form-item">
+              <n-select
+                v-model:value="searchForm.denom"
+                :options="[
+                  { label: '10', value: 10 },
+                  { label: '20', value: 20 },
+                  { label: '30', value: 30 },
+                  { label: '50', value: 50 },
+                  { label: '100', value: 100 },
+                  { label: '200', value: 200 },
+                  { label: '300', value: 300 },
+                  { label: '500', value: 500 }
+                ]"
+                placeholder="请选择面值"
                 clearable
                 class="form-select"
               />

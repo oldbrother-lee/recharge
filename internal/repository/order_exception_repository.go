@@ -26,8 +26,10 @@ type OrderExceptionRepository interface {
 	UpdateStatus(ctx context.Context, id int64, status string, resolvedBy *int64, resolvedNote string) error
 	// GetPendingCount 获取待处理异常数量
 	GetPendingCount(ctx context.Context) (int64, error)
-	// GetStatistics 获取异常统计信息
-	GetStatistics(ctx context.Context, startDate, endDate time.Time) (map[string]int64, error)
+    // GetStatistics 获取异常统计信息
+    GetStatistics(ctx context.Context, startDate, endDate time.Time) (map[string]int64, error)
+    // GetStatisticsByUser 获取指定用户的异常统计信息
+    GetStatisticsByUser(ctx context.Context, startDate, endDate time.Time, userId int64) (map[string]int64, error)
 }
 
 type orderExceptionRepository struct {
@@ -186,4 +188,35 @@ func (r *orderExceptionRepository) GetStatistics(ctx context.Context, startDate,
 	}
 
 	return stats, nil
+}
+
+// GetStatisticsByUser 获取指定用户的异常统计信息
+func (r *orderExceptionRepository) GetStatisticsByUser(ctx context.Context, startDate, endDate time.Time, userId int64) (map[string]int64, error) {
+    type StatResult struct {
+        ExceptionType string `json:"exception_type"`
+        Status        string `json:"status"`
+        Count         int64  `json:"count"`
+    }
+
+    var results []StatResult
+    // 通过关联订单表，按 customer_id 过滤
+    err := r.db.WithContext(ctx).
+        Table("order_exceptions").
+        Select("order_exceptions.exception_type, order_exceptions.status, COUNT(*) as count").
+        Joins("JOIN orders ON order_exceptions.order_id = orders.id").
+        Where("order_exceptions.created_at >= ? AND order_exceptions.created_at < ? AND orders.customer_id = ?", startDate, endDate, userId).
+        Group("order_exceptions.exception_type, order_exceptions.status").
+        Find(&results).Error
+
+    if err != nil {
+        return nil, err
+    }
+
+    stats := make(map[string]int64)
+    for _, result := range results {
+        key := fmt.Sprintf("%s_%s", result.ExceptionType, result.Status)
+        stats[key] = result.Count
+    }
+
+    return stats, nil
 }

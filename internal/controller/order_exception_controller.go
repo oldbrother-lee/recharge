@@ -249,3 +249,64 @@ func (c *OrderExceptionController) GetStatistics(ctx *gin.Context) {
 
 	utils.Success(ctx, stats)
 }
+
+// GetStatisticsByUser 获取指定用户的异常统计（认证即可）
+// @Summary 获取指定用户的异常统计
+// @Description 获取指定时间范围内当前登录用户或指定用户（仅管理员可指定）的异常统计数据
+// @Tags 订单异常
+// @Accept json
+// @Produce json
+// @Param start_date query string true "开始日期(YYYY-MM-DD)"
+// @Param end_date query string true "结束日期(YYYY-MM-DD)"
+// @Param user_id query int false "用户ID（仅管理员可指定）"
+// @Success 200 {object} map[string]int64
+// @Failure 400 {object} utils.ErrorResponse
+// @Failure 500 {object} utils.ErrorResponse
+// @Router /api/order-exceptions/user-statistics [get]
+func (c *OrderExceptionController) GetStatisticsByUser(ctx *gin.Context) {
+    startDateStr := ctx.Query("start_date")
+    endDateStr := ctx.Query("end_date")
+
+    if startDateStr == "" || endDateStr == "" {
+        utils.Error(ctx, http.StatusBadRequest, "开始日期和结束日期不能为空")
+        return
+    }
+
+    startDate, err := time.Parse("2006-01-02", startDateStr)
+    if err != nil {
+        utils.Error(ctx, http.StatusBadRequest, "开始日期格式错误")
+        return
+    }
+
+    endDate, err := time.Parse("2006-01-02", endDateStr)
+    if err != nil {
+        utils.Error(ctx, http.StatusBadRequest, "结束日期格式错误")
+        return
+    }
+
+    // 结束日期加一天，包含当天的所有记录
+    endDate = endDate.AddDate(0, 0, 1)
+
+    // 默认取当前登录用户 ID
+    userId := ctx.GetInt64("user_id")
+
+    // 管理员可以通过 query 参数指定 user_id
+    if rolesVal, exists := ctx.Get("roles"); exists {
+        if roles, ok := rolesVal.([]string); ok && utils.HasRole(roles, "SUPER_ADMIN") {
+            if uidStr := ctx.Query("user_id"); uidStr != "" {
+                if uid, parseErr := strconv.ParseInt(uidStr, 10, 64); parseErr == nil && uid > 0 {
+                    userId = uid
+                }
+            }
+        }
+    }
+
+    stats, err := c.orderExceptionService.GetStatisticsByUser(ctx.Request.Context(), startDate, endDate, userId)
+    if err != nil {
+        c.logger.Error("获取用户异常统计信息失败", zap.Error(err))
+        utils.Error(ctx, http.StatusInternalServerError, "获取统计信息失败")
+        return
+    }
+
+    utils.Success(ctx, stats)
+}

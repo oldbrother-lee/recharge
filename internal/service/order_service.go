@@ -72,6 +72,8 @@ type OrderService interface {
 	GetOrdersByUserID(ctx context.Context, userID int64, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error)
 	// SendNotification 发送订单回调通知
 	SendNotification(ctx context.Context, orderID int64) error
+	// GetSuccessStatsByIspDenom 按运营商与面值统计成功订单数与金额
+	GetSuccessStatsByIspDenom(ctx context.Context, params map[string]interface{}) ([]model.IspDenomSuccessStat, error)
 }
 
 type OrderStatistics struct {
@@ -926,8 +928,28 @@ func (s *orderService) GetOrdersByUserID(ctx context.Context, userID int64, para
 
 // 修复 List 返回值赋值数量
 func (s *orderService) GetOrdersWithNotification(ctx context.Context, params map[string]interface{}, page, pageSize int) ([]*model.OrderWithNotification, int64, error) {
-	// 调用仓储层的新方法
-	return s.orderRepo.GetOrdersWithNotification(ctx, params, page, pageSize)
+    // 诊断日志：记录是否携带 user_id 以及参数
+    var hasUserID bool
+    var userIDVal interface{}
+    if v, ok := params["user_id"]; ok {
+        hasUserID = true
+        userIDVal = v
+    }
+    logger.WithContext(ctx).Info("OrderService.GetOrdersWithNotification",
+        logger.Bool("has_user_id", hasUserID),
+        logger.Any("user_id_val", userIDVal),
+        logger.Int("page", page),
+        logger.Int("page_size", pageSize),
+        logger.Any("params", params),
+    )
+    // 调用仓储层的新方法
+    return s.orderRepo.GetOrdersWithNotification(ctx, params, page, pageSize)
+}
+
+// GetSuccessStatsByIspDenom 按运营商与面值统计成功订单数与金额
+func (s *orderService) GetSuccessStatsByIspDenom(ctx context.Context, params map[string]interface{}) ([]model.IspDenomSuccessStat, error) {
+    logger.WithContext(ctx).Info("OrderService.GetSuccessStatsByIspDenom", logger.Any("params", params))
+    return s.orderRepo.GetSuccessStatsByIspDenom(ctx, params)
 }
 
 // CreateExternalOrder 创建外部订单（事务性处理：先验证商品再扣款创建订单）

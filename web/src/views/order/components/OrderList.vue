@@ -378,8 +378,12 @@ const columns: DataTableColumns<Order> = [
     width: 120,
     render(row) {
       const value = (row as any).isp;
-      const s = typeof value === 'string' ? value : Array.isArray(value) ? value.join(',') : '';
-      return formatISP(s);
+      if (value === null || value === undefined || value === '') {
+        return '-';
+      }
+      const sOrNum = Array.isArray(value) ? value.join(',') : value;
+      const text = formatISP(sOrNum as any);
+      return text || '-';
     }
   },
   { key: 'account_location', title: '归属地', align: 'center', width: 100 },

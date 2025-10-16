@@ -103,7 +103,8 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'order_exception',
           icon: 'mdi:alert-circle-outline',
-          i18nKey: 'route.order_exception'
+          i18nKey: 'route.order_exception',
+          roles: ['SUPER_ADMIN']
         }
       },
       {
@@ -113,7 +114,8 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'order_kekebang',
           icon: 'mdi:card-account-details-outline',
-          i18nKey: 'route.order_kekebang'
+          i18nKey: 'route.order_kekebang',
+          roles: ['SUPER_ADMIN']
         }
       },
       {
@@ -123,7 +125,8 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'order_mf178',
           icon: 'mdi:beehive-outline',
-          i18nKey: 'route.order_mf178'
+          i18nKey: 'route.order_mf178',
+          roles: ['SUPER_ADMIN']
         }
       },
       {
@@ -133,7 +136,8 @@ export const generatedRoutes: GeneratedRoute[] = [
         meta: {
           title: 'order_xianzhuanxia',
           icon: 'mdi:briefcase-outline',
-          i18nKey: 'route.order_xianzhuanxia'
+          i18nKey: 'route.order_xianzhuanxia',
+          roles: ['SUPER_ADMIN']
         }
       }
     ]

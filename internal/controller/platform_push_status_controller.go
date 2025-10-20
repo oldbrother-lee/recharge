@@ -1,10 +1,10 @@
 package controller
 
 import (
-	"fmt"
 	"net/http"
 	"recharge-go/internal/service/platform"
 	"recharge-go/internal/utils"
+	"recharge-go/pkg/logger"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -79,7 +79,7 @@ func (c *PlatformPushStatusController) UpdatePushStatus(ctx *gin.Context) {
 		utils.Error(ctx, http.StatusBadRequest, "invalid request parameters: status 只能为 1(开启) 或 2(关闭)")
 		return
 	}
-	fmt.Printf("Bind result: %+v\n", req)
+	logger.WithContextCategory(ctx.Request.Context(), "platform_push_status").Info("请求参数绑定结果", logger.AnyV2("req", req))
 
 	// 获取账号信息
 	account, err := c.pushStatusService.AccountRepo.GetByID(accountID)

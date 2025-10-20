@@ -36,7 +36,7 @@ func NewKekebangOrderController(orderService service.OrderService, rechargeServi
 }
 
 func (c *KekebangOrderController) verifyProductExists(productID int64) (*model.Product, error) {
-	fmt.Printf("[kekebang] 开始验证产品是否存在, 产品ID: %d\n", productID)
+	logger.Log.Info("开始验证产品是否存在", zap.Int64("product_id", productID))
 
 	var product model.Product
 	err := database.DB.Model(&model.Product{}).
@@ -44,11 +44,11 @@ func (c *KekebangOrderController) verifyProductExists(productID int64) (*model.P
 		First(&product).Error
 
 	if err != nil {
-		fmt.Printf("[kekebang] 验证产品失败: %v\n", err)
+		logger.Log.Error("验证产品失败", zap.Error(err), zap.Int64("product_id", productID))
 		return nil, err
 	}
 
-	fmt.Printf("[kekebang] 产品验证通过, 产品ID: %d\n", productID)
+	logger.Log.Info("产品验证通过", zap.Int64("product_id", productID))
 	return &product, nil
 }
 

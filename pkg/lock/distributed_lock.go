@@ -37,7 +37,9 @@ func (r *RedisDistributedLock) Lock(ctx context.Context, key string, expiration 
 	value := fmt.Sprintf("%d", time.Now().UnixNano())
 	result, err := r.client.SetNX(ctx, key, value, expiration).Result()
 	if err != nil {
-		logger.Error("获取分布式锁失败", "key", key, "error", err)
+		logger.ErrorLogV2("获取分布式锁失败",
+			logger.StringV2("key", key),
+			logger.ErrorV2(err))
 		return false, err
 	}
 	return result, nil
@@ -55,16 +57,20 @@ func (r *RedisDistributedLock) Unlock(ctx context.Context, key string, value str
 	`
 	result, err := r.client.Eval(ctx, luaScript, []string{key}, value).Result()
 	if err != nil {
-		logger.Error("释放分布式锁失败", "key", key, "error", err)
+		logger.ErrorLogV2("释放分布式锁失败",
+			logger.StringV2("key", key),
+			logger.ErrorV2(err))
 		return err
 	}
 	
 	if result.(int64) == 0 {
-		logger.Warn("锁已被其他客户端释放或已过期", "key", key)
+		logger.WarnV2("锁已被其他客户端释放或已过期",
+			logger.StringV2("key", key))
 		return errors.New("锁已被其他客户端释放或已过期")
 	}
 	
-	logger.Info("成功释放分布式锁", "key", key)
+	logger.InfoV2("成功释放分布式锁",
+		logger.StringV2("key", key))
 	return nil
 }
 
@@ -75,20 +81,26 @@ func (r *RedisDistributedLock) LockWithRetry(ctx context.Context, key string, ex
 	for i := 0; i <= maxRetries; i++ {
 		result, err := r.client.SetNX(ctx, key, value, expiration).Result()
 		if err != nil {
-			logger.Error("获取分布式锁失败", "key", key, "retry", i, "error", err)
-			if i == maxRetries {
-				return "", err
-			}
+			logger.ErrorLogV2("获取分布式锁失败",
+				logger.StringV2("key", key),
+				logger.Int64V2("retry", int64(i)),
+				logger.ErrorV2(err))
 			continue
 		}
 		
 		if result {
-			logger.Info("成功获取分布式锁", "key", key, "retry", i, "value", value)
+			logger.InfoV2("成功获取分布式锁",
+				logger.StringV2("key", key),
+				logger.Int64V2("retry", int64(i)),
+				logger.StringV2("value", value))
 			return value, nil
 		}
 		
 		if i < maxRetries {
-			logger.Info("获取锁失败，等待重试", "key", key, "retry", i+1, "interval", retryInterval)
+			logger.InfoV2("获取锁失败，等待重试",
+				logger.StringV2("key", key),
+				logger.Int64V2("retry", int64(i+1)),
+				logger.DurationV2("interval", retryInterval))
 			select {
 			case <-ctx.Done():
 				return "", ctx.Err()

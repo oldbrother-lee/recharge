@@ -10,6 +10,7 @@ import (
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/signature"
+	"recharge-go/pkg/logger"
 )
 
 // OrderSubmitter 订单提交接口
@@ -43,7 +44,7 @@ func (s *BaseOrderSubmitter) SubmitOrder(ctx context.Context, order *model.Order
 	}
 
 	// 2. 发送请求
-	fmt.Println("发送请求", api.URL, params)
+	logger.WithContextCategory(ctx, "recharge").Info("发送订单请求", logger.StringV2("url", api.URL), logger.IntV2("params_count", len(params)))
 	resp, err := s.sendRequest(ctx, api.URL, params)
 	if err != nil {
 		return fmt.Errorf("发送请求失败: %v", err)

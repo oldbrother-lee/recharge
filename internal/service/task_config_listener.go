@@ -61,14 +61,14 @@ func (l *TaskConfigListener) Start() error {
 	for {
 		select {
 		case <-l.ctx.Done():
-			logger.Info("任务配置监听器已停止")
+			logger.WithContextCategory(l.ctx, "task_config").Info("任务配置监听器已停止")
 			return nil
 		case err := <-errorChan:
 			if l.ctx.Err() != nil {
 				// Context已取消，正常退出
 				return nil
 			}
-			logger.Error(fmt.Sprintf("接收配置变更消息失败: %v", err))
+			logger.WithContextCategory(l.ctx, "task_config").Error("接收配置变更消息失败", logger.ErrorV2(err))
 			// 等待一段时间后重试
 			select {
 			case <-l.ctx.Done():
@@ -78,7 +78,7 @@ func (l *TaskConfigListener) Start() error {
 			}
 		case msg := <-msgChan:
 			if err := l.handleConfigChangeEvent(msg.Payload); err != nil {
-				logger.Error(fmt.Sprintf("处理配置变更事件失败: %v", err))
+				logger.WithContextCategory(l.ctx, "task_config").Error("处理配置变更事件失败", logger.ErrorV2(err))
 			}
 		}
 	}
@@ -96,14 +96,17 @@ func (l *TaskConfigListener) handleConfigChangeEvent(payload string) error {
 		return fmt.Errorf("解析配置变更事件失败: %w", err)
 	}
 
-	logger.Info(fmt.Sprintf("收到任务配置变更事件: type=%s, config_id=%d, timestamp=%d", 
-		event.Type, event.ConfigID, event.Timestamp))
+	logger.WithContextCategory(l.ctx, "task_config").Info("收到任务配置变更事件",
+		logger.StringV2("type", event.Type),
+		logger.Int64V2("config_id", event.ConfigID),
+		logger.Int64V2("timestamp", event.Timestamp),
+	)
 
 	// 触发任务配置重载
 	if err := l.taskService.ReloadTaskConfig(); err != nil {
 		return fmt.Errorf("重载任务配置失败: %w", err)
 	}
 
-	logger.Info("任务配置重载完成")
+	logger.WithContextCategory(l.ctx, "task_config").Info("任务配置重载完成")
 	return nil
 }

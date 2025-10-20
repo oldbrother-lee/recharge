@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -64,7 +63,15 @@ func (p *Payc2Platform) getAPIConfig(ctx context.Context, accountID int64) (stri
 
 // SubmitOrder 提交订单
 func (p *Payc2Platform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-	logger.Info(fmt.Sprintf("【payc2开始提交订单】order_number: %s", order.OrderNumber))
+    // 注入订单号到上下文并使用 v2 recharge 类别日志
+    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+    clog := logger.WithContextCategory(ctx, "recharge")
+    clog.Info("开始提交订单",
+        logger.StringV2("platform", "payc2"),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.Int64V2("account_id", api.AccountID),
+        logger.StringV2("api_code", api.Code),
+    )
 
 	// 获取API配置
 	merchID, secretKey, err := p.getAPIConfig(ctx, api.AccountID)
@@ -102,7 +109,17 @@ func (p *Payc2Platform) SubmitOrder(ctx context.Context, order *model.Order, api
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	logger.Info("payc2发送请求", "url", api.URL+"/apis/wof/order/create_phone", "params", params)
+    // 仅记录参数键，避免记录大量或敏感内容
+    paramKeys := make([]string, 0, len(params))
+    for k := range params {
+        paramKeys = append(paramKeys, k)
+    }
+    sort.Strings(paramKeys)
+    clog.Info("发送请求",
+        logger.StringV2("url", api.URL+"/apis/wof/order/create_phone"),
+        logger.StringV2("method", "POST"),
+        logger.AnyV2("param_keys", paramKeys),
+    )
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -115,7 +132,15 @@ func (p *Payc2Platform) SubmitOrder(ctx context.Context, order *model.Order, api
 		return fmt.Errorf("读取响应失败: %v", err)
 	}
 
-	logger.Info("payc2响应", "status", resp.StatusCode, "body", string(body))
+    bodyStr := string(body)
+    preview := bodyStr
+    if len(bodyStr) > 512 {
+        preview = bodyStr[:512] + "..."
+    }
+    clog.Info("收到响应",
+        logger.IntV2("status", resp.StatusCode),
+        logger.StringV2("body_preview", preview),
+    )
 
 	// 检查HTTP状态码
 	if resp.StatusCode != 200 {
@@ -139,15 +164,23 @@ func (p *Payc2Platform) SubmitOrder(ctx context.Context, order *model.Order, api
 	order.APITradeNum = response.Datas.OrderNo
 	order.Status = model.OrderStatusRecharging
 
-	logger.Info("payc2订单提交成功", "order_number", order.OrderNumber, "api_order_id", response.Datas.UID)
-	return nil
+    clog.Info("订单提交成功",
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.StringV2("api_order_id", response.Datas.UID),
+        logger.StringV2("api_trade_no", response.Datas.OrderNo),
+    )
+    return nil
 }
 
 // QueryOrderStatus 查询订单状态
 func (p *Payc2Platform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-	// payc2平台通常通过回调通知订单状态，这里可以实现主动查询逻辑
-	// 如果平台提供查询接口，可以在这里实现
-	logger.Info("payc2查询订单状态", "order_number", order.OrderNumber)
+    // payc2平台通常通过回调通知订单状态，这里可以实现主动查询逻辑
+    // 如果平台提供查询接口，可以在这里实现
+    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+    clog := logger.WithContextCategory(ctx, "recharge")
+    clog.Info("查询订单状态",
+        logger.StringV2("platform", "payc2"),
+    )
 
 	// 暂时返回当前状态，实际应该调用平台查询接口
 	return order.Status, nil
@@ -155,24 +188,37 @@ func (p *Payc2Platform) QueryOrderStatus(ctx context.Context, order *model.Order
 
 // verifyCallbackSignature 验证回调签名
 func (p *Payc2Platform) verifyCallbackSignature(ctx context.Context, params map[string]interface{}, orderNo string) bool {
-	order, err := p.orderRepo.GetByOrderNumber(ctx, orderNo)
-	if err != nil {
-		logger.Error("获取订单信息失败", "orderNo", orderNo, "error", err)
-		return false
-	}
+    // 注入订单号以便全链路日志追踪
+    ctx = logger.InjectOrderNumber(ctx, orderNo)
+    clog := logger.WithContextCategory(ctx, "recharge")
 
-	account, err := p.platformRepo.GetAccountByID(ctx, order.PlatformAccountID)
-	if err != nil {
-		logger.Error("获取平台账号信息失败", "accountID", order.PlatformAccountID, "error", err)
-		return false
-	}
+    order, err := p.orderRepo.GetByOrderNumber(ctx, orderNo)
+    if err != nil {
+        clog.Error("获取订单信息失败",
+            logger.StringV2("order_number", orderNo),
+            logger.ErrorV2(err),
+        )
+        return false
+    }
+
+    account, err := p.platformRepo.GetAccountByID(ctx, order.PlatformAccountID)
+    if err != nil {
+        clog.Error("获取平台账号信息失败",
+            logger.Int64V2("account_id", order.PlatformAccountID),
+            logger.StringV2("order_number", orderNo),
+            logger.ErrorV2(err),
+        )
+        return false
+    }
 
 	// 3. 获取接收到的签名
-	receivedSign, ok := params["sign"].(string)
-	if !ok {
-		logger.Error("回调数据中缺少签名")
-		return false
-	}
+    receivedSign, ok := params["sign"].(string)
+    if !ok {
+        clog.Error("回调数据中缺少签名",
+            logger.StringV2("order_number", orderNo),
+        )
+        return false
+    }
 
 	// 4. 移除签名字段后重新计算签名
 	delete(params, "sign")
@@ -180,12 +226,13 @@ func (p *Payc2Platform) verifyCallbackSignature(ctx context.Context, params map[
 	// 5. 使用正确的AppSecret生成签名
 	expectedSign := p.generateSignatureWithSecret(params, account.AppSecret)
 
-	logger.Info("payc2回调签名验证",
-		"orderNo", orderNo,
-		"accountID", order.PlatformAccountID,
-		"appSecret", account.AppSecret,
-		"receivedSign", receivedSign,
-		"expectedSign", expectedSign)
+    // 不记录 appSecret，避免泄露敏感信息
+    clog.Info("验证回调签名",
+        logger.StringV2("order_number", orderNo),
+        logger.Int64V2("account_id", order.PlatformAccountID),
+        logger.StringV2("received_sign", receivedSign),
+        logger.StringV2("expected_sign", expectedSign),
+    )
 
 	return strings.EqualFold(receivedSign, expectedSign)
 }
@@ -221,13 +268,40 @@ func (p *Payc2Platform) generateSignatureWithSecret(params map[string]interface{
 	hash.Write([]byte(signStr))
 	sign := hex.EncodeToString(hash.Sum(nil))
 
-	logger.Info("payc2签名生成", "params", params, "signStr", signStr, "sign", sign)
-	return sign
+    // 使用 recharge 类别日志记录签名生成信息，避免记录完整参数内容
+    clog := logger.GetCategoryLogger("recharge")
+    paramKeys := make([]string, 0, len(params))
+    for k := range params {
+        if k == "sign" {
+            continue
+        }
+        paramKeys = append(paramKeys, k)
+    }
+    sort.Strings(paramKeys)
+    signStrPreview := signStr
+    if len(signStrPreview) > 256 {
+        signStrPreview = signStrPreview[:256] + "..."
+    }
+    clog.Info("生成签名",
+        logger.AnyV2("param_keys", paramKeys),
+        logger.StringV2("sign_string_preview", signStrPreview),
+        logger.StringV2("sign", sign),
+    )
+    return sign
 }
 
 // ParseCallbackData 解析回调数据
 func (p *Payc2Platform) ParseCallbackData(data []byte) (*model.CallbackData, error) {
-	logger.Info("payc2解析回调数据", "data", string(data))
+    // 无上下文时使用 recharge 类别日志器
+    clog := logger.GetCategoryLogger("recharge")
+    dataPreview := string(data)
+    if len(dataPreview) > 256 {
+        dataPreview = dataPreview[:256] + "..."
+    }
+    clog.Info("解析回调数据",
+        logger.IntV2("data_len", len(data)),
+        logger.StringV2("data_preview", dataPreview),
+    )
 
 	// 解析表单数据
 	values, err := url.ParseQuery(string(data))
@@ -249,11 +323,10 @@ func (p *Payc2Platform) ParseCallbackData(data []byte) (*model.CallbackData, err
 		return nil, fmt.Errorf("回调数据中缺少订单号")
 	}
 
-	// 验证签名 - 需要动态获取AppSecret
-	// 临时注释签名验证
-	// if !p.verifyCallbackSignature(params, orderNo) {
-	// 	return nil, fmt.Errorf("回调签名验证失败")
-	// }
+	// 验证签名 - 动态获取AppSecret
+	if !p.verifyCallbackSignature(context.Background(), params, orderNo) {
+		return nil, fmt.Errorf("回调签名验证失败")
+	}
 
 	// 解析回调数据
 	callbackData := &model.CallbackData{
@@ -265,55 +338,18 @@ func (p *Payc2Platform) ParseCallbackData(data []byte) (*model.CallbackData, err
 		TransactionID: "payc2_" + values.Get("uid"),
 	}
 
-	// 根据 stateAmount 和 stateOver 判断订单状态
-	stateAmount := values.Get("stateAmount")
-	stateOver := values.Get("stateOver")
-	amountPaid := values.Get("amountPaid")
-
-	logger.Info("payc2回调状态信息",
-		"order_number", callbackData.OrderNumber,
-		"stateAmount", stateAmount,
-		"stateOver", stateOver,
-		"amountPaid", amountPaid)
-
-	// 根据文档说明判断订单状态
-	// stateAmount: 0零充值，1已全充，3部分充，4已超充
-	// stateOver: 0未结束，1已结束
-	if stateAmountInt, err := strconv.Atoi(stateAmount); err == nil {
-		switch stateAmountInt {
-		case 0: // 零充值
-			callbackData.Status = "failed"
-			callbackData.Message = "零充值"
-		case 1: // 已全充
-			callbackData.Status = "success"
-			callbackData.Message = "充值成功"
-		case 3: // 部分充
-			callbackData.Status = "partial"
-			callbackData.Message = "部分充值"
-		case 4: // 已超充
-			callbackData.Status = "success"
-			callbackData.Message = "充值成功（超充）"
-		default:
-			callbackData.Status = "unknown"
-			callbackData.Message = "未知状态"
-		}
-	}
-
-	// 如果订单已结束且为零充值，则标记为失败
-	if stateOver == "1" && stateAmount == "0" {
-		callbackData.Status = "failed"
-		callbackData.Message = "订单已结束，零充值"
-	}
-
-	logger.Info("payc2回调数据解析完成", "callback_data", callbackData)
 	return callbackData, nil
 }
 
 // QueryBalance 查询账户余额
 func (p *Payc2Platform) QueryBalance(ctx context.Context, accountID int64) (float64, error) {
-	// 如果平台提供余额查询接口，可以在这里实现
-	logger.Info("payc2查询账户余额", "account_id", accountID)
+    // 如果平台提供余额查询接口，可以在这里实现
+    clog := logger.WithContextCategory(ctx, "recharge")
+    clog.Info("查询账户余额",
+        logger.StringV2("platform", "payc2"),
+        logger.Int64V2("account_id", accountID),
+    )
 
-	// 暂时返回0，实际应该调用平台余额查询接口
-	return 0, fmt.Errorf("payc2平台暂不支持余额查询")
+    // 暂时返回0，实际应该调用平台余额查询接口
+    return 0, fmt.Errorf("payc2平台暂不支持余额查询")
 }

@@ -361,11 +361,11 @@ func (c *OrderController) GetOrders(ctx *gin.Context) {
 
     // 诊断日志：记录角色、用户ID、分页与查询参数
     logger.WithContext(ctx).Info("OrderController.GetOrders",
-        logger.String("role", userRole),
-        logger.Int64("user_id", userID),
-        logger.Any("params", params),
-        logger.Int("page", pageInt),
-        logger.Int("page_size", pageSizeInt),
+        logger.StringV2("role", userRole),
+        logger.Int64V2("user_id", userID),
+        logger.AnyV2("params", params),
+        logger.IntV2("page", pageInt),
+        logger.IntV2("page_size", pageSizeInt),
     )
 
 	// 使用包含通知信息的查询方法
@@ -410,9 +410,9 @@ func (c *OrderController) GetSuccessStatsByIspAndDenom(ctx *gin.Context) {
     }
 
     logger.WithContext(ctx).Info("OrderController.GetSuccessStatsByIspAndDenom",
-        logger.String("role", userRole),
-        logger.Int64("user_id", userID),
-        logger.Any("params", params),
+        logger.StringV2("role", userRole),
+        logger.Int64V2("user_id", userID),
+        logger.AnyV2("params", params),
     )
 
     stats, err := c.orderService.GetSuccessStatsByIspDenom(ctx, params)

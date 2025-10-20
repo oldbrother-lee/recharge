@@ -103,13 +103,14 @@ func (s *HTTPSender) Send(ctx context.Context, record *notification.Notification
 		return fmt.Errorf("request failed with status code: %d", resp.StatusCode)
 	}
 
-	// 记录成功日志
-	logger.Info("notification sent successfully",
-		"record_id", record.ID,
-		"platform", record.PlatformCode,
-		"type", record.NotificationType,
-		"status_code", resp.StatusCode,
-	)
+    // 记录成功日志（按类别写入 notification.log）
+    logger.WithContextCategory(ctx, "notification").Info(
+        "notification sent successfully",
+        logger.Int64V2("record_id", record.ID),
+        logger.StringV2("platform", record.PlatformCode),
+        logger.StringV2("type", record.NotificationType),
+        logger.IntV2("status_code", resp.StatusCode),
+    )
 
 	return nil
 }
@@ -181,13 +182,14 @@ func (s *WebhookSender) Send(ctx context.Context, record *notification.Notificat
 		return fmt.Errorf("webhook request failed with status code: %d", resp.StatusCode)
 	}
 
-	// 记录成功日志
-	logger.Info("webhook notification sent successfully",
-		"record_id", record.ID,
-		"platform", record.PlatformCode,
-		"type", record.NotificationType,
-		"status_code", resp.StatusCode,
-	)
+    // 记录成功日志（按类别写入 notification.log）
+    logger.WithContextCategory(ctx, "notification").Info(
+        "webhook notification sent successfully",
+        logger.Int64V2("record_id", record.ID),
+        logger.StringV2("platform", record.PlatformCode),
+        logger.StringV2("type", record.NotificationType),
+        logger.IntV2("status_code", resp.StatusCode),
+    )
 
 	return nil
 }

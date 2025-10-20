@@ -33,25 +33,25 @@ func (p *ShangtengPlatform) GetName() string { return "shangteng" }
 
 // getAPIKeyAndSecret 获取API密钥信息
 func (p *ShangtengPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int64) (string, string, string, error) {
-	logger.WithContext(ctx).Info("【获取商腾科技账号信息】", logger.Int64("account_id", accountID))
-	account, err := p.platformRepo.GetAccountByID(ctx, accountID)
-	if err != nil {
-		logger.WithContext(ctx).Error("【获取平台账号失败】", logger.Int64("account_id", accountID), logger.ErrorV2(err))
-		return "", "", "", fmt.Errorf("get platform account failed: %v", err)
-	}
-	return account.AppKey, account.AppSecret, account.AccountName, nil
+    logger.WithContextCategory(ctx, "recharge").Info("【获取商腾科技账号信息】", logger.Int64V2("account_id", accountID))
+    account, err := p.platformRepo.GetAccountByID(ctx, accountID)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("【获取平台账号失败】", logger.Int64V2("account_id", accountID), logger.ErrorV2(err))
+        return "", "", "", fmt.Errorf("get platform account failed: %v", err)
+    }
+    return account.AppKey, account.AppSecret, account.AccountName, nil
 }
 
 // SubmitOrder 提交订单到商腾科技平台
 func (p *ShangtengPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-	logger.WithContext(ctx).Info("【开始提交商腾科技订单】",
-		logger.String("order_number", order.OrderNumber),
-		logger.Int64("api_id", api.ID),
-		logger.Int64("platform_id", api.PlatformID),
-		logger.Int64("account_id", api.AccountID),
-		logger.Int64("param_id", apiParam.ID),
-		logger.String("product_id", apiParam.ProductID),
-	)
+    logger.WithContextCategory(ctx, "recharge").Info("【开始提交商腾科技订单】",
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.Int64V2("api_id", api.ID),
+        logger.Int64V2("platform_id", api.PlatformID),
+        logger.Int64V2("account_id", api.AccountID),
+        logger.Int64V2("param_id", apiParam.ID),
+        logger.StringV2("product_id", apiParam.ProductID),
+    )
 
 	// 获取API密钥信息
 	apiKey, _, userId, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
@@ -66,17 +66,17 @@ func (p *ShangtengPlatform) SubmitOrder(ctx context.Context, order *model.Order,
 		callbackURL = api.CallbackURL
 		callbackFrom = "api"
 	}
-	logger.WithContext(ctx).Info("【选择回调地址】",
-		logger.Int64("order_id", order.ID),
-		logger.String("callback_url", callbackURL),
-		logger.String("from", callbackFrom),
-	)
+    logger.WithContextCategory(ctx, "recharge").Info("【选择回调地址】",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("callback_url", callbackURL),
+        logger.StringV2("from", callbackFrom),
+    )
 
 	// 时间戳（10位秒）
 	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
 
 	// 构建请求Body（依据文档字段）
-	logger.WithContext(ctx).Info("【商腾科技构建请求参数】", logger.String("url", api.URL))
+    logger.WithContextCategory(ctx, "recharge").Info("【商腾科技构建请求参数】", logger.StringV2("url", api.URL))
 	body := map[string]interface{}{
 		"product_id":       mustParseInt(apiParam.ProductID),
 		"recharge_account": order.Mobile,
@@ -88,7 +88,7 @@ func (p *ShangtengPlatform) SubmitOrder(ctx context.Context, order *model.Order,
 
 	// 生成签名（基于业务参数 + timestamp + apiKey）
 	sign := signature.GenerateShangtengSign(body, timestamp, apiKey)
-	logger.WithContext(ctx).Info("【商腾科技生成签名】", logger.String("userId", userId))
+    logger.WithContextCategory(ctx, "recharge").Info("【商腾科技生成签名】", logger.StringV2("userId", userId))
 
 	// 将公共参数放到 Header
 	headers := map[string]string{
@@ -99,40 +99,40 @@ func (p *ShangtengPlatform) SubmitOrder(ctx context.Context, order *model.Order,
 	}
 
 	// 发送请求（URL 以文档为准，假定 /api/Order/create）
-	logger.WithContext(ctx).Info("【商腾科技提交订单请求参数】", logger.Any("body", body), logger.Any("headers", headers))
-	resp, err := p.sendRequest(ctx, api.URL+"/api/Order/create", body, headers)
-	if err != nil {
-		logger.WithContext(ctx).Error("【提交商腾科技订单失败】",
-			logger.String("order_number", order.OrderNumber),
-			logger.ErrorV2(err),
-		)
-		return fmt.Errorf("submit order failed: %v", err)
-	}
+    logger.WithContextCategory(ctx, "recharge").Info("【商腾科技提交订单请求参数】", logger.AnyV2("body", body), logger.AnyV2("headers", headers))
+    resp, err := p.sendRequest(ctx, api.URL+"/api/Order/create", body, headers)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("【提交商腾科技订单失败】",
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.ErrorV2(err),
+        )
+        return fmt.Errorf("submit order failed: %v", err)
+    }
 
 	// 检查响应
-	if resp.Status != 200 {
-		logger.WithContext(ctx).Error("【提交商腾科技订单失败】",
-			logger.String("order_number", order.OrderNumber),
-			logger.Int("status", resp.Status),
-			logger.String("message", resp.Msg),
-		)
-		return fmt.Errorf("submit order failed: %s", resp.Msg)
-	}
+    if resp.Status != 200 {
+        logger.WithContextCategory(ctx, "recharge").Error("【提交商腾科技订单失败】",
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.IntV2("status", resp.Status),
+            logger.StringV2("message", resp.Msg),
+        )
+        return fmt.Errorf("submit order failed: %s", resp.Msg)
+    }
 
-	logger.WithContext(ctx).Info("【商腾科技提交订单成功】",
-		logger.String("order_number", order.OrderNumber),
-		logger.String("platform_order_id", resp.Data.OrderNo),
-	)
-	return nil
+    logger.WithContextCategory(ctx, "recharge").Info("【商腾科技提交订单成功】",
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.StringV2("platform_order_id", resp.Data.OrderNo),
+    )
+    return nil
 }
 
 // QueryOrderStatus 查询订单状态（主要通过回调更新状态，此方法保留接口兼容性）
 func (p *ShangtengPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-	logger.WithContext(ctx).Info("【查询商腾科技订单状态】",
-		logger.Int64("order_id", order.ID),
-		logger.String("order_number", order.OrderNumber),
-	)
-	return order.Status, nil
+    logger.WithContextCategory(ctx, "recharge").Info("【查询商腾科技订单状态】",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+    )
+    return order.Status, nil
 }
 
 // mapOrderState 映射订单状态（示例：1处理中、2成功、3取消、4退款、5失败）
@@ -189,8 +189,8 @@ func (p *ShangtengPlatform) sendRequest(ctx context.Context, url string, body ma
 	jsonStr := signature.EncodeShangtengBody(body)
 	jsonData := []byte(jsonStr)
 	// 打印实际发送的JSON串，确保与签名使用的一致
-	logger.WithContext(ctx).Info("【商腾科技请求Body JSON】", logger.String("json", string(jsonData)))
-	logger.WithContext(ctx).Info("【商腾科技请求Headers】", logger.Any("headers", headers))
+    logger.WithContextCategory(ctx, "recharge").Info("【商腾科技请求Body JSON】", logger.StringV2("json", string(jsonData)))
+    logger.WithContextCategory(ctx, "recharge").Info("【商腾科技请求Headers】", logger.AnyV2("headers", headers))
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
@@ -211,7 +211,7 @@ func (p *ShangtengPlatform) sendRequest(ctx context.Context, url string, body ma
 	if err != nil {
 		return nil, fmt.Errorf("read response failed: %v", err)
 	}
-	logger.WithContext(ctx).Info("【商腾科技HTTP响应】", logger.Int("http_status", httpResp.StatusCode), logger.String("body", string(respBody)))
+    logger.WithContextCategory(ctx, "recharge").Info("【商腾科技HTTP响应】", logger.IntV2("http_status", httpResp.StatusCode), logger.StringV2("body", string(respBody)))
 
 	var resp ShangtengResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {

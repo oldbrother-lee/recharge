@@ -8,6 +8,7 @@ import (
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
+	"recharge-go/pkg/logger"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -57,7 +58,7 @@ func (s *orderExceptionService) CreateBalanceVerificationException(ctx context.C
 	// 序列化异常数据
 	exceptionDataJSON, err := json.Marshal(exceptionData)
 	if err != nil {
-		s.logger.Error("序列化异常数据失败", zap.Error(err), zap.Int64("order_id", order.ID))
+		logger.WithContextCategory(ctx, "order_exception").Error("序列化异常数据失败", logger.ErrorV2(err), logger.Int64V2("order_id", order.ID))
 		return fmt.Errorf("序列化异常数据失败: %v", err)
 	}
 
@@ -88,21 +89,21 @@ func (s *orderExceptionService) CreateBalanceVerificationException(ctx context.C
 	}
 
 	if createErr != nil {
-		s.logger.Error("创建订单异常记录失败", zap.Error(createErr), zap.Int64("order_id", order.ID))
+		logger.WithContextCategory(ctx, "order_exception").Error("创建订单异常记录失败", logger.ErrorV2(createErr), logger.Int64V2("order_id", order.ID))
 		return fmt.Errorf("创建订单异常记录失败: %v", createErr)
 	}
 
 	// 更新订单的异常标记
 	updateOrderErr := s.updateOrderHasException(ctx, order.ID, true, tx)
 	if updateOrderErr != nil {
-		s.logger.Error("更新订单异常标记失败", zap.Error(updateOrderErr), zap.Int64("order_id", order.ID))
+		logger.WithContextCategory(ctx, "order_exception").Error("更新订单异常标记失败", logger.ErrorV2(updateOrderErr), logger.Int64V2("order_id", order.ID))
 		// 这里不返回错误，因为异常记录已经创建成功
 	}
 
-	s.logger.Info("创建余额验证异常记录成功",
-		zap.Int64("order_id", order.ID),
-		zap.String("order_number", order.OrderNumber),
-		zap.Int64("exception_id", exception.ID),
+	logger.WithContextCategory(ctx, "order_exception").Info("创建余额验证异常记录成功",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.Int64V2("exception_id", exception.ID),
 	)
 
 	return nil
@@ -171,12 +172,12 @@ func (s *orderExceptionService) UpdateStatus(ctx context.Context, id int64, req 
 		return fmt.Errorf("更新异常状态失败: %v", err)
 	}
 
-	s.logger.Info("更新订单异常状态成功",
-		zap.Int64("exception_id", id),
-		zap.Int64("order_id", exception.OrderID),
-		zap.String("old_status", exception.Status),
-		zap.String("new_status", req.Status),
-		zap.Int64("operator_id", operatorID),
+	logger.WithContextCategory(ctx, "order_exception").Info("更新订单异常状态成功",
+		logger.Int64V2("exception_id", id),
+		logger.Int64V2("order_id", exception.OrderID),
+		logger.StringV2("old_status", exception.Status),
+		logger.StringV2("new_status", req.Status),
+		logger.Int64V2("operator_id", operatorID),
 	)
 
 	return nil

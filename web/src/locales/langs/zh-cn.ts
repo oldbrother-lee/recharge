@@ -241,6 +241,7 @@ const local: App.I18n.Schema = {
     'order_mf178':"蜜蜂订单",
     'order_kekebang':"客客帮订单",
     'order_xianzhuanxia':"闲赚侠订单",
+    'order_xianyingke':"闲赢客订单",
     'user':"用户中心",
     'system_phone-query':"缴费查询",
   },

@@ -81,20 +81,25 @@ func convertOperatorCode(operatorCode string) string {
 
 // SubmitOrder 提交订单
 func (p *MishiPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-	logger.Info("开始提交秘史订单",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"mobile", order.Mobile,
-	)
+    l := logger.WithContextCategory(ctx, "recharge")
+    if l != nil {
+        l.Info("开始提交秘史订单",
+            logger.Int64V2("order_id", order.ID),
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("mobile", order.Mobile),
+        )
+    }
 	// 原先打印完整结构的调试输出改为结构化且不暴露敏感信息
-	logger.Info("[mishi] 提交参数上下文",
-		"api_code", api.Code,
-		"api_id", api.ID,
-		"platform_id", api.PlatformID,
-		"account_id", api.AccountID,
-		"param_id", apiParam.ID,
-		"product_id", apiParam.ProductID,
-	)
+    if l != nil {
+        l.Info("[mishi] 提交参数上下文",
+            logger.StringV2("api_code", api.Code),
+            logger.Int64V2("api_id", api.ID),
+            logger.Int64V2("platform_id", api.PlatformID),
+            logger.Int64V2("account_id", api.AccountID),
+            logger.Int64V2("param_id", apiParam.ID),
+            logger.StringV2("product_id", apiParam.ProductID),
+        )
+    }
 	// 获取API密钥和密钥
 	_, appSecret, accountName, err := p.getAPIKeyAndSecret(api.AccountID)
 	if err != nil {
@@ -118,31 +123,38 @@ func (p *MishiPlatform) SubmitOrder(ctx context.Context, order *model.Order, api
 	signStr := fmt.Sprintf("szAgentId=%s&szOrderId=%s&szPhoneNum=%s&nMoney=%s&nSortType=%s&nProductClass=%s&nProductType=%s&szTimeStamp=%s&szKey=%s",
 		accountName, order.OrderNumber, order.Mobile, strconv.FormatInt(int64(order.Denom), 10),
 		convertOperatorCode(strconv.Itoa(order.ISP)), "1", "1", szTimeStamp, appSecret)
-	redacted := strings.ReplaceAll(signStr, appSecret, "****")
-	logger.Info("meishi 生成签名前",
-		"sign_preview", redacted,
-		"contains_secret", true,
-	)
+    redacted := strings.ReplaceAll(signStr, appSecret, "****")
+    if l != nil {
+        l.Info("meishi 生成签名前",
+            logger.StringV2("sign_preview", redacted),
+            logger.BoolV2("contains_secret", true),
+        )
+    }
 	sign := signature.GetMD5(signStr)
 	params.Add("szVerifyString", sign)
 
 	// 添加回调地址
 	params.Add("szNotifyUrl", api.CallbackURL)
 
-	// 发送请求前日志（不打印敏感参数值）
-	logger.Info("meishi 发送请求",
-		"url", api.URL+"/api/submitorder",
-		"param_keys", func() []string { keys := make([]string, 0, len(params)); for k := range params { if k != "szVerifyString" && k != "szPhoneNum" { keys = append(keys, k) } }; return keys }(),
-	)
+    // 发送请求前日志（不打印敏感参数值）
+    paramKeys := func() []string { keys := make([]string, 0, len(params)); for k := range params { if k != "szVerifyString" && k != "szPhoneNum" { keys = append(keys, k) } }; return keys }()
+    if l != nil {
+        l.Info("meishi 发送请求",
+            logger.StringV2("url", api.URL+"/api/submitorder"),
+            logger.AnyV2("param_keys", paramKeys),
+        )
+    }
 	// 发送请求
 	respStr, err := p.sendRequest(ctx, api.URL+"/api/submitorder", params)
 	if err != nil {
 		return fmt.Errorf("发送请求失败: %v", err)
 	}
-	logger.Info("meishi 收到响应",
-		"url", api.URL+"/api/submitorder",
-		"resp_preview", func(s string) string { if len(s) > 300 { return s[:300] + "..." }; return s }(respStr),
-	)
+    if l != nil {
+        l.Info("meishi 收到响应",
+            logger.StringV2("url", api.URL+"/api/submitorder"),
+            logger.StringV2("resp_preview", func(s string) string { if len(s) > 300 { return s[:300] + "..." }; return s }(respStr)),
+        )
+    }
 	// 解析响应
 	var result MishiOrderResponseSubmit
 	if err := json.Unmarshal([]byte(respStr), &result); err != nil {
@@ -150,31 +162,41 @@ func (p *MishiPlatform) SubmitOrder(ctx context.Context, order *model.Order, api
 	}
 
 	// 处理响应
-	if result.NRtn != 0 {
-		logger.Error("meishi 提交订单失败", "NRtn", result.NRtn, "szRtnCode", result.SzRtnCode)
-		return fmt.Errorf("提交订单失败: %s", result.SzRtnCode)
-	}
+    if result.NRtn != 0 {
+        if l != nil {
+            l.Error("meishi 提交订单失败",
+                logger.Int64V2("n_rtn", result.NRtn),
+                logger.StringV2("szRtnCode", result.SzRtnCode),
+            )
+        }
+        return fmt.Errorf("提交订单失败: %s", result.SzRtnCode)
+    }
 
 	// 更新订单信息
 	// order.APIOrderNumber = result.SzOrderId
 	// order.APITradeNum = result.SzOrderId
 
-	logger.Info("提交订单成功",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"api_order_id", result.SzOrderId,
-	)
+    if l != nil {
+        l.Info("提交订单成功",
+            logger.Int64V2("order_id", order.ID),
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("api_order_id", result.SzOrderId),
+        )
+    }
 
 	return nil
 }
 
 // QueryOrderStatus 查询订单状态
 func (p *MishiPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-	logger.Info("开始查询秘史订单状态",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"api_order_id", order.APIOrderNumber,
-	)
+    l := logger.WithContextCategory(ctx, "recharge")
+    if l != nil {
+        l.Info("开始查询秘史订单状态",
+            logger.Int64V2("order_id", order.ID),
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("api_order_id", order.APIOrderNumber),
+        )
+    }
 
 	// 获取API密钥和密钥
 	_, appSecret, accountName, err := p.getAPIKeyAndSecret(order.PlatformAccountID)
@@ -234,15 +256,25 @@ func (p *MishiPlatform) mapOrderState(nFlag string, orderID, orderNumber string)
 	case "2":
 		status = int(model.OrderStatusSuccess)
 		statusStr = strconv.Itoa(status)
-		logger.Info("【秘史订单状态】充值成功", "order_id", orderID, "order_number", orderNumber)
+        logger.GetCategoryLogger("recharge").Info("【秘史订单状态】充值成功",
+            logger.StringV2("order_id", orderID),
+            logger.StringV2("order_number", orderNumber),
+        )
 	case "3":
 		status = int(model.OrderStatusFailed)
 		statusStr = strconv.Itoa(status)
-		logger.Info("【秘史订单状态】充值失败", "order_id", orderID, "order_number", orderNumber)
+        logger.GetCategoryLogger("recharge").Info("【秘史订单状态】充值失败",
+            logger.StringV2("order_id", orderID),
+            logger.StringV2("order_number", orderNumber),
+        )
 	default:
 		status = int(model.OrderStatusProcessing)
 		statusStr = strconv.Itoa(status)
-		logger.Info("【秘史订单状态】处理中", "order_id", orderID, "order_number", orderNumber, "nFlag", nFlag)
+        logger.GetCategoryLogger("recharge").Info("【秘史订单状态】处理中",
+            logger.StringV2("order_id", orderID),
+            logger.StringV2("order_number", orderNumber),
+            logger.StringV2("nFlag", nFlag),
+        )
 	}
 	return status, statusStr
 }
@@ -265,7 +297,9 @@ func (p *MishiPlatform) ParseCallbackData(data []byte) (*model.CallbackData, err
 				Timestamp:     "",
 				TransactionID: "mishi_" + form["szOrderId"][0], // 使用平台前缀+订单号作为TransactionID
 			}
-			logger.Info("mishi回调解析完成(form)", "callbackData", callbackData)
+            logger.GetCategoryLogger("recharge").Info("mishi回调解析完成(form)",
+                logger.AnyV2("callback_data", callbackData),
+            )
 			return callbackData, nil
 		}
 	}
@@ -277,10 +311,13 @@ func (p *MishiPlatform) ParseCallbackData(data []byte) (*model.CallbackData, err
 		FSalePrice     string `json:"fSalePrice"`
 		SzVerifyString string `json:"szVerifyString"`
 	}
-	if err := json.Unmarshal(data, &req); err != nil {
-		logger.Error("mishi回调参数解析失败", "error", err, "data", string(data))
-		return nil, errors.New("解析回调数据失败")
-	}
+    if err := json.Unmarshal(data, &req); err != nil {
+        logger.GetCategoryLogger("recharge").Error("mishi回调参数解析失败",
+            logger.ErrorV2(err),
+            logger.StringV2("raw", string(data)),
+        )
+        return nil, errors.New("解析回调数据失败")
+    }
 	_, statusStr := p.mapOrderState(req.NFlag, req.SzOrderId, req.SzOrderId)
 	callbackData := &model.CallbackData{
 		OrderID:       req.SzOrderId,
@@ -292,7 +329,9 @@ func (p *MishiPlatform) ParseCallbackData(data []byte) (*model.CallbackData, err
 		Timestamp:     "",
 		TransactionID: "mishi_" + req.SzOrderId, // 使用平台前缀+订单号作为TransactionID
 	}
-	logger.Info("mishi回调解析完成(json)", "callbackData", callbackData)
+    logger.GetCategoryLogger("recharge").Info("mishi回调解析完成(json)",
+        logger.AnyV2("callback_data", callbackData),
+    )
 	return callbackData, nil
 }
 
@@ -328,17 +367,35 @@ func (p *MishiPlatform) sendRequest(ctx context.Context, url string, params url.
 	if err != nil {
 		return "", fmt.Errorf("读取响应失败: %v", err)
 	}
-	preview := func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." }; return string(b) }(body)
-	logger.Info("mishi 响应", "url", url, "status_code", resp.StatusCode, "body_preview", preview)
-	return string(body), nil
+    preview := func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." }; return string(b) }(body)
+    if ctx != nil {
+        l := logger.WithContextCategory(ctx, "recharge")
+        if l != nil {
+            l.Info("mishi 响应",
+                logger.StringV2("url", url),
+                logger.IntV2("status_code", resp.StatusCode),
+                logger.StringV2("body_preview", preview),
+            )
+        }
+    } else {
+        logger.GetCategoryLogger("recharge").Info("mishi 响应",
+            logger.StringV2("url", url),
+            logger.IntV2("status_code", resp.StatusCode),
+            logger.StringV2("body_preview", preview),
+        )
+    }
+    return string(body), nil
 
 }
 
 // QueryBalance 查询账户余额
 func (p *MishiPlatform) QueryBalance(ctx context.Context, accountID int64) (float64, error) {
-	logger.Info("开始查询秘史账户余额",
-		"account_id", accountID,
-	)
+    l := logger.WithContextCategory(ctx, "recharge")
+    if l != nil {
+        l.Info("开始查询秘史账户余额",
+            logger.Int64V2("account_id", accountID),
+        )
+    }
 
 	// 获取API密钥和密钥
 	_, appSecret, accountName, err := p.getAPIKeyAndSecret(accountID)
@@ -378,10 +435,12 @@ func (p *MishiPlatform) QueryBalance(ctx context.Context, accountID int64) (floa
 		return 0, fmt.Errorf("查询余额失败: %s", result.SzRtnCode)
 	}
 
-	logger.Info("查询余额成功",
-		"account_id", accountID,
-		"balance", result.FBalance,
-	)
+    if l != nil {
+        l.Info("查询余额成功",
+            logger.Int64V2("account_id", accountID),
+            logger.Float64V2("balance", result.FBalance),
+        )
+    }
 
 	return result.FBalance, nil
 }

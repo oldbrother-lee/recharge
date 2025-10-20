@@ -79,9 +79,9 @@ func (c *XianyinkeOrderController) CreateOrder(ctx *gin.Context) {
 		return
 	}
 	if existOrder != nil {
-		ctx.JSON(http.StatusOK, gin.H{"result": "success", "user_no": outTradeNum})
-		return
-	}
+        ctx.JSON(http.StatusOK, gin.H{"result": "fail", "msg": "订单已存在"})
+        return
+    }
 
 	// 5) 从 chan_pro_code 解析内部商品ID
 	productID, err := strconv.ParseInt(req.ChanProCode, 10, 64)

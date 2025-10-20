@@ -335,7 +335,10 @@ func (s *BeeService) makeRequest(endpoint string, params map[string]string, acco
 
 	// 构建请求URL
 	requestURL := s.baseURL + endpoint
-	logger.Info("bee update price", "params", params, "endpoint", endpoint)
+	logger.GetCategoryLogger("platform").Info("bee update price",
+		logger.AnyV2("params", params),
+		logger.StringV2("endpoint", endpoint),
+	)
 	// 构建POST数据
 	data := url.Values{}
 	for k, v := range params {
@@ -353,7 +356,7 @@ func (s *BeeService) makeRequest(endpoint string, params map[string]string, acco
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %v", err)
 	}
-	logger.Info("bee response", "body", string(body))
+	logger.GetCategoryLogger("platform").Info("bee response", logger.StringV2("body", string(body)))
 	return body, nil
 }
 

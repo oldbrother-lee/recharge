@@ -2,9 +2,9 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
+	"recharge-go/pkg/logger"
 )
 
 type ProductService struct {
@@ -139,7 +139,7 @@ func (s *ProductService) Update(ctx context.Context, req *model.ProductUpdateReq
 	product.IsApi = req.IsApi
 	product.DuplicateCheck = req.DuplicateCheck
 
-	fmt.Println("更新商品分类ID：", req.CategoryID)
+	logger.WithContextCategory(ctx, "product").Info("更新商品分类", logger.Int64V2("product_id", product.ID), logger.Int64V2("category_id", req.CategoryID))
 
 	err = s.productRepo.Update(ctx, product)
 	if err != nil {

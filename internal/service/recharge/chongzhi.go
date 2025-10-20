@@ -69,7 +69,9 @@ func (p *ChongzhiPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int
 
 // SubmitOrder 提交订单
 func (p *ChongzhiPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-	logger.Info(fmt.Sprintf("【开始提交订单】order_number: %s", order.OrderNumber))
+    logger.WithContextCategory(ctx, "recharge").Info("【开始提交订单】",
+        logger.StringV2("order_number", order.OrderNumber),
+    )
 
 	// 获取API密钥
 	userid, key, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
@@ -89,9 +91,13 @@ func (p *ChongzhiPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 	// 记录签名字符串用于调试
 	signStr := fmt.Sprintf("userid=%s&productid=%s&price=%s&num=%s&mobile=%s&spordertime=%s&sporderid=%s&key=%s",
 		userid, productid, price, num, mobile, spordertime, sporderid, key)
-	logger.Info(fmt.Sprintf("签名字符串: %s", signStr))
-	sign := p.signer.GenerateSign(userid, productid, price, num, mobile, spordertime, sporderid, key)
-	logger.Info(fmt.Sprintf("生成签名: %s", sign))
+    logger.WithContextCategory(ctx, "recharge").Info("签名字符串",
+        logger.StringV2("sign_str", signStr),
+    )
+    sign := p.signer.GenerateSign(userid, productid, price, num, mobile, spordertime, sporderid, key)
+    logger.WithContextCategory(ctx, "recharge").Info("生成签名",
+        logger.StringV2("sign", sign),
+    )
 
 	// 构造表单参数
 	form := url.Values{}
@@ -106,49 +112,75 @@ func (p *ChongzhiPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 	form.Set("back_url", api.CallbackURL)
 
 	// 记录请求参数
-	logger.Info(fmt.Sprintf("请求参数: userid=%s, productid=%s, price=%s, mobile=%s, spordertime=%s, sporderid=%s, key=%s, back_url=%s",
-		userid, productid, price, mobile, spordertime, sporderid, key, api.CallbackURL))
+    logger.WithContextCategory(ctx, "recharge").Info("请求参数",
+        logger.StringV2("userid", userid),
+        logger.StringV2("productid", productid),
+        logger.StringV2("price", price),
+        logger.StringV2("mobile", mobile),
+        logger.StringV2("spordertime", spordertime),
+        logger.StringV2("sporderid", sporderid),
+        logger.StringV2("back_url", api.CallbackURL),
+    )
 
 	// 编码为GBK
 	formStr := form.Encode()
-	logger.Info(fmt.Sprintf("表单数据(UTF-8): %s", formStr))
-	gbkBody, err := utils.EncodeGBK(formStr)
-	if err != nil {
-		logger.Error(fmt.Sprintf("GBK encode error: %v", err))
-		return fmt.Errorf("GBK encode error: %v", err)
-	}
-	logger.Info(fmt.Sprintf("GBK编码后长度: %d bytes", len(gbkBody)))
+    logger.WithContextCategory(ctx, "recharge").Info("表单数据(UTF-8)",
+        logger.StringV2("form", formStr),
+    )
+    gbkBody, err := utils.EncodeGBK(formStr)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("GBK encode error",
+            logger.ErrorV2(err),
+        )
+        return fmt.Errorf("GBK encode error: %v", err)
+    }
+    logger.WithContextCategory(ctx, "recharge").Info("GBK编码后长度",
+        logger.IntV2("bytes", len(gbkBody)),
+    )
 
 	// 发送POST请求
-	logger.Info(fmt.Sprintf("请求URL: %s", api.URL))
-	req, err := http.NewRequestWithContext(ctx, "POST", api.URL, bytes.NewReader(gbkBody))
-	if err != nil {
-		logger.Error(fmt.Sprintf("NewRequest error: %v", err))
-		return fmt.Errorf("NewRequest error: %v", err)
-	}
+    logger.WithContextCategory(ctx, "recharge").Info("请求URL",
+        logger.StringV2("url", api.URL),
+    )
+    req, err := http.NewRequestWithContext(ctx, "POST", api.URL, bytes.NewReader(gbkBody))
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("NewRequest error",
+            logger.ErrorV2(err),
+        )
+        return fmt.Errorf("NewRequest error: %v", err)
+    }
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=gbk")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; RechargeBot/1.0)")
 	req.Header.Set("Accept", "*/*")
 	req.Header.Set("Connection", "close")
-	logger.Info(fmt.Sprintf("请求头: Content-Type=%s, User-Agent=%s",
-		req.Header.Get("Content-Type"), req.Header.Get("User-Agent")))
+    logger.WithContextCategory(ctx, "recharge").Info("请求头",
+        logger.StringV2("Content-Type", req.Header.Get("Content-Type")),
+        logger.StringV2("User-Agent", req.Header.Get("User-Agent")),
+    )
 
 	client := &http.Client{Timeout: time.Duration(api.Timeout) * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error(fmt.Sprintf("HTTP request error: %v", err))
-		return fmt.Errorf("HTTP request error: %v", err)
-	}
+    resp, err := client.Do(req)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("HTTP request error",
+            logger.ErrorV2(err),
+        )
+        return fmt.Errorf("HTTP request error: %v", err)
+    }
 	defer resp.Body.Close()
 
 	// 读取响应body（GBK转UTF-8）
-	gbkResp, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error(fmt.Sprintf("ReadAll error: %v", err))
-		return fmt.Errorf("ReadAll error: %v", err)
-	}
+    gbkResp, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("ReadAll error",
+            logger.ErrorV2(err),
+        )
+        return fmt.Errorf("ReadAll error: %v", err)
+    }
 
-	logger.Info(fmt.Sprintf("HTTP状态码: %d, 响应长度: %d", resp.StatusCode, len(gbkResp)))
+    logger.WithContextCategory(ctx, "recharge").Info("HTTP响应",
+        logger.IntV2("status_code", resp.StatusCode),
+        logger.IntV2("length", len(gbkResp)),
+    )
 
 	// 记录原始响应的十六进制内容（前100字节）
 	if len(gbkResp) > 0 {
@@ -156,54 +188,76 @@ func (p *ChongzhiPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 		if maxLen > 100 {
 			maxLen = 100
 		}
-		logger.Info(fmt.Sprintf("原始响应(hex前%d字节): %x", maxLen, gbkResp[:maxLen]))
-		logger.Info(fmt.Sprintf("原始响应(string前%d字节): %s", maxLen, string(gbkResp[:maxLen])))
-	} else {
-		logger.Error("响应体完全为空")
-	}
+        logger.WithContextCategory(ctx, "recharge").Info("原始响应hex预览",
+            logger.IntV2("preview_len", maxLen),
+            logger.StringV2("hex", fmt.Sprintf("%x", gbkResp[:maxLen])),
+        )
+        logger.WithContextCategory(ctx, "recharge").Info("原始响应string预览",
+            logger.IntV2("preview_len", maxLen),
+            logger.StringV2("string", string(gbkResp[:maxLen])),
+        )
+    } else {
+        logger.WithContextCategory(ctx, "recharge").Error("响应体完全为空")
+    }
 
 	// 检查响应是否为空
 	if len(gbkResp) == 0 {
 		// 记录更多调试信息
-		logger.Error(fmt.Sprintf("空响应调试信息 - URL: %s, 超时设置: %d秒, 请求体长度: %d",
-			api.URL, api.Timeout, len(gbkBody)))
+        logger.WithContextCategory(ctx, "recharge").Error("空响应调试信息",
+            logger.StringV2("url", api.URL),
+            logger.IntV2("timeout_seconds", api.Timeout),
+            logger.IntV2("body_len", len(gbkBody)),
+        )
 
 		// 检查响应头
 		for name, values := range resp.Header {
 			for _, value := range values {
-				logger.Info(fmt.Sprintf("响应头: %s = %s", name, value))
-			}
-		}
+                logger.WithContextCategory(ctx, "recharge").Info("响应头",
+                    logger.StringV2("name", name),
+                    logger.StringV2("value", value),
+                )
+            }
+        }
 
 		return fmt.Errorf("服务器返回空响应")
 	}
 
 	utf8Reader := transform.NewReader(bytes.NewReader(gbkResp), simplifiedchinese.GBK.NewDecoder())
-	utf8Resp, err := ioutil.ReadAll(utf8Reader)
-	if err != nil {
-		logger.Error(fmt.Sprintf("GBK decode error: %v", err))
-		return fmt.Errorf("GBK decode error: %v", err)
-	}
+    utf8Resp, err := ioutil.ReadAll(utf8Reader)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("GBK decode error",
+            logger.ErrorV2(err),
+        )
+        return fmt.Errorf("GBK decode error: %v", err)
+    }
 
 	// 解析XML
 	xmlContent := string(utf8Resp)
 	xmlContent = strings.Replace(xmlContent, `encoding="gb2312"`, `encoding="UTF-8"`, 1)
 
 	var orderResp OrderResponse
-	err = xml.Unmarshal([]byte(xmlContent), &orderResp)
-	if err != nil {
-		logger.Error(fmt.Sprintf("XML unmarshal error: %v", err))
-		return fmt.Errorf("XML unmarshal error: %v", err)
-	}
+    err = xml.Unmarshal([]byte(xmlContent), &orderResp)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("XML unmarshal error",
+            logger.ErrorV2(err),
+        )
+        return fmt.Errorf("XML unmarshal error: %v", err)
+    }
 
 	// 检查业务结果
-	if orderResp.ResultNo != "0" {
-		logger.Error(fmt.Sprintf("业务错误: 错误码=%s, 错误信息=%s", orderResp.ResultNo, orderResp.Remark1))
-		return fmt.Errorf("业务错误: %s", orderResp.Remark1)
-	}
+    if orderResp.ResultNo != "0" {
+        logger.WithContextCategory(ctx, "recharge").Error("业务错误",
+            logger.StringV2("code", orderResp.ResultNo),
+            logger.StringV2("message", orderResp.Remark1),
+        )
+        return fmt.Errorf("业务错误: %s", orderResp.Remark1)
+    }
 
-	logger.Info(fmt.Sprintf("【提交订单成功】order_number: %s, platform_order_id: %s", order.OrderNumber, orderResp.OrderID))
-	return nil
+    logger.WithContextCategory(ctx, "recharge").Info("【提交订单成功】",
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.StringV2("platform_order_id", orderResp.OrderID),
+    )
+    return nil
 }
 
 // QueryOrderStatus 查询订单状态
@@ -227,33 +281,46 @@ type CallbackRequest struct {
 
 // ParseCallbackData 解析回调数据
 func (p *ChongzhiPlatform) ParseCallbackData(data []byte) (*model.CallbackData, error) {
-	logger.Info("开始解析充值平台回调数据", "原始数据长度", len(data), "原始数据", string(data))
+    logger.GetCategoryLogger("recharge").Info("开始解析充值平台回调数据",
+        logger.IntV2("raw_len", len(data)),
+        logger.StringV2("raw", string(data)),
+    )
 
 	// 先尝试解析为GBK编码的表单数据
 	utf8Reader := transform.NewReader(bytes.NewReader(data), simplifiedchinese.GBK.NewDecoder())
 	utf8Data, err := ioutil.ReadAll(utf8Reader)
 	if err != nil {
 		// 如果GBK解码失败，直接使用原始数据
-		logger.Info("GBK解码失败，使用原始数据", "错误", err)
-		utf8Data = data
-	} else {
-		logger.Info("GBK解码成功", "解码后数据", string(utf8Data))
-	}
+        logger.GetCategoryLogger("recharge").Info("GBK解码失败，使用原始数据",
+            logger.ErrorV2(err),
+        )
+        utf8Data = data
+    } else {
+        logger.GetCategoryLogger("recharge").Info("GBK解码成功",
+            logger.StringV2("decoded", string(utf8Data)),
+        )
+    }
 
 	// 解析表单参数
-	form, err := url.ParseQuery(string(utf8Data))
-	if err != nil {
-		logger.Error("解析表单参数失败", "错误", err, "数据", string(utf8Data))
-		return nil, fmt.Errorf("parse callback form data failed: %v", err)
-	}
+    form, err := url.ParseQuery(string(utf8Data))
+    if err != nil {
+        logger.GetCategoryLogger("recharge").Error("解析表单参数失败",
+            logger.ErrorV2(err),
+            logger.StringV2("data", string(utf8Data)),
+        )
+        return nil, fmt.Errorf("parse callback form data failed: %v", err)
+    }
 
 	// 打印所有解析到的参数
-	logger.Info("解析到的表单参数:")
-	for key, values := range form {
-		for _, value := range values {
-			logger.Info(fmt.Sprintf("  %s = %s", key, value))
-		}
-	}
+    logger.GetCategoryLogger("recharge").Info("解析到的表单参数")
+    for key, values := range form {
+        for _, value := range values {
+            logger.GetCategoryLogger("recharge").Info("表单参数",
+                logger.StringV2("key", key),
+                logger.StringV2("value", value),
+            )
+        }
+    }
 
 	// 提取参数
 	callbackReq := CallbackRequest{
@@ -277,27 +344,45 @@ func (p *ChongzhiPlatform) ParseCallbackData(data []byte) (*model.CallbackData, 
 	// 签名验证
 	// 根据文档：sign=MD5(userid=xxxx&orderid=xxxxxxx&sporderid=xxxxx&merchantsubmittime=xxxxx&resultno=xxxxx&key=xxxxxxx).toUpperCase()
 	// 获取对应账号的key进行验证
-	logger.Info("开始签名验证", "userid", callbackReq.UserID)
-	account, err := p.platformRepo.GetPlatformAccountByAccountName(callbackReq.UserID)
-	if err != nil {
-		logger.Error("获取平台账号失败", "错误", err, "userid", callbackReq.UserID)
-		return nil, fmt.Errorf("get platform account failed: %v", err)
-	}
-	logger.Info("获取到平台账号", "account_name", account.AccountName, "app_secret长度", len(account.AppSecret))
+    logger.GetCategoryLogger("recharge").Info("开始签名验证",
+        logger.StringV2("userid", callbackReq.UserID),
+    )
+    account, err := p.platformRepo.GetPlatformAccountByAccountName(callbackReq.UserID)
+    if err != nil {
+        logger.GetCategoryLogger("recharge").Error("获取平台账号失败",
+            logger.ErrorV2(err),
+            logger.StringV2("userid", callbackReq.UserID),
+        )
+        return nil, fmt.Errorf("get platform account failed: %v", err)
+    }
+    logger.GetCategoryLogger("recharge").Info("获取到平台账号",
+        logger.StringV2("account_name", account.AccountName),
+        logger.IntV2("app_secret_len", len(account.AppSecret)),
+    )
 
 	signStr := fmt.Sprintf("userid=%s&orderid=%s&sporderid=%s&merchantsubmittime=%s&resultno=%s&key=%s",
 		callbackReq.UserID, callbackReq.OrderID, callbackReq.SpOrderID,
 		callbackReq.MerchantSubmitTime, callbackReq.ResultNo, account.AppKey)
-	logger.Info("构建签名字符串", "signStr", signStr)
+    logger.GetCategoryLogger("recharge").Info("构建签名字符串",
+        logger.StringV2("sign_str", signStr),
+    )
 
 	expectedSign := strings.ToUpper(signature.GetMD5(signStr))
-	logger.Info("签名验证结果", "期望签名", expectedSign, "实际签名", callbackReq.Sign, "是否匹配", expectedSign == callbackReq.Sign)
+    logger.GetCategoryLogger("recharge").Info("签名验证结果",
+        logger.StringV2("expected", expectedSign),
+        logger.StringV2("actual", callbackReq.Sign),
+        logger.BoolV2("match", expectedSign == callbackReq.Sign),
+    )
 
-	if expectedSign != callbackReq.Sign {
-		logger.Error("签名验证失败", "期望签名", expectedSign, "实际签名", callbackReq.Sign, "签名字符串", signStr)
-		return nil, fmt.Errorf("invalid signature: expected %s, got %s", expectedSign, callbackReq.Sign)
-	}
-	logger.Info("签名验证成功")
+    if expectedSign != callbackReq.Sign {
+        logger.GetCategoryLogger("recharge").Error("签名验证失败",
+            logger.StringV2("expected", expectedSign),
+            logger.StringV2("actual", callbackReq.Sign),
+            logger.StringV2("sign_str", signStr),
+        )
+        return nil, fmt.Errorf("invalid signature: expected %s, got %s", expectedSign, callbackReq.Sign)
+    }
+    logger.GetCategoryLogger("recharge").Info("签名验证成功")
 
 	// 映射订单状态（根据文档：1=成功，9=失败）
 	status := model.OrderStatusFailed
@@ -327,14 +412,18 @@ type BalanceResponse struct {
 
 // QueryBalance 查询账户余额
 func (p *ChongzhiPlatform) QueryBalance(ctx context.Context, accountID int64) (float64, error) {
-	logger.Info(fmt.Sprintf("【开始查询账户余额】account_id: %d", accountID))
+    logger.WithContextCategory(ctx, "recharge").Info("【开始查询账户余额】",
+        logger.Int64V2("account_id", accountID),
+    )
 
 	// 获取平台账号信息
 	account, err := p.platformRepo.GetPlatformAccountByID(accountID)
-	if err != nil {
-		logger.Error(fmt.Sprintf("获取平台账号失败: %v", err))
-		return 0, fmt.Errorf("get platform account failed: %v", err)
-	}
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("获取平台账号失败",
+            logger.ErrorV2(err),
+        )
+        return 0, fmt.Errorf("get platform account failed: %v", err)
+    }
 
 	// 获取平台API配置（使用固定的API ID或通过其他方式获取）
 	// 这里需要根据实际情况获取余额查询API的配置
@@ -345,7 +434,10 @@ func (p *ChongzhiPlatform) QueryBalance(ctx context.Context, accountID int64) (f
 	// 构建签名字符串: sign=MD5(userid=xxxx&key=xxxxxxx).toUpperCase()
 	signStr := fmt.Sprintf("userid=%s&key=%s", account.AccountName, account.AppKey)
 	sign := strings.ToUpper(signature.GetMD5(signStr))
-	logger.Info(fmt.Sprintf("构建余额查询签名: signStr=%s, sign=%s", signStr, sign))
+    logger.WithContextCategory(ctx, "recharge").Info("构建余额查询签名",
+        logger.StringV2("sign_str", signStr),
+        logger.StringV2("sign", sign),
+    )
 
 	// 构建请求参数
 	form := url.Values{}
@@ -354,78 +446,106 @@ func (p *ChongzhiPlatform) QueryBalance(ctx context.Context, accountID int64) (f
 
 	// 编码为GBK
 	formStr := form.Encode()
-	logger.Info(fmt.Sprintf("余额查询表单数据(UTF-8): %s", formStr))
-	gbkBody, err := utils.EncodeGBK(formStr)
-	if err != nil {
-		logger.Error(fmt.Sprintf("GBK encode error: %v", err))
-		return 0, fmt.Errorf("GBK encode error: %v", err)
-	}
+    logger.WithContextCategory(ctx, "recharge").Info("余额查询表单数据(UTF-8)",
+        logger.StringV2("form", formStr),
+    )
+    gbkBody, err := utils.EncodeGBK(formStr)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("GBK encode error",
+            logger.ErrorV2(err),
+        )
+        return 0, fmt.Errorf("GBK encode error: %v", err)
+    }
 
 	// 发送POST请求
-	logger.Info(fmt.Sprintf("余额查询请求URL: %s", balanceURL))
-	req, err := http.NewRequestWithContext(ctx, "POST", balanceURL, bytes.NewReader(gbkBody))
-	if err != nil {
-		logger.Error(fmt.Sprintf("NewRequest error: %v", err))
-		return 0, fmt.Errorf("NewRequest error: %v", err)
-	}
+    logger.WithContextCategory(ctx, "recharge").Info("余额查询请求URL",
+        logger.StringV2("url", balanceURL),
+    )
+    req, err := http.NewRequestWithContext(ctx, "POST", balanceURL, bytes.NewReader(gbkBody))
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("NewRequest error",
+            logger.ErrorV2(err),
+        )
+        return 0, fmt.Errorf("NewRequest error: %v", err)
+    }
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded;charset=gbk")
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; RechargeBot/1.0)")
 
 	client := &http.Client{Timeout: time.Duration(timeout) * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error(fmt.Sprintf("HTTP request error: %v", err))
-		return 0, fmt.Errorf("HTTP request error: %v", err)
-	}
+    resp, err := client.Do(req)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("HTTP request error",
+            logger.ErrorV2(err),
+        )
+        return 0, fmt.Errorf("HTTP request error: %v", err)
+    }
 	defer resp.Body.Close()
 
 	// 读取响应body（GBK转UTF-8）
-	gbkResp, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error(fmt.Sprintf("ReadAll error: %v", err))
-		return 0, fmt.Errorf("ReadAll error: %v", err)
-	}
+    gbkResp, err := ioutil.ReadAll(resp.Body)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("ReadAll error",
+            logger.ErrorV2(err),
+        )
+        return 0, fmt.Errorf("ReadAll error: %v", err)
+    }
 
-	logger.Info(fmt.Sprintf("余额查询HTTP状态码: %d, 响应长度: %d", resp.StatusCode, len(gbkResp)))
+    logger.WithContextCategory(ctx, "recharge").Info("余额查询HTTP响应",
+        logger.IntV2("status_code", resp.StatusCode),
+        logger.IntV2("length", len(gbkResp)),
+    )
 
 	// 检查响应是否为空
 	if len(gbkResp) == 0 {
-		logger.Error("余额查询返回空响应")
-		return 0, fmt.Errorf("服务器返回空响应")
-	}
+        logger.WithContextCategory(ctx, "recharge").Error("余额查询返回空响应")
+        return 0, fmt.Errorf("服务器返回空响应")
+    }
 
 	utf8Reader := transform.NewReader(bytes.NewReader(gbkResp), simplifiedchinese.GBK.NewDecoder())
-	utf8Resp, err := ioutil.ReadAll(utf8Reader)
-	if err != nil {
-		logger.Error(fmt.Sprintf("GBK decode error: %v", err))
-		return 0, fmt.Errorf("GBK decode error: %v", err)
-	}
+    utf8Resp, err := ioutil.ReadAll(utf8Reader)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("GBK decode error",
+            logger.ErrorV2(err),
+        )
+        return 0, fmt.Errorf("GBK decode error: %v", err)
+    }
 
 	// 解析XML
 	xmlContent := string(utf8Resp)
 	xmlContent = strings.Replace(xmlContent, `encoding="gb2312"`, `encoding="UTF-8"`, 1)
-	logger.Info(fmt.Sprintf("余额查询响应XML: %s", xmlContent))
+    logger.WithContextCategory(ctx, "recharge").Info("余额查询响应XML",
+        logger.StringV2("xml", xmlContent),
+    )
 
 	var balanceResp BalanceResponse
 	err = xml.Unmarshal([]byte(xmlContent), &balanceResp)
-	if err != nil {
-		logger.Error(fmt.Sprintf("XML unmarshal error: %v", err))
-		return 0, fmt.Errorf("XML unmarshal error: %v", err)
-	}
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("XML unmarshal error",
+            logger.ErrorV2(err),
+        )
+        return 0, fmt.Errorf("XML unmarshal error: %v", err)
+    }
 
 	// 检查业务结果
-	if balanceResp.ResultNo != "1" {
-		logger.Error(fmt.Sprintf("余额查询失败: resultno=%s", balanceResp.ResultNo))
-		return 0, fmt.Errorf("余额查询失败: resultno=%s", balanceResp.ResultNo)
-	}
+    if balanceResp.ResultNo != "1" {
+        logger.WithContextCategory(ctx, "recharge").Error("余额查询失败",
+            logger.StringV2("resultno", balanceResp.ResultNo),
+        )
+        return 0, fmt.Errorf("余额查询失败: resultno=%s", balanceResp.ResultNo)
+    }
 
 	// 转换余额为浮点数
 	balance, err := strconv.ParseFloat(balanceResp.Balance, 64)
-	if err != nil {
-		logger.Error(fmt.Sprintf("余额转换失败: %v", err))
-		return 0, fmt.Errorf("余额转换失败: %v", err)
-	}
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("余额转换失败",
+            logger.ErrorV2(err),
+        )
+        return 0, fmt.Errorf("余额转换失败: %v", err)
+    }
 
-	logger.Info(fmt.Sprintf("【查询账户余额成功】account_id: %d, balance: %.2f", accountID, balance))
-	return balance, nil
+    logger.WithContextCategory(ctx, "recharge").Info("【查询账户余额成功】",
+        logger.Int64V2("account_id", accountID),
+        logger.Float64V2("balance", balance),
+    )
+    return balance, nil
 }

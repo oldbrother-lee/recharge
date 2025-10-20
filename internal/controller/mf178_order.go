@@ -3,7 +3,6 @@ package controller
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"recharge-go/internal/model"
@@ -115,10 +114,19 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 	// 1. 读取请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		logger.Log.Error("读取请求体失败",
-			zap.Error(err),
-			zap.String("request_id", ctx.GetString("request_id")))
-		utils.Error(ctx, http.StatusBadRequest, "读取请求体失败")
+		if logger.Log == nil {
+			logger.WithContextCategory(ctx.Request.Context(), "mf178_order").Error("读取请求体失败", logger.ErrorV2(err), logger.StringV2("request_id", ctx.GetString("request_id")))
+		} else {
+			logger.Log.Error("读取请求体失败",
+				zap.Error(err),
+				zap.String("request_id", ctx.GetString("request_id")))
+		}
+		response := gin.H{
+			"code":    1,
+			"message": "读取请求体失败",
+			"data":    gin.H{},
+		}
+		ctx.JSON(http.StatusOK, response)
 		return
 	}
 	// 恢复请求体
@@ -254,7 +262,8 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, response)
 		return
 	}
-	fmt.Printf("product-------: %+v", product)
+	// 移除裸输出，避免重复日志
+	
 	logger.Log.Info("产品验证通过",
 		zap.Int64("product_id", productID),
 		zap.String("request_id", ctx.GetString("request_id")))
@@ -268,7 +277,8 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 	} else if req.Datas.OperatorID == "联通" {
 		isp = 3
 	}
-	fmt.Printf("platform-------: %+v", platform)
+	// 移除裸输出，避免重复日志
+	
 	order = &model.Order{
 		Mobile:            req.Target,
 		ProductID:         productID,
@@ -348,7 +358,7 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 	if logger.Log == nil {
 		// 如果 logger 未初始化，使用 fmt 打印
-		fmt.Printf("[MF178Order] 开始处理查询订单请求\n")
+		logger.WithContextCategory(ctx.Request.Context(), "mf178_order").Info("开始处理查询订单请求", logger.StringV2("request_id", ctx.GetString("request_id")))
 	} else {
 		logger.Log.Info("开始处理查询订单请求",
 			zap.String("request_id", ctx.GetString("request_id")))
@@ -358,7 +368,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		if logger.Log == nil {
-			fmt.Printf("[MF178Order] 读取请求体失败: %v\n", err)
+			logger.WithContextCategory(ctx.Request.Context(), "mf178_order").Error("读取请求体失败", logger.ErrorV2(err), logger.StringV2("request_id", ctx.GetString("request_id")))
 		} else {
 			logger.Log.Error("读取请求体失败",
 				zap.Error(err),
@@ -483,7 +493,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 
 // verifyProductExists 验证产品是否存在
 func (c *MF178OrderController) verifyProductExists(productID int64) (*model.Product, error) {
-	fmt.Printf("[MF178Order] 开始验证产品是否存在, 产品ID: %d\n", productID)
+	logger.Log.Info("开始验证产品是否存在", zap.Int64("product_id", productID))
 
 	var product model.Product
 	err := database.DB.Model(&model.Product{}).
@@ -491,11 +501,11 @@ func (c *MF178OrderController) verifyProductExists(productID int64) (*model.Prod
 		First(&product).Error
 
 	if err != nil {
-		fmt.Printf("[MF178Order] 验证产品失败: %v\n", err)
+		logger.Log.Error("验证产品失败", zap.Error(err), zap.Int64("product_id", productID))
 		return nil, err
 	}
 
-	fmt.Printf("[MF178Order] 产品验证通过, 产品ID: %d\n", productID)
+	logger.Log.Info("产品验证通过", zap.Int64("product_id", productID))
 	return &product, nil
 }
 

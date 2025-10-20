@@ -108,18 +108,22 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 
 // RegisterPlatform 注册新的平台类型
 func (m *Manager) RegisterPlatform(code string, platformType reflect.Type) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+    m.mu.Lock()
+    defer m.mu.Unlock()
 
-	// 确保platformType实现了Platform接口
-	if !reflect.TypeOf((*Platform)(nil)).Elem().Implements(platformType) {
-		logger.Error(fmt.Sprintf("平台类型 %s 未实现 Platform 接口", code))
-		return
-	}
+    // 确保platformType实现了Platform接口
+    if !reflect.TypeOf((*Platform)(nil)).Elem().Implements(platformType) {
+        logger.GetCategoryLogger("recharge").Error("平台类型未实现接口",
+            logger.StringV2("code", code),
+        )
+        return
+    }
 
-	// 注册平台类型
-	m.platformTypes[code] = platformType
-	logger.Info(fmt.Sprintf("注册平台成功: %s", code))
+    // 注册平台类型
+    m.platformTypes[code] = platformType
+    logger.GetCategoryLogger("recharge").Info("注册平台成功",
+        logger.StringV2("code", code),
+    )
 }
 
 // LoadPlatforms 加载所有平台
@@ -135,15 +139,20 @@ func (m *Manager) LoadPlatforms() error {
 	}
 
 	// 遍历平台列表，创建对应的平台实例
-	for _, platform := range platforms {
-		platformInstance, err := m.createPlatform(platform.Code)
-		if err != nil {
-			logger.Error(fmt.Sprintf("创建平台实例失败: %v, code: %s", err, platform.Code))
-			continue
-		}
-		m.platforms[platform.Code] = platformInstance
-		logger.Info(fmt.Sprintf("加载平台成功: %s", platform.Code))
-	}
+    for _, platform := range platforms {
+        platformInstance, err := m.createPlatform(platform.Code)
+        if err != nil {
+            logger.GetCategoryLogger("recharge").Error("创建平台实例失败",
+                logger.StringV2("code", platform.Code),
+                logger.ErrorV2(err),
+            )
+            continue
+        }
+        m.platforms[platform.Code] = platformInstance
+        logger.GetCategoryLogger("recharge").Info("加载平台成功",
+            logger.StringV2("code", platform.Code),
+        )
+    }
 
 	return nil
 }

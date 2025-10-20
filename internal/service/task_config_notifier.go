@@ -54,7 +54,10 @@ func (n *TaskConfigNotifier) NotifyConfigChange(ctx context.Context, eventType s
 		return fmt.Errorf("发布配置变更事件失败: %w", err)
 	}
 
-	logger.Info(fmt.Sprintf("已发布任务配置变更事件: type=%s, config_id=%d", eventType, configID))
+	logger.WithContextCategory(ctx, "task_config").Info("已发布任务配置变更事件",
+		logger.StringV2("type", eventType),
+		logger.Int64V2("config_id", configID),
+	)
 	return nil
 }
 

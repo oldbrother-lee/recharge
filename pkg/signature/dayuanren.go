@@ -22,7 +22,8 @@ func GenerateDayuanrenSign(params map[string]string, apiKey string) string {
 		signParts = append(signParts, fmt.Sprintf("%s=%s", k, params[k]))
 	}
 	signStr := strings.Join(signParts, "&") + "&apikey=" + apiKey
-	logger.Info(fmt.Sprintf("大猿人签名前字符串 %s", signStr))
+	logger.InfoV2("大猿人签名前字符串",
+		logger.StringV2("plain_text", signStr))
 	md5Sum := md5.Sum([]byte(signStr))
 	return strings.ToUpper(fmt.Sprintf("%x", md5Sum))
 }

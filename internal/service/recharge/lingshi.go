@@ -78,8 +78,20 @@ func (p *LingshiPlatform) SubmitOrder(ctx context.Context, order *model.Order, a
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil { return fmt.Errorf("lingshi submit request failed: %v", err) }
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	logger.Info("lingshi submit resp", "code", resp.StatusCode, "body", string(respBody))
+    respBody, _ := io.ReadAll(resp.Body)
+    // 注入订单号并使用 v2 recharge 类别日志
+    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+    clog := logger.WithContextCategory(ctx, "recharge")
+    bodyStr := string(respBody)
+    preview := bodyStr
+    if len(bodyStr) > 512 {
+        preview = bodyStr[:512] + "..."
+    }
+    clog.Info("提交响应",
+        logger.StringV2("platform", "lingshi"),
+        logger.IntV2("status", resp.StatusCode),
+        logger.StringV2("body_preview", preview),
+    )
 
 	// 期望成功 code=="0" 或文档自定义，这里宽松校验
 	var r struct { Code string `json:"code"`; Msg string `json:"msg"` }
@@ -92,7 +104,13 @@ func (p *LingshiPlatform) SubmitOrder(ctx context.Context, order *model.Order, a
 
 // QueryOrderStatus 查询订单状态（若文档提供）
 func (p *LingshiPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-	logger.Info("[Lingshi] 查询订单状态", "order_id", order.ID, "order_number", order.OrderNumber)
+    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+    clog := logger.WithContextCategory(ctx, "recharge")
+    clog.Info("查询订单状态",
+        logger.StringV2("platform", "lingshi"),
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+    )
 
 	appId, appSecret, api, err := p.getKeySecretAndAPI(ctx, "lingshi", order.PlatformAccountID)
 	if err != nil {
@@ -215,8 +233,18 @@ func (p *LingshiPlatform) QueryBalance(ctx context.Context, accountID int64) (fl
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil { return 0, err }
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	logger.Info("lingshi balance resp", "code", resp.StatusCode, "body", string(respBody))
+    respBody, _ := io.ReadAll(resp.Body)
+    clog := logger.WithContextCategory(ctx, "recharge")
+    bodyStr := string(respBody)
+    preview := bodyStr
+    if len(bodyStr) > 512 {
+        preview = bodyStr[:512] + "..."
+    }
+    clog.Info("余额查询响应",
+        logger.StringV2("platform", "lingshi"),
+        logger.IntV2("status", resp.StatusCode),
+        logger.StringV2("body_preview", preview),
+    )
 
 	var r struct { Code string `json:"code"`; Msg string `json:"msg"`; Balance string `json:"balance"`; Credit string `json:"credit"` }
 	_ = json.Unmarshal(respBody, &r)

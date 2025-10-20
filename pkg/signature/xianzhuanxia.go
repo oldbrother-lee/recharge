@@ -43,7 +43,8 @@ func GenerateXianzhuanxiaSignature(params map[string]string, apiKey, userID stri
 	sb.WriteString("key=")
 	sb.WriteString(apiKey)
 	// 第三步：MD5 加密
-	logger.Info(fmt.Sprintf("闲赚侠签名前缀: %v\n", sb.String()))
+	logger.InfoV2("闲赚侠签名前缀",
+		logger.StringV2("prefix", sb.String()))
 	md5Hash := fmt.Sprintf("%x", md5.Sum([]byte(sb.String())))
 
 	// 第四步：拼接 Auth_Token
@@ -82,7 +83,8 @@ func GenerateXianzhuanxiaSignature2(params map[string]interface{}, apiKey, userI
 	sb.WriteString("key=")
 	sb.WriteString(apiKey)
 	// 第三步：MD5 加密
-	logger.Info(fmt.Sprintf("闲赚侠签名前缀: %v\n", sb.String()))
+	logger.InfoV2("闲赚侠签名前缀",
+		logger.StringV2("prefix", sb.String()))
 	md5Hash := fmt.Sprintf("%x", md5.Sum([]byte(sb.String())))
 
 	// 第四步：拼接 Auth_Token

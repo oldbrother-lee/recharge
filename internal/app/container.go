@@ -548,24 +548,30 @@ func (c *Container) GetDatabaseManager() *database.DatabaseManager {
 
 // initOptimizedComponents 初始化优化组件
 func (c *Container) initOptimizedComponents() error {
-	// 初始化优化后的日志器
-	loggerConfig := &loggerV2.LoggerConfigV2{
-		Level:      "info",
-		Format:     "json",
-		Output:     "logs/app.log",
-		MaxSize:    100,
-		MaxBackups: 5,
-		MaxAge:     30,
-		Compress:   true,
-		Caller:     true,
-		Stacktrace: true,
-	}
+    // 初始化优化后的日志器
+    loggerConfig := &loggerV2.LoggerConfigV2{
+        Level:      "info",
+        Format:     "json",
+        Output:     "logs/app.log",
+        MaxSize:    100,
+        MaxBackups: 5,
+        MaxAge:     30,
+        Compress:   true,
+        Caller:     true,
+        Stacktrace: true,
+    }
 
-	var err error
-	c.loggerV2, err = loggerV2.NewLoggerV2(loggerConfig)
-	if err != nil {
-		return fmt.Errorf("failed to initialize logger v2: %w", err)
-	}
+    var err error
+    c.loggerV2, err = loggerV2.NewLoggerV2(loggerConfig)
+    if err != nil {
+        return fmt.Errorf("failed to initialize logger v2: %w", err)
+    }
+
+    // 设置全局 v2 日志器与分类注册表，确保各模块可按类别写入不同文件
+    if err := loggerV2.InitGlobalLoggerV2(*loggerConfig); err != nil {
+        return fmt.Errorf("failed to init global logger v2: %w", err)
+    }
+    loggerV2.InitLoggerRegistry(*loggerConfig)
 
 	// 初始化指标管理器
 	c.metricsManager = metrics.NewMetricsManager(c.loggerV2)

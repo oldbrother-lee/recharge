@@ -253,10 +253,10 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 		userIDVal = v
 	}
 	logger.WithContext(ctx).Info("OrderRepository.GetOrders.begin",
-		logger.Bool("has_user_id", hasUserID),
-		logger.Any("user_id_val", userIDVal),
-		logger.Int("page", page),
-		logger.Int("page_size", pageSize),
+		logger.BoolV2("has_user_id", hasUserID),
+		logger.AnyV2("user_id_val", userIDVal),
+		logger.IntV2("page", page),
+		logger.IntV2("page_size", pageSize),
 	)
 	for key, value := range params {
 		// 将 interface{} 转换为 string
@@ -264,11 +264,14 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 		if !ok || strValue == "" {
 			continue
 		}
-		fmt.Printf("key: %s, value: %s", key, strValue)
+		logger.WithContext(ctx).Debug("OrderRepository.GetOrders.param",
+			logger.StringV2("key", key),
+			logger.StringV2("value", strValue),
+		)
 		if key == "user_id" {
 			// 诊断日志：提示当前通用查询未应用 user_id 过滤
 			logger.WithContext(ctx).Info("OrderRepository.GetOrders.param_user_id_observed_but_not_applied",
-				logger.String("user_id_str", strValue),
+				logger.StringV2("user_id_str", strValue),
 			)
 		}
 		switch key {
@@ -276,9 +279,11 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 			// 将字符串转换为整数
 			clientID, err := strconv.ParseInt(strValue, 10, 64)
 			if err != nil {
-				logger.Error("解析client参数失败: %v", err)
-				continue
-			}
+				logger.WithContext(ctx).Error("OrderRepository.GetOrders.parse_client_failed",
+					logger.ErrorV2(err),
+				)
+                continue
+            }
 			if clientID > 0 {
 				query = query.Where("client = ?", clientID)
 			}
@@ -286,9 +291,12 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 			// 将字符串转换为整数
 			status, err := strconv.ParseInt(strValue, 10, 64)
 			if err != nil {
-				logger.Error("解析status参数失败: %v", err)
-				continue
-			}
+
+				logger.WithContext(ctx).Error("OrderRepository.GetOrders.parse_status_failed",
+					logger.ErrorV2(err),
+				)
+                continue
+            }
 			if status >= 0 {
 				query = query.Where("status = ?", status)
 			}
@@ -326,8 +334,8 @@ func (r *OrderRepositoryImpl) GetOrders(ctx context.Context, params map[string]i
 		return nil, 0, err
 	}
 	logger.WithContext(ctx).Info("OrderRepository.GetOrders.end",
-		logger.Int64("total", total),
-		logger.Int("returned", len(orders)),
+		logger.Int64V2("total", total),
+		logger.IntV2("returned", len(orders)),
 	)
 
 	return orders, total, nil
@@ -345,11 +353,11 @@ func (r *OrderRepositoryImpl) GetOrdersWithNotification(ctx context.Context, par
 		userIDVal = v
 	}
 	logger.WithContext(ctx).Info("OrderRepository.GetOrdersWithNotification",
-		logger.Bool("has_user_id", hasUserID),
-		logger.Any("user_id_val", userIDVal),
-		logger.Int("page", page),
-		logger.Int("page_size", pageSize),
-		logger.Any("params", params),
+		logger.BoolV2("has_user_id", hasUserID),
+		logger.AnyV2("user_id_val", userIDVal),
+		logger.IntV2("page", page),
+		logger.IntV2("page_size", pageSize),
+		logger.AnyV2("params", params),
 	)
 
 	// 分流：优先根据 user_id 使用按用户查询，否则使用通用查询
@@ -396,7 +404,10 @@ func (r *OrderRepositoryImpl) GetOrdersWithNotification(ctx context.Context, par
 			orderWithNotification.NotificationStatus = &notificationRecord.Status
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 			// 如果是其他错误（非记录不存在），记录日志但不中断处理
-			logger.Error("查询通知记录失败: %v", err)
+			logger.WithContext(ctx).Error("OrderRepository.GetOrdersWithNotification.query_notification_failed",
+				logger.ErrorV2(err),
+				logger.Int64V2("order_id", order.ID),
+			)
 		}
 		// 如果是记录不存在，NotificationTime 和 NotificationStatus 保持为 nil
 
@@ -509,7 +520,9 @@ func (r *OrderRepositoryImpl) GetIDsByTimeRange(ctx context.Context, start, end 
 	err := r.db.Model(&model.Order{}).Debug().
 		Where("create_time BETWEEN ? AND ?", start, end).
 		Pluck("id", &ids).Error
-	fmt.Println("ids########", ids)
+		logger.WithContext(ctx).Debug("OrderRepository.GetIDsByTimeRange.pluck_ids",
+		logger.IntV2("count", len(ids)),
+	)
 	return ids, err
 }
 
@@ -588,17 +601,24 @@ func (r *OrderRepositoryImpl) UpdateStatusCAS(ctx context.Context, id int64, old
 
 // UpdateStatusAndAPIID 更新订单状态和API ID
 func (r *OrderRepositoryImpl) UpdateStatusAndAPIID(ctx context.Context, id int64, status model.OrderStatus, apiID int64, usedAPIs string) error {
-	fmt.Println("即将执行 Updates")
-	err := r.db.WithContext(ctx).
-		Model(&model.Order{}).
-		Where("id = ?", id).
-		Updates(map[string]interface{}{
-			"status":    status,
-			"api_id":    apiID,
-			"used_apis": usedAPIs,
-		}).Error
-	fmt.Println("Updates 执行完毕，err =", err)
-	return err
+	logger.WithContext(ctx).Debug("OrderRepository.UpdateStatusAndAPIID.begin",
+	logger.Int64V2("id", id),
+	logger.IntV2("status", int(status)),
+	logger.Int64V2("api_id", apiID),
+	logger.StringV2("used_apis", usedAPIs),
+)
+err := r.db.WithContext(ctx).
+	Model(&model.Order{}).
+	Where("id = ?", id).
+	Updates(map[string]interface{}{
+		"status":    status,
+		"api_id":    apiID,
+		"used_apis": usedAPIs,
+	}).Error
+logger.WithContext(ctx).Debug("OrderRepository.UpdateStatusAndAPIID.end",
+	logger.ErrorV2(err),
+)
+return err
 }
 
 // GetOrderRealtimeStatistics 获取实时统计
@@ -732,7 +752,9 @@ func (r *OrderRepositoryImpl) GetOperatorOrderCount(ctx context.Context, start, 
 func (r *OrderRepositoryImpl) GetByUserID(ctx context.Context, userID int64, params map[string]interface{}, page, pageSize int) ([]*model.Order, int64, error) {
 	var orders []*model.Order
 	var total int64
-	fmt.Println("userID#########################", userID)
+		logger.WithContext(ctx).Debug("OrderRepository.GetByUserID.begin",
+		logger.Int64V2("user_id", userID),
+	)
 	query := r.db.Model(&model.Order{}).Where("is_del = 0 AND customer_id = ?", userID)
 
 	// 添加其他查询条件
@@ -748,7 +770,9 @@ func (r *OrderRepositoryImpl) GetByUserID(ctx context.Context, userID int64, par
 		case "client":
 			clientID, err := strconv.ParseInt(strValue, 10, 64)
 			if err != nil {
-				logger.Error("解析client参数失败: %v", err)
+				logger.WithContext(ctx).Error("OrderRepository.GetOrders.parse_client_failed",
+				logger.ErrorV2(err),
+				)
 				continue
 			}
 			if clientID > 0 {
@@ -757,7 +781,9 @@ func (r *OrderRepositoryImpl) GetByUserID(ctx context.Context, userID int64, par
 		case "status":
 			status, err := strconv.ParseInt(strValue, 10, 64)
 			if err != nil {
-				logger.Error("解析status参数失败: %v", err)
+				logger.WithContext(ctx).Error("OrderRepository.GetOrders.parse_status_failed",
+				logger.ErrorV2(err),
+				)
 				continue
 			}
 			if status >= 0 {

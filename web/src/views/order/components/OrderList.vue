@@ -33,7 +33,8 @@ const successStatsLoading = ref(false);
 const successStats = ref<Array<{ isp: number; denom: number; successCount: number; successAmount: number }>>([]);
 const hasSearch = computed(() => {
   const p = searchParams.value || {};
-  return Object.keys(p).length > 0;
+  const dr = p.date_range;
+  return Array.isArray(dr) && dr.length === 2 && dr[0] && dr[1];
 });
 // 成功统计总计
 const successStatsTotals = computed(() => {
@@ -586,8 +587,14 @@ const handleSearch = (params: any) => {
   searchParams.value = params;
   pagination.value.page = 1;
   fetchOrders();
-  // 触发成功统计数据的获取，仅在搜索后加载
-  fetchSuccessStats();
+  const dr = params?.date_range;
+  if (Array.isArray(dr) && dr.length === 2 && dr[0] && dr[1]) {
+    // 仅在选择了时间范围时获取成功统计
+    fetchSuccessStats();
+  } else {
+    // 非时间范围搜索时清空统计数据并隐藏卡片
+    successStats.value = [];
+  }
 };
 
 const handlePageChange = (page: number) => {

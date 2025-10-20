@@ -25,6 +25,7 @@ export const views: Record<LastLevelRouteKey, RouteComponent | (() => Promise<Ro
   order_exception: () => import("@/views/order/exception/index.vue"),
   order_kekebang: () => import("@/views/order/kekebang/index.vue"),
   order_mf178: () => import("@/views/order/mf178/index.vue"),
+  order_xianyingke: () => import("@/views/order/xianyingke/index.vue"),
   order_xianzhuanxia: () => import("@/views/order/xianzhuanxia/index.vue"),
   platform: () => import("@/views/platform/index.vue"),
   platformapi_api: () => import("@/views/platformapi/api/index.vue"),

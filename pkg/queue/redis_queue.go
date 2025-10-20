@@ -27,22 +27,18 @@ func NewRedisQueue() *RedisQueue {
 // Push 入队
 func (q *RedisQueue) Push(ctx context.Context, key string, value interface{}) error {
 	// 打印原始值
-	logger.Info("Push 原始值",
-		"value_type", fmt.Sprintf("%T", value),
-		"value", value,
-	)
-
+	logger.InfoV2("Push 原始值",
+		logger.StringV2("value_type", fmt.Sprintf("%T", value)),
+		logger.StringV2("value", fmt.Sprintf("%v", value)))
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("marshal value failed: %v", err)
 	}
 
 	// 打印序列化后的数据
-	logger.Info("Push 序列化后的数据",
-		"data_type", fmt.Sprintf("%T", data),
-		"data", string(data),
-	)
-
+	logger.InfoV2("Push 序列化后的数据",
+		logger.StringV2("data_type", fmt.Sprintf("%T", data)),
+		logger.StringV2("data", string(data)))
 	return q.client.LPush(ctx, key, data).Err()
 }
 
@@ -57,11 +53,9 @@ func (q *RedisQueue) Peek(ctx context.Context, key string) (interface{}, error) 
 	}
 
 	// 打印从 Redis 获取的原始数据
-	logger.Info("Peek 从 Redis 获取的原始数据",
-		"data_type", fmt.Sprintf("%T", result[0]),
-		"data", result[0],
-	)
-
+	logger.InfoV2("Peek 从 Redis 获取的原始数据",
+		logger.StringV2("data_type", fmt.Sprintf("%T", result[0])),
+		logger.StringV2("data", result[0]))
 	return result[0], nil
 }
 
@@ -80,10 +74,9 @@ func (q *RedisQueue) Pop(ctx context.Context, key string) (interface{}, error) {
 	}
 
 	// 打印从 Redis 获取的原始数据
-	logger.Info("Pop 从 Redis 获取的原始数据",
-		"data_type", fmt.Sprintf("%T", result[1]),
-		"data", string(result[1]),
-	)
+	logger.InfoV2("Pop 从 Redis 获取的原始数据",
+		logger.StringV2("data_type", fmt.Sprintf("%T", result[1])),
+		logger.StringV2("data", string(result[1])))
 
 	return string(result[1]), nil
 }

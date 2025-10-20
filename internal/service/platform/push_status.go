@@ -1,17 +1,17 @@
 package platform
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"time"
+    "bytes"
+    "encoding/json"
+    "fmt"
+    "io"
+    "net/http"
+    "time"
 
-	"recharge-go/internal/model"
-	"recharge-go/internal/repository"
-	"recharge-go/pkg/logger"
-	"recharge-go/pkg/signature"
+    "recharge-go/internal/model"
+    "recharge-go/internal/repository"
+    "recharge-go/pkg/logger"
+    "recharge-go/pkg/signature"
 )
 
 // PushStatusService 推单状态服务
@@ -64,24 +64,52 @@ func (s *PushStatusService) GetPushStatus(account *model.PlatformAccount) (int, 
 
 	params["sign"] = sign
 
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		return 0, err
-	}
+    jsonData, err := json.Marshal(params)
+    if err != nil {
+        return 0, err
+    }
 
-	logger.Info("[GetPushStatus] 请求平台", "platform", account.Platform.Code, "url", url, "params", string(jsonData))
-	resp, err := s.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		logger.Error("[GetPushStatus] 请求失败", "platform", account.Platform.Code, "error", err.Error())
-		return 0, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error("[GetPushStatus] 读取响应失败", "platform", account.Platform.Code, "error", err.Error())
-		return 0, err
-	}
-	logger.Info("[GetPushStatus] 平台原始响应", "platform", account.Platform.Code, "body", string(body))
+    lg := logger.GetCategoryLogger("platform")
+    previewLen := 256
+    if len(jsonData) < previewLen {
+        previewLen = len(jsonData)
+    }
+    lg.Info("获取推单状态请求",
+        logger.StringV2("platform_code", account.Platform.Code),
+        logger.StringV2("url", url),
+        logger.IntV2("request_body_size", len(jsonData)),
+        logger.StringV2("request_body_preview", string(jsonData[:previewLen])),
+    )
+    resp, err := s.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+    if err != nil {
+        lg.Error("获取推单状态请求失败",
+            logger.StringV2("platform_code", account.Platform.Code),
+            logger.StringV2("url", url),
+            logger.ErrorV2(err),
+        )
+        return 0, err
+    }
+    defer resp.Body.Close()
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        lg.Error("获取推单状态读取响应失败",
+            logger.StringV2("platform_code", account.Platform.Code),
+            logger.StringV2("url", url),
+            logger.ErrorV2(err),
+        )
+        return 0, err
+    }
+    respPreviewLen := 256
+    if len(body) < respPreviewLen {
+        respPreviewLen = len(body)
+    }
+    lg.Info("获取推单状态响应",
+        logger.StringV2("platform_code", account.Platform.Code),
+        logger.StringV2("url", url),
+        logger.IntV2("status_code", resp.StatusCode),
+        logger.IntV2("response_body_size", len(body)),
+        logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+    )
 
 	var result struct {
 		Code    int    `json:"code"`
@@ -90,16 +118,28 @@ func (s *PushStatusService) GetPushStatus(account *model.PlatformAccount) (int, 
 			Status int `json:"status"`
 		} `json:"data"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Error("[GetPushStatus] 响应解析失败", "platform", account.Platform.Code, "error", err.Error())
-		return 0, err
-	}
-	if result.Code != 0 && result.Message != "请求成功" {
-		logger.Error("[GetPushStatus] 平台返回错误", "platform", account.Platform.Code, "code", result.Code, "message", result.Message)
-		return 0, fmt.Errorf("%s error: %s", account.Platform.Code, result.Message)
-	}
-	logger.Info("[GetPushStatus] 最终推单状态", "platform", account.Platform.Code, "status", result.Data.Status)
-	return result.Data.Status, nil
+    if err := json.Unmarshal(body, &result); err != nil {
+        lg.Error("获取推单状态响应解析失败",
+            logger.StringV2("platform_code", account.Platform.Code),
+            logger.StringV2("url", url),
+            logger.ErrorV2(err),
+        )
+        return 0, err
+    }
+    if result.Code != 0 && result.Message != "请求成功" {
+        lg.Warn("获取推单状态业务错误",
+            logger.StringV2("platform_code", account.Platform.Code),
+            logger.StringV2("url", url),
+            logger.IntV2("code", result.Code),
+            logger.StringV2("message", result.Message),
+        )
+        return 0, fmt.Errorf("%s error: %s", account.Platform.Code, result.Message)
+    }
+    lg.Info("获取推单状态成功",
+        logger.StringV2("platform_code", account.Platform.Code),
+        logger.IntV2("status", result.Data.Status),
+    )
+    return result.Data.Status, nil
 }
 
 // UpdatePushStatus 更新推单状态
@@ -132,8 +172,11 @@ func (s *PushStatusService) UpdatePushStatus(account *model.PlatformAccount, sta
 			"data":      string(dataStr),
 			"timestamp": time.Now().Unix(),
 		}
-		logger.Info(fmt.Sprintf("kekebang Notify params: %+v", params))
-		logger.Info(fmt.Sprintf("kekebang Notify appSecret: %s", account.AppSecret))
+    // 敏感信息不直接输出，使用长度代替
+    logger.GetCategoryLogger("platform").Info("kekebang 通知参数准备",
+        logger.IntV2("params_fields", len(params)),
+        logger.IntV2("app_secret_length", len(account.AppSecret)),
+    )
 		sign = signature.GenerateKekebangNotifySign(params, account.AppSecret)
 		url = fmt.Sprintf("%s/openapi/suppler/v1/edit-supply-switch-status", account.Platform.ApiURL)
 	case "xianyinke":
@@ -151,46 +194,89 @@ func (s *PushStatusService) UpdatePushStatus(account *model.PlatformAccount, sta
 
 	params["sign"] = sign
 
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		return err
-	}
+    jsonData, err := json.Marshal(params)
+    if err != nil {
+        return err
+    }
 
-	logger.Info("[UpdatePushStatus] 请求平台", "platform", account.Platform.Code, "url", url, "params", string(jsonData))
-	resp, err := s.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		logger.Error("[UpdatePushStatus] 请求失败", "platform", account.Platform.Code, "error", err.Error())
-		return err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error("[UpdatePushStatus] 读取响应失败", "platform", account.Platform.Code, "error", err.Error())
-		return err
-	}
-	logger.Info("[UpdatePushStatus] 平台原始响应", "platform", account.Platform.Code, "body", string(body))
+    lg := logger.GetCategoryLogger("platform")
+    previewLen := 256
+    if len(jsonData) < previewLen {
+        previewLen = len(jsonData)
+    }
+    lg.Info("更新推单状态请求",
+        logger.StringV2("platform_code", account.Platform.Code),
+        logger.StringV2("url", url),
+        logger.IntV2("request_body_size", len(jsonData)),
+        logger.StringV2("request_body_preview", string(jsonData[:previewLen])),
+    )
+    resp, err := s.httpClient.Post(url, "application/json", bytes.NewBuffer(jsonData))
+    if err != nil {
+        lg.Error("更新推单状态请求失败",
+            logger.StringV2("platform_code", account.Platform.Code),
+            logger.StringV2("url", url),
+            logger.ErrorV2(err),
+        )
+        return err
+    }
+    defer resp.Body.Close()
+    body, err := io.ReadAll(resp.Body)
+    if err != nil {
+        lg.Error("更新推单状态读取响应失败",
+            logger.StringV2("platform_code", account.Platform.Code),
+            logger.StringV2("url", url),
+            logger.ErrorV2(err),
+        )
+        return err
+    }
+    respPreviewLen := 256
+    if len(body) < respPreviewLen {
+        respPreviewLen = len(body)
+    }
+    lg.Info("更新推单状态响应",
+        logger.StringV2("platform_code", account.Platform.Code),
+        logger.StringV2("url", url),
+        logger.IntV2("status_code", resp.StatusCode),
+        logger.IntV2("response_body_size", len(body)),
+        logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+    )
 	var result struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Error("[UpdatePushStatus] 响应解析失败", "platform", account.Platform.Code, "error", err.Error())
-		return err
-	}
-	if result.Code != 0 && result.Message != "请求成功" {
-		logger.Error("[UpdatePushStatus] 平台返回错误", "platform", account.Platform.Code, "code", result.Code, "message", result.Message)
-		return fmt.Errorf("%s error: %s", account.Platform.Code, result.Message)
-	}
-	logger.Info("[UpdatePushStatus] 最终推单状态", "platform", account.Platform.Code, "status", status)
+    if err := json.Unmarshal(body, &result); err != nil {
+        lg.Error("更新推单状态响应解析失败",
+            logger.StringV2("platform_code", account.Platform.Code),
+            logger.StringV2("url", url),
+            logger.ErrorV2(err),
+        )
+        return err
+    }
+    if result.Code != 0 && result.Message != "请求成功" {
+        lg.Warn("更新推单状态业务错误",
+            logger.StringV2("platform_code", account.Platform.Code),
+            logger.StringV2("url", url),
+            logger.IntV2("code", result.Code),
+            logger.StringV2("message", result.Message),
+        )
+        return fmt.Errorf("%s error: %s", account.Platform.Code, result.Message)
+    }
+    lg.Info("更新推单状态成功",
+        logger.StringV2("platform_code", account.Platform.Code),
+        logger.IntV2("status", status),
+    )
 
 	// 更新本地数据库 push_status 字段
 	err = s.AccountRepo.GetDB().Model(&model.PlatformAccount{}).
 		Where("id = ?", account.ID).
 		Update("push_status", status).Error
-	if err != nil {
-		logger.Error("[UpdatePushStatus] 本地数据库更新失败", "account_id", account.ID, "error", err.Error())
-		return err
-	}
+    if err != nil {
+        lg.Error("更新推单状态本地数据库失败",
+            logger.Int64V2("account_id", account.ID),
+            logger.ErrorV2(err),
+        )
+        return err
+    }
 
 	return nil
 }

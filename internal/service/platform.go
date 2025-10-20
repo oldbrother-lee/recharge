@@ -247,7 +247,7 @@ func (s *PlatformService) SendNotification(ctx context.Context, order *model.Ord
 	default:
 		return fmt.Errorf("不支持的平台: %s", platform.Code)
 	}
-	fmt.Printf("最外层params: %+v\n", params)
+	logger.WithContextCategory(ctx, "platform").Info("通知请求参数", logger.AnyV2("params", params))
 	resp, err := s.sendRequest(ctx, url, params)
 	if err != nil {
 		return fmt.Errorf("发送通知请求失败: %w", err)
@@ -290,7 +290,11 @@ func (s *PlatformService) sendRequest(ctx context.Context, url string, params ma
 	Code    model.StringOrNumber `json:"code"`
 	Message string               `json:"message"`
 }, error) {
-	logger.Info(fmt.Sprintf("发送通知发送请求params: %+v", params))
+	l := logger.WithContextCategory(ctx, "platform")
+	l.Info("准备发送平台通知请求",
+		logger.StringV2("url", url),
+		logger.IntV2("params_count", len(params)),
+	)
 	// 1. 将参数转换为JSON
 	jsonData, err := json.Marshal(params)
 	if err != nil {
@@ -310,7 +314,11 @@ func (s *PlatformService) sendRequest(ctx context.Context, url string, params ma
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
-	logger.Info(fmt.Sprintf("发送通知发送请求: %+v", req))
+	l.Info("请求已构建，开始发送",
+		logger.StringV2("method", "POST"),
+		logger.StringV2("url", url),
+		logger.IntV2("timeout_seconds", 10),
+	)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("发送请求失败1: %w", err)
@@ -322,9 +330,16 @@ func (s *PlatformService) sendRequest(ctx context.Context, url string, params ma
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %w", err)
 	}
-	// 打印原始响应
-	logger.Info(fmt.Sprintf("发送通知返回原始响应: %s\n", string(body)))
-	fmt.Printf("原始响应: %s\n", string(body))
+	// 响应预览
+	previewLen := 256
+	if len(body) < previewLen {
+		previewLen = len(body)
+	}
+	l.Info("收到平台通知响应",
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.IntV2("body_size", len(body)),
+		logger.StringV2("body_preview", string(body[:previewLen])),
+	)
 	// 6. 解析响应
 	var result struct {
 		Code    model.StringOrNumber `json:"code"`
@@ -366,7 +381,7 @@ func (s *PlatformService) buildKekebangParams(order *model.Order, account *model
 	}
 	jsonStr, err := json.Marshal(data)
 	if err != nil {
-		fmt.Println(err)
+		logger.GetCategoryLogger("platform").Error("序列化通知数据失败", logger.ErrorV2(err), logger.StringV2("order_number", order.OutTradeNum))
 	}
 	return map[string]interface{}{
 		"app_key":   account.AppKey,
@@ -402,7 +417,7 @@ func (s *PlatformService) buildMf178Params(order *model.Order, account *model.Pl
 	}
 	jsonData, err := json.Marshal(data["data"])
 	if err != nil {
-		fmt.Println(err)
+		logger.GetCategoryLogger("platform").Error("序列化通知数据失败", logger.ErrorV2(err), logger.StringV2("order_number", order.OutTradeNum))
 	}
 	params := map[string]interface{}{
 		"data": string(jsonData),
@@ -520,8 +535,11 @@ func (s *PlatformService) buildXianzhuanxiaParams(ctx context.Context, order *mo
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth_Token", authToken)
 	// req.Header.Set("Query-Time", queryTime)
-	fmt.Printf("req: %v\n", req)
-	logger.Info(fmt.Sprintf("发送闲赚侠上报订单结果请求: %v\n", req))
+    logger.WithContextCategory(ctx, "platform").Info("闲赚侠请求对象预览", logger.StringV2("method", req.Method), logger.IntV2("header_count", len(req.Header)))
+    logger.WithContextCategory(ctx, "platform").Info("发送闲赚侠上报订单结果请求",
+        logger.StringV2("url", url),
+        logger.StringV2("content_type", req.Header.Get("Content-Type")),
+    )
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -568,89 +586,92 @@ func (s *PlatformService) getXianzhuanxiaStatus(orderStatus model.OrderStatus) i
 
 // sendExternalAPINotification 发送外部API通知
 func (s *PlatformService) sendExternalAPINotification(ctx context.Context, order *model.Order) error {
-	logger.Info("开始处理外部API通知",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"customer_id", order.CustomerID,
-		"order_status", order.Status,
-		"callback_url", order.PlatformCallbackURL,
+    // 将订单号注入上下文，便于日志链路追踪
+    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+    l := logger.WithContextCategory(ctx, "platform")
+	l.Info("开始处理外部API通知",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.Int64V2("customer_id", order.CustomerID),
+		logger.IntV2("order_status", int(order.Status)),
+		logger.StringV2("callback_url", order.PlatformCallbackURL),
 	)
 
 	// 只发送成功和失败状态的通知，其他状态不发送
 	if order.Status != model.OrderStatusSuccess && order.Status != model.OrderStatusFailed {
-		logger.Info("订单状态不需要发送通知，跳过",
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
-			"order_status", order.Status,
+		l.Info("订单状态不需要发送通知，跳过",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.IntV2("order_status", int(order.Status)),
 		)
 		return nil // 不发送通知，直接返回
 	}
 
 	// 检查是否有回调URL
 	if order.PlatformCallbackURL == "" {
-		logger.Error("外部API订单缺少回调URL",
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
-			"customer_id", order.CustomerID,
+		l.Error("外部API订单缺少回调URL",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.Int64V2("customer_id", order.CustomerID),
 		)
 		return fmt.Errorf("外部API订单缺少回调URL")
 	}
 
 	// 构建通知参数
-	logger.Info("开始构建外部API通知参数",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
+	l.Info("开始构建外部API通知参数",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
 	)
 	params := s.buildExternalAPIParams(order)
-	logger.Info("外部API通知参数构建完成",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"params", params,
+	l.Info("外部API通知参数构建完成",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.IntV2("params_count", len(params)),
 	)
 
 	// 生成签名
-	logger.Info("开始生成外部API签名",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"customer_id", order.CustomerID,
+	l.Info("开始生成外部API签名",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.Int64V2("customer_id", order.CustomerID),
 	)
 	sign := s.generateExternalAPISign(params, order)
 	if sign == "" {
-		logger.Error("外部API签名生成失败",
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
-			"customer_id", order.CustomerID,
+		l.Error("外部API签名生成失败",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.Int64V2("customer_id", order.CustomerID),
 		)
 		return fmt.Errorf("外部API签名生成失败")
 	}
 	params["sign"] = sign
-	logger.Info("外部API签名生成成功",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"sign_length", len(sign),
+	l.Info("外部API签名生成成功",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.IntV2("sign_length", len(sign)),
 	)
 
 	// 发送HTTP通知
-	logger.Info("开始发送外部API HTTP通知",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"callback_url", order.PlatformCallbackURL,
+	l.Info("开始发送外部API HTTP通知",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("callback_url", order.PlatformCallbackURL),
 	)
 	err := s.sendExternalAPIHTTPNotification(ctx, order.PlatformCallbackURL, params)
 	if err != nil {
-		logger.Error("外部API HTTP通知发送失败",
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
-			"callback_url", order.PlatformCallbackURL,
-			"error", err,
+		l.Error("外部API HTTP通知发送失败",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("callback_url", order.PlatformCallbackURL),
+			logger.ErrorV2(err),
 		)
 		return err
 	}
 
-	logger.Info("外部API通知发送成功",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"callback_url", order.PlatformCallbackURL,
+	l.Info("外部API通知发送成功",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("callback_url", order.PlatformCallbackURL),
 	)
 	return nil
 }
@@ -675,76 +696,75 @@ func (s *PlatformService) buildExternalAPIParams(order *model.Order) map[string]
 
 // generateExternalAPISign 生成外部API签名
 func (s *PlatformService) generateExternalAPISign(params map[string]interface{}, order *model.Order) string {
-	logger.Info("开始获取外部API密钥",
-		"customer_id", order.CustomerID,
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
+    l := logger.GetCategoryLogger("platform")
+	l.Info("开始获取外部API密钥",
+		logger.Int64V2("customer_id", order.CustomerID),
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
 	)
 
 	// 根据订单的客户ID获取外部API密钥信息
 	apiKeys, total, err := s.externalAPIKeyRepo.GetByUserID(order.CustomerID, 0, 1)
 	if err != nil {
 		// 如果无法获取API密钥，记录日志并返回空签名
-		logger.Error("获取外部API密钥失败",
-			"error", err,
-			"customer_id", order.CustomerID,
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
+		l.Error("获取外部API密钥失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("customer_id", order.CustomerID),
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
 		)
 		return ""
 	}
 
-	logger.Info("外部API密钥查询结果",
-		"customer_id", order.CustomerID,
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"total_keys", total,
-		"returned_keys", len(apiKeys),
+	l.Info("外部API密钥查询结果",
+		logger.Int64V2("customer_id", order.CustomerID),
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.IntV2("total_keys", int(total)),
+		logger.IntV2("returned_keys", len(apiKeys)),
 	)
 
 	// 检查是否有API密钥
 	if len(apiKeys) == 0 {
-		logger.Error("用户没有配置外部API密钥",
-			"customer_id", order.CustomerID,
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
-			"total_keys", total,
+		l.Error("用户没有配置外部API密钥",
+			logger.Int64V2("customer_id", order.CustomerID),
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.IntV2("total_keys", int(total)),
 		)
 		return ""
 	}
 
 	// 使用第一个API密钥生成签名
 	apiKey := apiKeys[0]
-	logger.Info("发送端签名生成参数",
-		"customer_id", order.CustomerID,
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"api_key_id", apiKey.ID,
-		"app_id", apiKey.AppID,
-		"secret_length", len(apiKey.AppSecret),
-		"params_count", len(params),
-		"params", params,
+	l.Info("发送端签名生成参数",
+		logger.Int64V2("customer_id", order.CustomerID),
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.Int64V2("api_key_id", apiKey.ID),
+		logger.StringV2("app_id", apiKey.AppID),
+		logger.IntV2("secret_length", len(apiKey.AppSecret)),
+		logger.IntV2("params_count", len(params)),
 	)
 
 	// 使用外部API签名验证器生成签名
 	signatureValidator := signature.NewExternalAPISignatureValidator()
 	sign, err := signatureValidator.GenerateExternalAPISignature(params, apiKey.AppSecret)
 	if err != nil {
-		logger.Error("外部API签名生成失败",
-			"error", err,
-			"customer_id", order.CustomerID,
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
+		l.Error("外部API签名生成失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("customer_id", order.CustomerID),
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
 		)
 		return ""
 	}
-	logger.Info("发送端签名生成完成",
-		"customer_id", order.CustomerID,
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"api_key_id", apiKey.ID,
-		"generated_sign", sign,
-		"sign_length", len(sign),
+	l.Info("发送端签名生成完成",
+		logger.Int64V2("customer_id", order.CustomerID),
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.Int64V2("api_key_id", apiKey.ID),
+		logger.IntV2("sign_length", len(sign)),
 	)
 
 	return sign
@@ -780,34 +800,39 @@ func (s *PlatformService) getExternalAPIStatusDesc(orderStatus model.OrderStatus
 
 // sendExternalAPIHTTPNotification 发送外部API HTTP通知
 func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, callbackURL string, params map[string]interface{}) error {
-	logger.Info("开始构建HTTP请求",
-		"callback_url", callbackURL,
-		"params_count", len(params),
+	l := logger.WithContextCategory(ctx, "platform")
+	l.Info("开始构建HTTP请求",
+		logger.StringV2("callback_url", callbackURL),
+		logger.IntV2("params_count", len(params)),
 	)
 
 	// 构建请求体
 	jsonData, err := json.Marshal(params)
 	if err != nil {
-		logger.Error("序列化参数失败",
-			"error", err,
-			"callback_url", callbackURL,
-			"params", params,
+		l.Error("序列化参数失败",
+			logger.ErrorV2(err),
+			logger.StringV2("callback_url", callbackURL),
+			logger.IntV2("params_count", len(params)),
 		)
 		return fmt.Errorf("序列化参数失败: %v", err)
 	}
 
-	logger.Info("HTTP请求体构建完成",
-		"callback_url", callbackURL,
-		"request_body_size", len(jsonData),
-		"request_body", string(jsonData),
+	previewLen := 256
+	if len(jsonData) < previewLen {
+		previewLen = len(jsonData)
+	}
+	l.Info("HTTP请求体构建完成",
+		logger.StringV2("callback_url", callbackURL),
+		logger.IntV2("request_body_size", len(jsonData)),
+		logger.StringV2("request_body_preview", string(jsonData[:previewLen])),
 	)
 
 	// 创建HTTP请求
 	req, err := http.NewRequestWithContext(ctx, "POST", callbackURL, bytes.NewBuffer(jsonData))
 	if err != nil {
-		logger.Error("创建HTTP请求失败",
-			"error", err,
-			"callback_url", callbackURL,
+		l.Error("创建HTTP请求失败",
+			logger.ErrorV2(err),
+			logger.StringV2("callback_url", callbackURL),
 		)
 		return fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -824,12 +849,12 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 		req.Header.Set("X-Signature", sign)
 	}
 
-	logger.Info("HTTP请求头设置完成",
-		"callback_url", callbackURL,
-		"content_type", req.Header.Get("Content-Type"),
-		"user_agent", req.Header.Get("User-Agent"),
-		"x_api_key", req.Header.Get("X-API-Key"),
-		"x_signature_length", len(req.Header.Get("X-Signature")),
+	l.Info("HTTP请求头设置完成",
+		logger.StringV2("callback_url", callbackURL),
+		logger.StringV2("content_type", req.Header.Get("Content-Type")),
+		logger.StringV2("user_agent", req.Header.Get("User-Agent")),
+		logger.StringV2("x_api_key", req.Header.Get("X-API-Key")),
+		logger.IntV2("x_signature_length", len(req.Header.Get("X-Signature"))),
 	)
 
 	// 发送请求
@@ -837,10 +862,10 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 		Timeout: 30 * time.Second,
 	}
 
-	logger.Info("开始发送HTTP请求",
-		"callback_url", callbackURL,
-		"method", "POST",
-		"timeout", "30s",
+	l.Info("开始发送HTTP请求",
+		logger.StringV2("callback_url", callbackURL),
+		logger.StringV2("method", "POST"),
+		logger.StringV2("timeout", "30s"),
 	)
 
 	startTime := time.Now()
@@ -848,46 +873,50 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 	duration := time.Since(startTime)
 
 	if err != nil {
-		logger.Error("HTTP请求发送失败",
-			"error", err,
-			"callback_url", callbackURL,
-			"duration", duration,
+		l.Error("HTTP请求发送失败",
+			logger.ErrorV2(err),
+			logger.StringV2("callback_url", callbackURL),
+			logger.DurationV2("duration", duration),
 		)
 		return fmt.Errorf("发送请求失败: %v", err)
 	}
 	defer resp.Body.Close()
 
-	logger.Info("HTTP请求发送完成",
-		"callback_url", callbackURL,
-		"status_code", resp.StatusCode,
-		"duration", duration,
-		"content_length", resp.ContentLength,
+	l.Info("HTTP请求发送完成",
+		logger.StringV2("callback_url", callbackURL),
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.DurationV2("duration", duration),
+		logger.Int64V2("content_length", resp.ContentLength),
 	)
 
 	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Error("读取HTTP响应失败",
-			"error", err,
-			"callback_url", callbackURL,
-			"status_code", resp.StatusCode,
+		l.Error("读取HTTP响应失败",
+			logger.ErrorV2(err),
+			logger.StringV2("callback_url", callbackURL),
+			logger.IntV2("status_code", resp.StatusCode),
 		)
 		return fmt.Errorf("读取响应失败: %v", err)
 	}
 
-	logger.Info("HTTP响应读取完成",
-		"callback_url", callbackURL,
-		"status_code", resp.StatusCode,
-		"response_body_size", len(body),
-		"response_body", string(body),
+	respPreviewLen := 256
+	if len(body) < respPreviewLen {
+		respPreviewLen = len(body)
+	}
+	l.Info("HTTP响应读取完成",
+		logger.StringV2("callback_url", callbackURL),
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.IntV2("response_body_size", len(body)),
+		logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
 	)
 
 	// 检查HTTP状态码
 	if resp.StatusCode != http.StatusOK {
-		logger.Error("HTTP请求返回错误状态码",
-			"callback_url", callbackURL,
-			"status_code", resp.StatusCode,
-			"response_body", string(body),
+		l.Error("HTTP请求返回错误状态码",
+			logger.StringV2("callback_url", callbackURL),
+			logger.IntV2("status_code", resp.StatusCode),
+			logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
 		)
 		return fmt.Errorf("HTTP请求失败，状态码: %d, 响应: %s", resp.StatusCode, string(body))
 	}
@@ -895,27 +924,39 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 	// 解析响应（可选，根据外部API的响应格式调整）
 	var result map[string]interface{}
 	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Warn("解析HTTP响应JSON失败，但HTTP状态码正常，认为请求成功",
-			"callback_url", callbackURL,
-			"error", err,
-			"response_body", string(body),
+		l.Warn("解析HTTP响应JSON失败，但HTTP状态码正常，认为请求成功",
+			logger.StringV2("callback_url", callbackURL),
+			logger.ErrorV2(err),
+			logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
 		)
 		// 如果解析失败，只要HTTP状态码是200就认为成功
 		return nil
 	}
 
-	logger.Info("HTTP响应JSON解析成功",
-		"callback_url", callbackURL,
-		"response_data", result,
+	l.Info("HTTP响应JSON解析成功",
+		logger.StringV2("callback_url", callbackURL),
+		logger.AnyV2("response_data_keys", func() []string {
+			keys := make([]string, 0, len(result))
+			for k := range result {
+				keys = append(keys, k)
+			}
+			return keys
+		}()),
 	)
 
 	// 检查业务状态码（根据外部API的响应格式调整）
 	if code, ok := result["code"]; ok {
 		if codeInt, ok := code.(float64); ok && codeInt != 200 {
-			logger.Error("外部API返回业务错误",
-				"callback_url", callbackURL,
-				"business_code", code,
-				"response_data", result,
+			l.Error("外部API返回业务错误",
+				logger.StringV2("callback_url", callbackURL),
+				logger.Float64V2("business_code", codeInt),
+				logger.AnyV2("response_data_keys", func() []string {
+					keys := make([]string, 0, len(result))
+					for k := range result {
+						keys = append(keys, k)
+					}
+					return keys
+				}()),
 			)
 			if msg, ok := result["message"]; ok {
 				return fmt.Errorf("业务错误: %v", msg)
@@ -924,10 +965,16 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 		}
 	}
 
-	logger.Info("外部API通知处理成功",
-		"callback_url", callbackURL,
-		"duration", duration,
-		"response_data", result,
+	l.Info("外部API通知处理成功",
+		logger.StringV2("callback_url", callbackURL),
+		logger.DurationV2("duration", duration),
+		logger.AnyV2("response_data_keys", func() []string {
+			keys := make([]string, 0, len(result))
+			for k := range result {
+				keys = append(keys, k)
+			}
+			return keys
+		}()),
 	)
 
 	return nil

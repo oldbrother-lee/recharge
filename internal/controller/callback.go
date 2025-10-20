@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 )
 
 type CallbackController struct {
@@ -70,6 +69,7 @@ func (c *CallbackController) HandleKekebangCallback(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to get account info"})
 		return
 	}
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("平台账号加载成功", logger.StringV2("userid", userID), logger.AnyV2("account", account))
 
 	// 读取请求体
 	body, err := io.ReadAll(ctx.Request.Body)
@@ -94,7 +94,7 @@ func (c *CallbackController) HandleKekebangCallback(ctx *gin.Context) {
 		})
 		return
 	}
-	fmt.Printf("sign: %s %v\n", sign, account)
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到签名信息", logger.StringV2("sign", sign))
 	// 使用账号的AppSecret验证签名
 	// if !verifySignature(body, sign, account.AppSecret) {
 	// 	ctx.JSON(http.StatusBadRequest, gin.H{
@@ -124,7 +124,7 @@ func verifySignature(body []byte, sign string, secretKey string) bool {
 
 // HandleMishiCallback 处理秘史平台回调
 func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
-	fmt.Printf("处理平台回调!!!\n")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到秘史平台回调", logger.StringV2("userid", ctx.Param("userid")))
 	// 1. 获取userid
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
@@ -135,7 +135,7 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 	// 获取 appkey 等信息
 	account, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
-		logger.Error("返回：401 平台账号不存在", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("返回：401 平台账号不存在", logger.ErrorV2(err))
 		utils.ErrorWithStatus(ctx, 401, 400, "平台账号不存在")
 		return
 	}
@@ -216,35 +216,39 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 		}
 	}
 
-	logger.Info("【mishi 回调签名调试】",
-		"userid", userIDStr,
-		"content_type", ctx.GetHeader("Content-Type"),
-		"user_agent", ctx.GetHeader("User-Agent"),
-		"sign_mode", signMode,
-		"received_params", safeParams,
-		"received_sign", receivedSign,
-		"active_sign_str_masked", activeSignStrMasked,
-		"active_sign_md5", activeSignMD5,
-		"equal_with_active", equalWithActive,
-		"our_sign_str_normalized_masked", maskedSignStr,
-		"our_sign_md5_normalized", calcSignNormalized,
-		"our_sign_str_raw_masked", maskedSignStrRaw,
-		"our_sign_md5_raw", calcSignRaw,
-		"equal_with_normalized", calcSignNormalized == receivedSign,
-		"equal_with_raw", calcSignRaw == receivedSign,
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("【mishi 回调签名调试】",
+		logger.StringV2("userid", userIDStr),
+		logger.StringV2("content_type", ctx.GetHeader("Content-Type")),
+		logger.StringV2("user_agent", ctx.GetHeader("User-Agent")),
+		logger.StringV2("sign_mode", signMode),
+		logger.AnyV2("received_params", safeParams),
+		logger.StringV2("received_sign", receivedSign),
+		logger.StringV2("active_sign_str_masked", activeSignStrMasked),
+		logger.StringV2("active_sign_md5", activeSignMD5),
+		logger.BoolV2("equal_with_active", equalWithActive),
+		logger.StringV2("our_sign_str_normalized_masked", maskedSignStr),
+		logger.StringV2("our_sign_md5_normalized", calcSignNormalized),
+		logger.StringV2("our_sign_str_raw_masked", maskedSignStrRaw),
+		logger.StringV2("our_sign_md5_raw", calcSignRaw),
+		logger.BoolV2("equal_with_normalized", calcSignNormalized == receivedSign),
+		logger.BoolV2("equal_with_raw", calcSignRaw == receivedSign),
 	)
 
 	// 严格模式：若按原样拼接校验不通过，则直接返回 401
 	if !equalWithActive {
-		logger.Error("mishi 回调签名校验失败", "userid", userIDStr, "received_sign", receivedSign, "expected_sign", activeSignMD5)
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("mishi 回调签名校验失败",
+			logger.StringV2("userid", userIDStr),
+			logger.StringV2("received_sign", receivedSign),
+			logger.StringV2("expected_sign", activeSignMD5),
+		)
 		utils.ErrorWithStatus(ctx, 401, 401, "签名校验失败")
 		return
 	}
 
-	fmt.Println(signStr)
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("签名字符串", logger.StringV2("sign_str", signStr))
 	// 业务处理交给 service
 	if err := c.rechargeService.HandleCallback(ctx, "mishi", body); err != nil {
-		logger.Error("返回：500 处理回调失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("返回：500 处理回调失败", logger.ErrorV2(err))
 		ctx.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to process callback"})
 		return
 	}
@@ -254,10 +258,10 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 // HandleChongzhiCallback 处理充值平台回调
 func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
 	// 1. 获取userid
-	logger.Info("处理充值平台回调!!!")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理充值平台回调!!!")
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
-		logger.Error("处理充值平台回调 返回：400 缺少userid")
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理充值平台回调 返回：400 缺少userid")
 		utils.Error(ctx, 400, "缺少userid")
 		return
 	}
@@ -265,7 +269,7 @@ func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
 	// 2. 验证平台账号是否存在
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
-		logger.Error("处理充值平台回调 返回：400 平台账号不存在", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理充值平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "平台账号不存在")
 		return
 	}
@@ -273,39 +277,39 @@ func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
 	// 3. 读取原始请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		logger.Error("处理充值平台回调 返回：400 读取请求体失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理充值平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
 	// 打印原始回调数据用于调试
-	logger.Info("收到充值平台回调数据",
-		zap.String("userid", userIDStr),
-		zap.String("raw_body", string(body)),
-		zap.String("content_type", ctx.GetHeader("Content-Type")),
-		zap.String("user_agent", ctx.GetHeader("User-Agent")),
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到充值平台回调数据",
+		logger.StringV2("userid", userIDStr),
+		logger.StringV2("raw_body", string(body)),
+		logger.StringV2("content_type", ctx.GetHeader("Content-Type")),
+		logger.StringV2("user_agent", ctx.GetHeader("User-Agent")),
 	)
 
 	// 4. 调用 service 层处理业务（chongzhi平台的签名验证在ParseCallbackData中处理）
 	err = c.rechargeService.HandleCallback(ctx, "chongzhi", body)
 	if err != nil {
-		logger.Error("处理充值平台回调 返回：500 处理回调失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理充值平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
 		utils.Error(ctx, 500, err.Error())
 		return
 	}
 
 	// 5. 返回成功（根据文档要求返回OK字符）
-	logger.Info("处理充值平台回调 返回：200 成功")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理充值平台回调 返回：200 成功")
 	ctx.String(200, "OK")
 }
 
 // HandleDayuanrenCallback 处理大猿人平台回调
 func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 1. 获取userid
-	logger.Info("处理大猿人平台回调!!!")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理大猿人平台回调!!!")
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
-		logger.Error("处理大猿人平台回调 返回：400 缺少userid")
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：400 缺少userid")
 		utils.Error(ctx, 400, "缺少userid")
 		return
 	}
@@ -313,15 +317,16 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 2. 获取平台账号信息
 	account, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
-		logger.Error("处理大猿人平台回调 返回：400 平台账号不存在", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "平台账号不存在")
 		return
 	}
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("平台账号加载成功", logger.StringV2("userid", userIDStr), logger.AnyV2("account", account))
 
 	// 3. 读取原始请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		logger.Error("处理大猿人平台回调 返回：400 读取请求体失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "读取请求体失败")
 		return
 	}
@@ -329,7 +334,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 4. 解析表单参数
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
-		logger.Error("处理大猿人平台回调 返回：400 解析参数失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：400 解析参数失败", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "解析参数失败")
 		return
 	}
@@ -339,7 +344,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 			params[k] = v[0]
 		}
 	}
-	fmt.Println("大猿人回调参数", params, account)
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("大猿人回调参数", logger.AnyV2("params", params))
 	// 5. 签名校验
 	// if !signature.VerifyDayuanrenSign(params, account.AppSecret) {
 	// 	logger.Error("处理大猿人平台回调 返回：400 签名校验失败")
@@ -350,23 +355,23 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	// 6. 调用 service 层处理业务
 	err = c.rechargeService.HandleCallback(ctx, "dayuanren", body)
 	if err != nil {
-		logger.Error("处理大猿人平台回调 返回：500 处理回调失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
 		utils.Error(ctx, 500, err.Error())
 		return
 	}
 
 	// 7. 返回成功
-	logger.Info("处理大猿人平台回调 返回：200 成功")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理大猿人平台回调 返回：200 成功")
 	ctx.String(200, "success")
 }
 
 // HandlePayc2Callback 处理 payc2 平台回调
 func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	// 1. 获取userid
-	logger.Info("处理 payc2 平台回调!!!")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理 payc2 平台回调!!!")
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
-		logger.Error("处理 payc2 平台回调 返回：400 缺少userid")
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：400 缺少userid")
 		utils.Error(ctx, 400, "缺少userid")
 		return
 	}
@@ -374,7 +379,7 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	// 2. 验证平台账号是否存在
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
-		logger.Error("处理 payc2 平台回调 返回：400 平台账号不存在", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "平台账号不存在")
 		return
 	}
@@ -382,7 +387,7 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	// 3. 读取原始请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		logger.Error("处理 payc2 平台回调 返回：400 读取请求体失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "读取请求体失败")
 		return
 	}
@@ -390,7 +395,7 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	// 4. 解析表单参数
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
-		logger.Error("处理 payc2 平台回调 返回：400 解析参数失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：400 解析参数失败", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "解析参数失败")
 		return
 	}
@@ -402,33 +407,33 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	}
 
 	// 打印原始回调数据用于调试
-	logger.Info("收到 payc2 平台回调数据",
-		zap.String("userid", userIDStr),
-		zap.String("raw_body", string(body)),
-		zap.String("content_type", ctx.GetHeader("Content-Type")),
-		zap.String("user_agent", ctx.GetHeader("User-Agent")),
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到 payc2 平台回调数据",
+		logger.StringV2("userid", userIDStr),
+		logger.StringV2("raw_body", string(body)),
+		logger.StringV2("content_type", ctx.GetHeader("Content-Type")),
+		logger.StringV2("user_agent", ctx.GetHeader("User-Agent")),
 	)
 
 	// 5. 调用 service 层处理业务（payc2平台的签名验证在ParseCallbackData中处理）
 	err = c.rechargeService.HandleCallback(ctx, "payc2", body)
 	if err != nil {
-		logger.Error("处理 payc2 平台回调 返回：500 处理回调失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
 		utils.Error(ctx, 500, err.Error())
 		return
 	}
 
 	// 6. 返回成功（根据文档要求返回ok字符）
-	logger.Info("处理 payc2 平台回调 返回：200 成功")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理 payc2 平台回调 返回：200 成功")
 	ctx.String(200, "ok")
 }
 
 // HandleLingshiCallback 处理灵石平台回调
 func (c *CallbackController) HandleLingshiCallback(ctx *gin.Context) {
 	// 1. 获取userid
-	logger.Info("处理灵石平台回调!!!")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理灵石平台回调!!!")
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
-		logger.Error("处理灵石平台回调 返回：400 缺少userid")
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理灵石平台回调 返回：400 缺少userid")
 		utils.Error(ctx, 400, "缺少userid")
 		return
 	}
@@ -436,7 +441,7 @@ func (c *CallbackController) HandleLingshiCallback(ctx *gin.Context) {
 	// 2. 验证平台账号是否存在 (可选，ParseCallbackData 会根据 appId 验证)
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
-		logger.Error("处理灵石平台回调 返回：400 平台账号不存在", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理灵石平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "平台账号不存在")
 		return
 	}
@@ -444,39 +449,39 @@ func (c *CallbackController) HandleLingshiCallback(ctx *gin.Context) {
 	// 3. 读取原始请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		logger.Error("处理灵石平台回调 返回：400 读取请求体失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理灵石平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
 	// 打印原始回调数据用于调试
-	logger.Info("收到灵石平台回调数据",
-		zap.String("userid", userIDStr),
-		zap.String("raw_body", string(body)),
-		zap.String("content_type", ctx.GetHeader("Content-Type")),
-		zap.String("user_agent", ctx.GetHeader("User-Agent")),
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到灵石平台回调数据",
+		logger.StringV2("userid", userIDStr),
+		logger.StringV2("raw_body", string(body)),
+		logger.StringV2("content_type", ctx.GetHeader("Content-Type")),
+		logger.StringV2("user_agent", ctx.GetHeader("User-Agent")),
 	)
 
 	// 4. 调用 service 层处理业务（灵石平台的签名验证在ParseCallbackData中处理）
 	err = c.rechargeService.HandleCallback(ctx, "lingshi", body)
 	if err != nil {
-		logger.Error("处理灵石平台回调 返回：500 处理回调失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理灵石平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
 		utils.Error(ctx, 500, err.Error())
 		return
 	}
 
 	// 5. 返回成功（根据文档要求返回纯文本 "success"）
-	logger.Info("处理灵石平台回调 返回：200 成功")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理灵石平台回调 返回：200 成功")
 	ctx.String(200, "success")
 }
 
 // HandleKasushouCallback 处理卡速售平台回调
 func (c *CallbackController) HandleKasushouCallback(ctx *gin.Context) {
 	// 1. 获取userid
-	logger.Info("处理卡速售平台回调!!!")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理卡速售平台回调!!!")
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
-		logger.Error("处理卡速售平台回调 返回：400 缺少userid")
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理卡速售平台回调 返回：400 缺少userid")
 		utils.Error(ctx, 400, "缺少userid")
 		return
 	}
@@ -484,7 +489,7 @@ func (c *CallbackController) HandleKasushouCallback(ctx *gin.Context) {
 	// 2. 验证平台账号是否存在
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
-		logger.Error("处理卡速售平台回调 返回：400 平台账号不存在", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理卡速售平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "平台账号不存在")
 		return
 	}
@@ -492,76 +497,76 @@ func (c *CallbackController) HandleKasushouCallback(ctx *gin.Context) {
 	// 3. 读取原始请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		logger.Error("处理卡速售平台回调 返回：400 读取请求体失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理卡速售平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
 		utils.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
 	// 打印原始回调数据用于调试
-	logger.Info("收到卡速售平台回调数据",
-		zap.String("userid", userIDStr),
-		zap.String("raw_body", string(body)),
-		zap.String("content_type", ctx.GetHeader("Content-Type")),
-		zap.String("user_agent", ctx.GetHeader("User-Agent")),
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到卡速售平台回调数据",
+		logger.StringV2("userid", userIDStr),
+		logger.StringV2("raw_body", string(body)),
+		logger.StringV2("content_type", ctx.GetHeader("Content-Type")),
+		logger.StringV2("user_agent", ctx.GetHeader("User-Agent")),
 	)
 
 	// 4. 调用 service 层处理业务（卡速售平台的签名验证在 ParseCallbackData 和 VerifyKasushouCallback 中处理）
 	err = c.rechargeService.HandleCallback(ctx, "kasushou", body)
 	if err != nil {
-		logger.Error("处理卡速售平台回调 返回：500 处理回调失败", zap.Error(err))
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理卡速售平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
 		utils.Error(ctx, 500, err.Error())
 		return
 	}
 
 	// 5. 返回成功（根据文档要求返回纯文本 "ok"）
-	logger.Info("处理卡速售平台回调 返回：200 成功")
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理卡速售平台回调 返回：200 成功")
 	ctx.String(200, "ok")
 }
 
 // HandleShangtengCallback 处理商腾科技平台回调
 func (c *CallbackController) HandleShangtengCallback(ctx *gin.Context) {
-    // 1. 获取userid
-    logger.Info("处理商腾科技平台回调!!!")
-    userIDStr := ctx.Param("userid")
-    if userIDStr == "" {
-        logger.Error("处理商腾科技平台回调 返回：400 缺少userid")
-        utils.Error(ctx, 400, "缺少userid")
-        return
-    }
+	// 1. 获取userid
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理商腾科技平台回调!!!")
+	userIDStr := ctx.Param("userid")
+	if userIDStr == "" {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理商腾科技平台回调 返回：400 缺少userid")
+		utils.Error(ctx, 400, "缺少userid")
+		return
+	}
 
-    // 2. 验证平台账号是否存在
-    _, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
-    if err != nil {
-        logger.Error("处理商腾科技平台回调 返回：400 平台账号不存在", zap.Error(err))
-        utils.Error(ctx, 400, "平台账号不存在")
-        return
-    }
+	// 2. 验证平台账号是否存在
+	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
+	if err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理商腾科技平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
+		utils.Error(ctx, 400, "平台账号不存在")
+		return
+	}
 
-    // 3. 读取原始请求体
-    body, err := io.ReadAll(ctx.Request.Body)
-    if err != nil {
-        logger.Error("处理商腾科技平台回调 返回：400 读取请求体失败", zap.Error(err))
-        utils.Error(ctx, 400, "读取请求体失败")
-        return
-    }
+	// 3. 读取原始请求体
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理商腾科技平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
+		utils.Error(ctx, 400, "读取请求体失败")
+		return
+	}
 
-    // 调试日志
-    logger.Info("收到商腾科技平台回调数据",
-        zap.String("userid", userIDStr),
-        zap.String("raw_body", string(body)),
-        zap.String("content_type", ctx.GetHeader("Content-Type")),
-        zap.String("user_agent", ctx.GetHeader("User-Agent")),
-    )
+	// 调试日志
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到商腾科技平台回调数据",
+		logger.StringV2("userid", userIDStr),
+		logger.StringV2("raw_body", string(body)),
+		logger.StringV2("content_type", ctx.GetHeader("Content-Type")),
+		logger.StringV2("user_agent", ctx.GetHeader("User-Agent")),
+	)
 
-    // 4. 业务处理
-    err = c.rechargeService.HandleCallback(ctx, "shangteng", body)
-    if err != nil {
-        logger.Error("处理商腾科技平台回调 返回：500 处理回调失败", zap.Error(err))
-        utils.Error(ctx, 500, err.Error())
-        return
-    }
+	// 4. 业务处理
+	err = c.rechargeService.HandleCallback(ctx, "shangteng", body)
+	if err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理商腾科技平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
+		utils.Error(ctx, 500, err.Error())
+		return
+	}
 
-    // 5. 返回成功（纯文本 ok）
-    logger.Info("处理商腾科技平台回调 返回：200 成功")
-    ctx.String(200, "ok")
+	// 5. 返回成功（纯文本 ok）
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理商腾科技平台回调 返回：200 成功")
+	ctx.String(200, "ok")
 }

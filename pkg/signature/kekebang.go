@@ -60,7 +60,8 @@ func GenerateKekebangSign(params map[string]interface{}, secretKey string) strin
 	plainText := strings.Join(keyValueList, "&")
 	plainText += "&secret=" + secretKey
 	// fmt.Println("MD5签名前串:", plainText)
-	logger.Info(fmt.Sprintf("kekebang MD5签名前串: %s", plainText))
+	logger.InfoV2("kekebang MD5签名前串",
+		logger.StringV2("plain_text", plainText))
 	// 计算MD5签名
 	hasher := md5.New()
 	hasher.Write([]byte(plainText))
@@ -117,7 +118,8 @@ func GenerateKekebangNotifySign(params map[string]interface{}, secretKey string)
 		sb += k + fmt.Sprintf("%v", params[k])
 	}
 	sb += secretKey
-	logger.Info(fmt.Sprintf("kekebang Notify MD5签名前串: %s", sb))
+	logger.InfoV2("kekebang Notify MD5签名前串",
+		logger.StringV2("plain_text", sb))
 	// 计算MD5
 	return md5Sum(sb)
 }

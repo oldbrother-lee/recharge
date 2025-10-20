@@ -5,6 +5,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 	"go.uber.org/zap"
+	"recharge-go/pkg/logger"
 )
 
 type StatisticsTask struct {
@@ -25,28 +26,28 @@ func (t *StatisticsTask) Start(ctx context.Context) {
 
 	// 每天凌晨1点执行统计任务
 	_, err := c.AddFunc("51 1 * * *", func() {
-		t.logger.Info("开始执行统计任务")
+		logger.WithContextCategory(ctx, "statistics").Info("开始执行统计任务")
 		if err := t.statisticsSvc.UpdateStatistics(ctx); err != nil {
-			t.logger.Error("统计任务执行失败", zap.Error(err))
+			logger.WithContextCategory(ctx, "statistics").Error("统计任务执行失败", logger.ErrorV2(err))
 			return
 		}
 
-		t.logger.Info("统计任务执行完成")
+		logger.WithContextCategory(ctx, "statistics").Info("统计任务执行完成")
 	})
 
 	if err != nil {
-		t.logger.Error("添加统计任务失败", zap.Error(err))
+		logger.WithContextCategory(ctx, "statistics").Error("添加统计任务失败", logger.ErrorV2(err))
 		return
 	}
 
 	c.Start()
-	t.logger.Info("统计任务已启动")
+	logger.WithContextCategory(ctx, "statistics").Info("统计任务已启动")
 
 	// 在ctx取消时停止cron
 	go func() {
 		<-ctx.Done()
-		t.logger.Info("统计任务停止中...")
+		logger.WithContextCategory(ctx, "statistics").Info("统计任务停止中...")
 		c.Stop()
-		t.logger.Info("统计任务已停止")
+		logger.WithContextCategory(ctx, "statistics").Info("统计任务已停止")
 	}()
 }

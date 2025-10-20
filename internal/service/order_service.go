@@ -144,7 +144,7 @@ func (s *orderService) CreateOrder(ctx context.Context, order *model.Order) erro
 
 	// 注入订单号到上下文，贯穿全链路日志
 	ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
-	logger.WithContext(ctx).Info(fmt.Sprintf("【创建订单】生成订单号并初始化状态 | order_number=%s client=%d", order.OrderNumber, order.Client))
+	logger.WithContextCategory(ctx, "order").Info(fmt.Sprintf("【创建订单】生成订单号并初始化状态 | order_number=%s client=%d", order.OrderNumber, order.Client))
 
 	// 根据订单来源决定初始状态
 	// 如果是自动取单任务创建的订单(client=3)，直接进入待充值状态
@@ -162,10 +162,10 @@ func (s *orderService) CreateOrder(ctx context.Context, order *model.Order) erro
 
 	// 创建成功后，将订单推送到充值队列
 	if err := s.rechargeService.PushToRechargeQueue(ctx, order.ID); err != nil {
-		logger.WithContext(ctx).Error(fmt.Sprintf("【推送订单到充值队列失败】order_id=%d error=%v", order.ID, err))
+		logger.WithContextCategory(ctx, "order").Error(fmt.Sprintf("【推送订单到充值队列失败】order_id=%d error=%v", order.ID, err))
 		// 这里可以选择是否返回错误，因为订单已经创建成功
 	} else {
-		logger.WithContext(ctx).Info(fmt.Sprintf("【已推送订单到充值队列】order_id=%d", order.ID))
+		logger.WithContextCategory(ctx, "order").Info(fmt.Sprintf("【已推送订单到充值队列】order_id=%d", order.ID))
 	}
 
 	return nil
@@ -207,10 +207,10 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 	if uid := ctx.Value("user_id"); uid != nil {
 		userID = uid.(int64)
 	}
-	logger.WithContext(ctx).Info("开始更新订单状态",
-		logger.Int64("order_id", id),
-		logger.Int("new_status", int(status)),
-		logger.Int64("user_id", userID),
+	logger.WithContextCategory(ctx, "order").Info("开始更新订单状态",
+		logger.Int64V2("order_id", id),
+		logger.IntV2("new_status", int(status)),
+		logger.Int64V2("user_id", userID),
 	)
 
 	// 开启事务
@@ -225,9 +225,9 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 	order, err := s.orderRepo.GetByID(ctx, id)
 	if err != nil {
 		tx.Rollback()
-		logger.WithContext(ctx).Error("获取订单信息失败",
+		logger.WithContextCategory(ctx, "order").Error("获取订单信息失败",
 			logger.ErrorV2(err),
-			logger.Int64("order_id", id),
+			logger.Int64V2("order_id", id),
 		)
 		return fmt.Errorf("get order failed: %v", err)
 	}
@@ -236,26 +236,26 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 	isSystemOperation := userID == 0 && ctx.Value("roles") == nil
 	if !isSuperAdmin(ctx) && !isSystemOperation && order.CustomerID != userID {
 		tx.Rollback()
-		logger.WithContext(ctx).Error("无权限操作该订单",
-			logger.Int64("order_id", id),
-			logger.Int64("user_id", userID),
-			logger.Int64("order_customer_id", order.CustomerID),
+		logger.WithContextCategory(ctx, "order").Error("无权限操作该订单",
+			logger.Int64V2("order_id", id),
+			logger.Int64V2("user_id", userID),
+			logger.Int64V2("order_customer_id", order.CustomerID),
 		)
 		return fmt.Errorf("无权限操作该订单")
 	}
 
-	logger.WithContext(ctx).Info("获取到订单信息",
-		logger.Int64("order_id", id),
-		logger.Int("current_status", int(order.Status)),
-		logger.Int("new_status", int(status)),
+	logger.WithContextCategory(ctx, "order").Info("获取到订单信息",
+		logger.Int64V2("order_id", id),
+		logger.IntV2("current_status", int(order.Status)),
+		logger.IntV2("new_status", int(status)),
 	)
 
 	// 如果状态没有变化，也需要触发通知逻辑（幂等）
 	if order.Status == status {
 		tx.Rollback()
-		logger.WithContext(ctx).Info("订单状态未发生变化，触发幂等通知逻辑",
-			logger.Int64("order_id", id),
-			logger.Int("status", int(status)),
+		logger.WithContextCategory(ctx, "order").Info("订单状态未发生变化，触发幂等通知逻辑",
+			logger.Int64V2("order_id", id),
+			logger.IntV2("status", int(status)),
 		)
 
 		// 幂等性检查：是否已存在相同(order_id, type, target_status)的通知记录
@@ -268,41 +268,41 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 			for _, n := range existing {
 				switch n.Status {
 				case 3: // 成功
-					logger.WithContext(ctx).Info("已存在成功通知，跳过创建",
-						logger.Int64("order_id", id),
-						logger.Int64("notification_id", n.ID),
+					logger.WithContextCategory(ctx, "order").Info("已存在成功通知，跳过创建",
+						logger.Int64V2("order_id", id),
+						logger.Int64V2("notification_id", n.ID),
 					)
 					return nil
 				case 1, 2: // 待处理或处理中
-					logger.WithContext(ctx).Info("已存在待处理/处理中通知，尝试重新推送到队列",
-						logger.Int64("order_id", id),
-						logger.Int64("notification_id", n.ID),
+					logger.WithContextCategory(ctx, "order").Info("已存在待处理/处理中通知，尝试重新推送到队列",
+						logger.Int64V2("order_id", id),
+						logger.Int64V2("notification_id", n.ID),
 					)
 					if pushErr := s.queue.Push(ctx, "notification_queue", n); pushErr != nil {
-						logger.WithContext(ctx).Error("重新推送通知失败",
-							logger.Int64("order_id", id),
-							logger.Int64("notification_id", n.ID),
+						logger.WithContextCategory(ctx, "order").Error("重新推送通知失败",
+							logger.Int64V2("order_id", id),
+							logger.Int64V2("notification_id", n.ID),
 							logger.ErrorV2(pushErr),
 						)
 					}
 					return nil
 				case 4: // 失败，重置后重推
-					logger.WithContext(ctx).Info("存在失败通知，重置为待处理并重新推送",
-						logger.Int64("order_id", id),
-						logger.Int64("notification_id", n.ID),
+					logger.WithContextCategory(ctx, "order").Info("存在失败通知，重置为待处理并重新推送",
+						logger.Int64V2("order_id", id),
+						logger.Int64V2("notification_id", n.ID),
 					)
 					if upErr := s.notificationRepo.UpdateStatus(ctx, n.ID, 1); upErr != nil {
-						logger.WithContext(ctx).Error("重置通知状态失败",
-							logger.Int64("order_id", id),
-							logger.Int64("notification_id", n.ID),
+						logger.WithContextCategory(ctx, "order").Error("重置通知状态失败",
+							logger.Int64V2("order_id", id),
+							logger.Int64V2("notification_id", n.ID),
 							logger.ErrorV2(upErr),
 						)
 					} else {
 						n.Status = 1
 						if pushErr := s.queue.Push(ctx, "notification_queue", n); pushErr != nil {
-							logger.WithContext(ctx).Error("重新推送通知失败",
-								logger.Int64("order_id", id),
-								logger.Int64("notification_id", n.ID),
+							logger.WithContextCategory(ctx, "order").Error("重新推送通知失败",
+								logger.Int64V2("order_id", id),
+								logger.Int64V2("notification_id", n.ID),
 								logger.ErrorV2(pushErr),
 							)
 						}
@@ -311,8 +311,8 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 				}
 			}
 		} else if listErr != nil {
-			logger.WithContext(ctx).Warn("幂等检查查询通知记录失败，继续创建",
-				logger.Int64("order_id", id),
+			logger.WithContextCategory(ctx, "order").Warn("幂等检查查询通知记录失败，继续创建",
+				logger.Int64V2("order_id", id),
 				logger.ErrorV2(listErr),
 			)
 		}
@@ -320,8 +320,8 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		// 序列化订单快照
 		orderData, err := json.Marshal(order)
 		if err != nil {
-			logger.WithContext(ctx).Error("序列化订单快照失败",
-				logger.Int64("order_id", id),
+			logger.WithContextCategory(ctx, "order").Error("序列化订单快照失败",
+				logger.Int64V2("order_id", id),
 				logger.ErrorV2(err),
 			)
 			return nil // 订单状态已是目标状态，通知推送失败不影响主流程
@@ -341,36 +341,36 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		// 保存通知记录到数据库（容错处理唯一键冲突）
 		if createErr := s.notificationRepo.Create(ctx, notification); createErr != nil {
 			if strings.Contains(createErr.Error(), "Duplicate entry") || strings.Contains(createErr.Error(), "UNIQUE constraint") {
-				logger.WithContext(ctx).Warn("通知记录已存在（唯一键冲突），可能并发创建",
-					logger.Int64("order_id", id),
-					logger.Int("target_status", int(status)),
+				logger.WithContextCategory(ctx, "order").Warn("通知记录已存在（唯一键冲突），可能并发创建",
+					logger.Int64V2("order_id", id),
+					logger.IntV2("target_status", int(status)),
 				)
 				return nil
 			}
-			logger.WithContext(ctx).Error("创建通知记录失败",
-				logger.Int64("order_id", id),
+			logger.WithContextCategory(ctx, "order").Error("创建通知记录失败",
+				logger.Int64V2("order_id", id),
 				logger.ErrorV2(createErr),
 			)
 			return nil // 订单状态已是目标状态，通知推送失败不影响主流程
 		}
 
 		// 推送通知到队列
-		logger.WithContext(ctx).Info("准备推送通知到队列",
-			logger.Int64("order_id", id),
-			logger.Int("new_status", int(status)),
-			logger.Int64("notification_id", notification.ID),
+		logger.WithContextCategory(ctx, "order").Info("准备推送通知到队列",
+			logger.Int64V2("order_id", id),
+			logger.IntV2("new_status", int(status)),
+			logger.Int64V2("notification_id", notification.ID),
 		)
 		if pushErr := s.queue.Push(ctx, "notification_queue", notification); pushErr != nil {
-			logger.WithContext(ctx).Error("推送通知到队列失败",
-				logger.Int64("order_id", id),
-				logger.Int64("notification_id", notification.ID),
+			logger.WithContextCategory(ctx, "order").Error("推送通知到队列失败",
+				logger.Int64V2("order_id", id),
+				logger.Int64V2("notification_id", notification.ID),
 				logger.ErrorV2(pushErr),
 			)
 		} else {
-			logger.WithContext(ctx).Info("推送通知到队列成功",
-				logger.Int64("order_id", id),
-				logger.Int64("notification_id", notification.ID),
-				logger.Int("status", int(status)),
+			logger.WithContextCategory(ctx, "order").Info("推送通知到队列成功",
+				logger.Int64V2("order_id", id),
+				logger.Int64V2("notification_id", notification.ID),
+				logger.IntV2("status", int(status)),
 			)
 		}
 		return nil
@@ -379,35 +379,35 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 	// 更新订单状态
 	if err := tx.Model(&model.Order{}).Where("id = ?", id).Update("status", status).Error; err != nil {
 		tx.Rollback()
-		logger.WithContext(ctx).Error("更新订单状态失败",
+		logger.WithContextCategory(ctx, "order").Error("更新订单状态失败",
 			logger.ErrorV2(err),
-			logger.Int64("order_id", id),
-			logger.Int("old_status", int(order.Status)),
-			logger.Int("new_status", int(status)),
+			logger.Int64V2("order_id", id),
+			logger.IntV2("old_status", int(order.Status)),
+			logger.IntV2("new_status", int(status)),
 		)
 		return fmt.Errorf("update order status failed: %v", err)
 	}
 
 	// 提交事务
 	if err := tx.Commit().Error; err != nil {
-		logger.WithContext(ctx).Error("提交事务失败",
+		logger.WithContextCategory(ctx, "order").Error("提交事务失败",
 			logger.ErrorV2(err),
-			logger.Int64("order_id", id),
+			logger.Int64V2("order_id", id),
 		)
 		return fmt.Errorf("commit transaction failed: %v", err)
 	}
 
-	logger.WithContext(ctx).Info("订单状态更新成功",
-		logger.Int64("order_id", id),
-		logger.Int("old_status", int(order.Status)),
-		logger.Int("new_status", int(status)),
+	logger.WithContextCategory(ctx, "order").Info("订单状态更新成功",
+		logger.Int64V2("order_id", id),
+		logger.IntV2("old_status", int(order.Status)),
+		logger.IntV2("new_status", int(status)),
 	)
 
 	// 事务提交成功后，获取更新后的订单信息并创建通知记录
 	updatedOrder, getErr := s.orderRepo.GetByID(ctx, id)
 	if getErr != nil {
-		logger.WithContext(ctx).Error("获取更新后的订单信息失败",
-			logger.Int64("order_id", id),
+		logger.WithContextCategory(ctx, "order").Error("获取更新后的订单信息失败",
+			logger.Int64V2("order_id", id),
 			logger.ErrorV2(getErr),
 		)
 		return nil // 订单状态已更新成功，通知推送失败不影响主流程
@@ -423,41 +423,41 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 		for _, n := range existing {
 			switch n.Status {
 			case 3: // 成功
-				logger.WithContext(ctx).Info("已存在成功通知，跳过创建",
-					logger.Int64("order_id", id),
-					logger.Int64("notification_id", n.ID),
+				logger.WithContextCategory(ctx, "order").Info("已存在成功通知，跳过创建",
+					logger.Int64V2("order_id", id),
+					logger.Int64V2("notification_id", n.ID),
 				)
 				return nil
 			case 1, 2: // 待处理或处理中
-				logger.WithContext(ctx).Info("已存在待处理/处理中通知，尝试重新推送到队列",
-					logger.Int64("order_id", id),
-					logger.Int64("notification_id", n.ID),
+				logger.WithContextCategory(ctx, "order").Info("已存在待处理/处理中通知，尝试重新推送到队列",
+					logger.Int64V2("order_id", id),
+					logger.Int64V2("notification_id", n.ID),
 				)
 				if pushErr := s.queue.Push(ctx, "notification_queue", n); pushErr != nil {
-					logger.WithContext(ctx).Error("重新推送通知失败",
-						logger.Int64("order_id", id),
-						logger.Int64("notification_id", n.ID),
+					logger.WithContextCategory(ctx, "order").Error("重新推送通知失败",
+						logger.Int64V2("order_id", id),
+						logger.Int64V2("notification_id", n.ID),
 						logger.ErrorV2(pushErr),
 					)
 				}
 				return nil
 			case 4: // 失败，重置后重推
-				logger.WithContext(ctx).Info("存在失败通知，重置为待处理并重新推送",
-					logger.Int64("order_id", id),
-					logger.Int64("notification_id", n.ID),
+				logger.WithContextCategory(ctx, "order").Info("存在失败通知，重置为待处理并重新推送",
+					logger.Int64V2("order_id", id),
+					logger.Int64V2("notification_id", n.ID),
 				)
 				if upErr := s.notificationRepo.UpdateStatus(ctx, n.ID, 1); upErr != nil {
-					logger.WithContext(ctx).Error("重置通知状态失败",
-						logger.Int64("order_id", id),
-						logger.Int64("notification_id", n.ID),
+					logger.WithContextCategory(ctx, "order").Error("重置通知状态失败",
+						logger.Int64V2("order_id", id),
+						logger.Int64V2("notification_id", n.ID),
 						logger.ErrorV2(upErr),
 					)
 				} else {
 					n.Status = 1
 					if pushErr := s.queue.Push(ctx, "notification_queue", n); pushErr != nil {
-						logger.WithContext(ctx).Error("重新推送通知失败",
-							logger.Int64("order_id", id),
-							logger.Int64("notification_id", n.ID),
+						logger.WithContextCategory(ctx, "order").Error("重新推送通知失败",
+							logger.Int64V2("order_id", id),
+							logger.Int64V2("notification_id", n.ID),
 							logger.ErrorV2(pushErr),
 						)
 					}
@@ -466,8 +466,8 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 			}
 		}
 	} else if listErr != nil {
-		logger.WithContext(ctx).Warn("幂等检查查询通知记录失败，继续创建",
-			logger.Int64("order_id", id),
+		logger.WithContextCategory(ctx, "order").Warn("幂等检查查询通知记录失败，继续创建",
+			logger.Int64V2("order_id", id),
 			logger.ErrorV2(listErr),
 		)
 	}
@@ -475,8 +475,8 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 	// 序列化订单快照
 	orderData, err := json.Marshal(updatedOrder)
 	if err != nil {
-		logger.WithContext(ctx).Error("序列化订单快照失败",
-			logger.Int64("order_id", id),
+		logger.WithContextCategory(ctx, "order").Error("序列化订单快照失败",
+			logger.Int64V2("order_id", id),
 			logger.ErrorV2(err),
 		)
 		return nil // 订单状态已更新成功，通知推送失败不影响主流程
@@ -496,36 +496,36 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 	// 保存通知记录到数据库（容错处理唯一键冲突）
 	if createErr := s.notificationRepo.Create(ctx, notification); createErr != nil {
 		if strings.Contains(createErr.Error(), "Duplicate entry") || strings.Contains(createErr.Error(), "UNIQUE constraint") {
-			logger.WithContext(ctx).Warn("通知记录已存在（唯一键冲突），可能并发创建",
-				logger.Int64("order_id", id),
-				logger.Int("target_status", int(status)),
+			logger.WithContextCategory(ctx, "order").Warn("通知记录已存在（唯一键冲突），可能并发创建",
+				logger.Int64V2("order_id", id),
+				logger.IntV2("target_status", int(status)),
 			)
 			return nil
 		}
-		logger.WithContext(ctx).Error("创建通知记录失败",
-			logger.Int64("order_id", id),
+		logger.WithContextCategory(ctx, "order").Error("创建通知记录失败",
+			logger.Int64V2("order_id", id),
 			logger.ErrorV2(createErr),
 		)
 		return nil // 订单状态已更新成功，通知推送失败不影响主流程
 	}
 
 	// 推送通知到队列
-	logger.WithContext(ctx).Info("准备推送通知到队列",
-		logger.Int64("order_id", id),
-		logger.Int("new_status", int(status)),
-		logger.Int64("notification_id", notification.ID),
+	logger.WithContextCategory(ctx, "order").Info("准备推送通知到队列",
+		logger.Int64V2("order_id", id),
+		logger.IntV2("new_status", int(status)),
+		logger.Int64V2("notification_id", notification.ID),
 	)
 	if pushErr := s.queue.Push(ctx, "notification_queue", notification); pushErr != nil {
-		logger.WithContext(ctx).Error("推送通知到队列失败",
-			logger.Int64("order_id", id),
-			logger.Int64("notification_id", notification.ID),
+		logger.WithContextCategory(ctx, "order").Error("推送通知到队列失败",
+			logger.Int64V2("order_id", id),
+			logger.Int64V2("notification_id", notification.ID),
 			logger.ErrorV2(pushErr),
 		)
 	} else {
-		logger.WithContext(ctx).Info("推送通知到队列成功",
-			logger.Int64("order_id", id),
-			logger.Int64("notification_id", notification.ID),
-			logger.Int("status", int(status)),
+		logger.WithContextCategory(ctx, "order").Info("推送通知到队列成功",
+			logger.Int64V2("order_id", id),
+			logger.Int64V2("notification_id", notification.ID),
+			logger.IntV2("status", int(status)),
 		)
 	}
 	return nil
@@ -569,52 +569,52 @@ func (s *orderService) ProcessOrderSuccess(ctx context.Context, orderID int64) e
 
 // ProcessOrderFail 处理订单失败
 func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, remark string) error {
-	logger.WithContext(ctx).Info("开始处理订单失败", logger.Int64("order_id", orderID), logger.String("remark", remark))
+    logger.WithContextCategory(ctx, "order").Info("开始处理订单失败", logger.Int64V2("order_id", orderID), logger.StringV2("remark", remark))
 	
 	// 1. 先获取订单信息以确定用户ID
-	order, err := s.orderRepo.GetByID(ctx, orderID)
-	if err != nil {
-		logger.WithContext(ctx).Error("获取订单信息失败", logger.Int64("order_id", orderID), logger.ErrorV2(err))
-		return fmt.Errorf("获取订单信息失败: %v", err)
-	}
-	logger.WithContext(ctx).Info("获取订单信息成功", logger.Int64("order_id", orderID), logger.Int64("customer_id", order.CustomerID), logger.Any("status", order.Status))
+    order, err := s.orderRepo.GetByID(ctx, orderID)
+    if err != nil {
+        logger.WithContextCategory(ctx, "order").Error("获取订单信息失败", logger.Int64V2("order_id", orderID), logger.ErrorV2(err))
+        return fmt.Errorf("获取订单信息失败: %v", err)
+    }
+    logger.WithContextCategory(ctx, "order").Info("获取订单信息成功", logger.Int64V2("order_id", orderID), logger.Int64V2("customer_id", order.CustomerID), logger.IntV2("status", int(order.Status)))
 
 	// 2. 如果订单已经是失败状态，直接调用 UpdateOrderStatus 确保通知发送的幂等性
-	if order.Status == model.OrderStatusFailed {
-		logger.WithContext(ctx).Info("订单已经是失败状态，调用 UpdateOrderStatus 确保通知幂等性", logger.Int64("order_id", orderID))
-		return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusFailed)
-	}
+    if order.Status == model.OrderStatusFailed {
+        logger.WithContextCategory(ctx, "order").Info("订单已经是失败状态，调用 UpdateOrderStatus 确保通知幂等性", logger.Int64V2("order_id", orderID))
+        return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusFailed)
+    }
 
 	// 3. 获取用户级别的分布式锁
-	lockValue, err := s.lockManager.LockUserRefund(ctx, order.CustomerID)
-	if err != nil {
-		logger.WithContext(ctx).Error("获取用户退款锁失败", logger.Int64("user_id", order.CustomerID), logger.Int64("order_id", orderID), logger.ErrorV2(err))
-		return fmt.Errorf("获取退款锁失败: %v", err)
-	}
-	defer func() {
-		if unlockErr := s.lockManager.UnlockUserRefund(ctx, order.CustomerID, lockValue); unlockErr != nil {
-			logger.WithContext(ctx).Error("释放用户退款锁失败", logger.Int64("user_id", order.CustomerID), logger.Int64("order_id", orderID), logger.ErrorV2(unlockErr))
-		}
-	}()
+    lockValue, err := s.lockManager.LockUserRefund(ctx, order.CustomerID)
+    if err != nil {
+        logger.WithContextCategory(ctx, "order").Error("获取用户退款锁失败", logger.Int64V2("user_id", order.CustomerID), logger.Int64V2("order_id", orderID), logger.ErrorV2(err))
+        return fmt.Errorf("获取退款锁失败: %v", err)
+    }
+    defer func() {
+        if unlockErr := s.lockManager.UnlockUserRefund(ctx, order.CustomerID, lockValue); unlockErr != nil {
+            logger.WithContextCategory(ctx, "order").Error("释放用户退款锁失败", logger.Int64V2("user_id", order.CustomerID), logger.Int64V2("order_id", orderID), logger.ErrorV2(unlockErr))
+        }
+    }()
 
 	// 4. 在锁保护下执行事务（只处理业务逻辑，不创建通知）
-	logger.WithContext(ctx).Info("开始执行事务", logger.Int64("order_id", orderID))
-	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		logger.WithContext(ctx).Info("事务内部开始执行", logger.Int64("order_id", orderID))
+    logger.WithContextCategory(ctx, "order").Info("开始执行事务", logger.Int64V2("order_id", orderID))
+    err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+        logger.WithContextCategory(ctx, "order").Info("事务内部开始执行", logger.Int64V2("order_id", orderID))
 		// 使用行锁防止同一订单的并发处理
 		var lockedOrder model.Order
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", orderID).First(&lockedOrder).Error; err != nil {
-			logger.WithContext(ctx).Error("获取订单行锁失败", logger.Int64("order_id", orderID), logger.ErrorV2(err))
-			return err
-		}
-		logger.WithContext(ctx).Info("获取订单行锁成功", logger.Int64("order_id", orderID), logger.Any("locked_status", lockedOrder.Status))
+        if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", orderID).First(&lockedOrder).Error; err != nil {
+            logger.WithContextCategory(ctx, "order").Error("获取订单行锁失败", logger.Int64V2("order_id", orderID), logger.ErrorV2(err))
+            return err
+        }
+        logger.WithContextCategory(ctx, "order").Info("获取订单行锁成功", logger.Int64V2("order_id", orderID), logger.IntV2("locked_status", int(lockedOrder.Status)))
 
 		// 检查订单状态，防止重复处理
 		if lockedOrder.Status == model.OrderStatusFailed {
 			// 订单已经是失败状态，跳过处理
-			logger.WithContext(ctx).Info("订单已经是失败状态，跳过重复处理", logger.Int64("order_id", orderID))
-			return nil
-		}
+            logger.WithContextCategory(ctx, "order").Info("订单已经是失败状态，跳过重复处理", logger.Int64V2("order_id", orderID))
+            return nil
+        }
 
 		// 如果订单已经支付，需要退还余额
 		if lockedOrder.Status == model.OrderStatusPendingRecharge || lockedOrder.Status == model.OrderStatusRecharging || lockedOrder.Status == model.OrderStatusProcessing {
@@ -622,10 +622,10 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 			var refundReq *RefundRequest
 			if lockedOrder.Client == 2 {
 				// 外部订单直接退款到用户余额
-				logger.WithContext(ctx).Info("外部订单失败，使用统一退款服务退款到用户余额",
-					logger.Int64("order_id", orderID),
-					logger.Int64("customer_id", lockedOrder.CustomerID),
-					logger.Float64("amount", lockedOrder.Price))
+                logger.WithContextCategory(ctx, "order").Info("外部订单失败，使用统一退款服务退款到用户余额",
+                    logger.Int64V2("order_id", orderID),
+                    logger.Int64V2("customer_id", lockedOrder.CustomerID),
+                    logger.Float64V2("amount", lockedOrder.Price))
 
 				refundReq = &RefundRequest{
 					UserID:   lockedOrder.CustomerID,
@@ -638,11 +638,11 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 				}
 			} else {
 				// 平台订单退款
-				logger.WithContext(ctx).Info("平台订单失败，使用统一退款服务退款",
-					logger.Int64("order_id", orderID),
-					logger.Int64("customer_id", lockedOrder.CustomerID),
-					logger.Int64("platform_account_id", lockedOrder.PlatformAccountID),
-					logger.Float64("amount", lockedOrder.Price))
+                logger.WithContextCategory(ctx, "order").Info("平台订单失败，使用统一退款服务退款",
+                    logger.Int64V2("order_id", orderID),
+                    logger.Int64V2("customer_id", lockedOrder.CustomerID),
+                    logger.Int64V2("platform_account_id", lockedOrder.PlatformAccountID),
+                    logger.Float64V2("amount", lockedOrder.Price))
 
 				refundReq = &RefundRequest{
 					UserID:    lockedOrder.CustomerID,
@@ -658,27 +658,27 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 
 			// 执行统一退款
 			refundResp, err := s.unifiedRefundService.ProcessRefund(ctx, refundReq)
-			if err != nil || !refundResp.Success {
-				logger.WithContext(ctx).Error("统一退款服务退款失败",
-					logger.ErrorV2(err),
-					logger.Int64("order_id", orderID),
-					logger.Int64("customer_id", lockedOrder.CustomerID),
-					logger.Float64("amount", lockedOrder.Price),
-					logger.Any("response", refundResp),
-				)
-				if err != nil {
-					return fmt.Errorf("统一退款失败: %v", err)
-				}
-				return fmt.Errorf("统一退款失败: %s", refundResp.Message)
-			}
+            if err != nil || !refundResp.Success {
+                logger.WithContextCategory(ctx, "order").Error("统一退款服务退款失败",
+                    logger.ErrorV2(err),
+                    logger.Int64V2("order_id", orderID),
+                    logger.Int64V2("customer_id", lockedOrder.CustomerID),
+                    logger.Float64V2("amount", lockedOrder.Price),
+                    logger.AnyV2("response", refundResp),
+                )
+                if err != nil {
+                    return fmt.Errorf("统一退款失败: %v", err)
+                }
+                return fmt.Errorf("统一退款失败: %s", refundResp.Message)
+            }
 
-			logger.WithContext(ctx).Info("统一退款服务退款成功",
-				logger.Int64("order_id", orderID),
-				logger.Int64("customer_id", lockedOrder.CustomerID),
-				logger.Float64("amount", refundResp.RefundAmount),
-				logger.Float64("balance_after", refundResp.BalanceAfter),
-				logger.Bool("already_refund", refundResp.AlreadyRefund),
-			)
+            logger.WithContextCategory(ctx, "order").Info("统一退款服务退款成功",
+                logger.Int64V2("order_id", orderID),
+                logger.Int64V2("customer_id", lockedOrder.CustomerID),
+                logger.Float64V2("amount", refundResp.RefundAmount),
+                logger.Float64V2("balance_after", refundResp.BalanceAfter),
+                logger.BoolV2("already_refund", refundResp.AlreadyRefund),
+            )
 		}
 
 		// 更新备注
@@ -691,29 +691,29 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 			return err
 		}
 
-		logger.WithContext(ctx).Info("订单失败处理完成",
-			logger.Int64("order_id", orderID),
-			logger.Any("status", model.OrderStatusFailed))
+        logger.WithContextCategory(ctx, "order").Info("订单失败处理完成",
+            logger.Int64V2("order_id", orderID),
+            logger.IntV2("status", int(model.OrderStatusFailed)))
 
-		logger.WithContext(ctx).Info("事务内部执行完成", logger.Int64("order_id", orderID))
-		return nil
-	})
-	
-	logger.WithContext(ctx).Info("事务执行结果", logger.Int64("order_id", orderID), logger.ErrorV2(err))
+        logger.WithContextCategory(ctx, "order").Info("事务内部执行完成", logger.Int64V2("order_id", orderID))
+        return nil
+    })
+
+    logger.WithContextCategory(ctx, "order").Info("事务执行结果", logger.Int64V2("order_id", orderID), logger.ErrorV2(err))
 	
 	// 5. 事务提交成功后，使用 UpdateOrderStatus 统一处理状态变更通知（含幂等保护）
-	if err == nil {
-		logger.WithContext(ctx).Info("事务提交成功，调用 UpdateOrderStatus 发送通知", logger.Int64("order_id", orderID))
-		// 使用 UpdateOrderStatus 方法统一处理状态变更通知，该方法已包含完善的幂等保护
-		if notifyErr := s.UpdateOrderStatus(ctx, orderID, model.OrderStatusFailed); notifyErr != nil {
-			logger.WithContext(ctx).Error("调用 UpdateOrderStatus 发送通知失败", logger.Int64("order_id", orderID), logger.ErrorV2(notifyErr))
-			// 通知失败不影响订单状态已成功更新的结果
-		} else {
-			logger.WithContext(ctx).Info("调用 UpdateOrderStatus 发送通知成功", logger.Int64("order_id", orderID))
-		}
-	} else {
-		logger.WithContext(ctx).Error("事务执行失败，跳过通知发送", logger.Int64("order_id", orderID), logger.ErrorV2(err))
-	}
+    if err == nil {
+        logger.WithContextCategory(ctx, "order").Info("事务提交成功，调用 UpdateOrderStatus 发送通知", logger.Int64V2("order_id", orderID))
+        // 使用 UpdateOrderStatus 方法统一处理状态变更通知，该方法已包含完善的幂等保护
+        if notifyErr := s.UpdateOrderStatus(ctx, orderID, model.OrderStatusFailed); notifyErr != nil {
+            logger.WithContextCategory(ctx, "order").Error("调用 UpdateOrderStatus 发送通知失败", logger.Int64V2("order_id", orderID), logger.ErrorV2(notifyErr))
+            // 通知失败不影响订单状态已成功更新的结果
+        } else {
+            logger.WithContextCategory(ctx, "order").Info("调用 UpdateOrderStatus 发送通知成功", logger.Int64V2("order_id", orderID))
+        }
+    } else {
+        logger.WithContextCategory(ctx, "order").Error("事务执行失败，跳过通知发送", logger.Int64V2("order_id", orderID), logger.ErrorV2(err))
+    }
 
 	return err
 }
@@ -724,42 +724,42 @@ func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, re
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 使用行锁防止同一订单的并发处理
 		var lockedOrder model.Order
-		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", orderID).First(&lockedOrder).Error; err != nil {
-			logger.WithContext(ctx).Error("获取订单失败", logger.ErrorV2(err), logger.Int64("order_id", orderID))
-			return fmt.Errorf("订单不存在")
-		}
+        if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", orderID).First(&lockedOrder).Error; err != nil {
+            logger.WithContextCategory(ctx, "order").Error("获取订单失败", logger.ErrorV2(err), logger.Int64V2("order_id", orderID))
+            return fmt.Errorf("订单不存在")
+        }
 
 		// 2. 检查订单状态是否允许退款
 		if lockedOrder.Status == model.OrderStatusRefunded {
-			logger.WithContext(ctx).Info("订单已退款，跳过处理", logger.Int64("order_id", orderID))
-			return fmt.Errorf("订单已退款")
-		}
+            logger.WithContextCategory(ctx, "order").Info("订单已退款，跳过处理", logger.Int64V2("order_id", orderID))
+            return fmt.Errorf("订单已退款")
+        }
 
 		// 只有成功、失败、待充值状态的订单可以退款
 		if lockedOrder.Status != model.OrderStatusSuccess &&
 			lockedOrder.Status != model.OrderStatusFailed &&
 			lockedOrder.Status != model.OrderStatusPendingRecharge {
-			logger.WithContext(ctx).Error("订单状态不允许退款", logger.Int64("order_id", orderID), logger.Any("status", lockedOrder.Status))
-			return fmt.Errorf("订单状态不允许退款")
-		}
+            logger.WithContextCategory(ctx, "order").Error("订单状态不允许退款", logger.Int64V2("order_id", orderID), logger.IntV2("status", int(lockedOrder.Status)))
+            return fmt.Errorf("订单状态不允许退款")
+        }
 
 		// 3. 执行退款逻辑
 		if lockedOrder.Client == 2 {
 			// 外部订单退款到用户余额（使用当前事务）
 			balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
 			if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, orderID, fmt.Sprintf("订单退款: %s", remark), "admin"); err != nil {
-				logger.WithContext(ctx).Error("外部订单退款失败", logger.ErrorV2(err), logger.Int64("order_id", orderID))
-				return fmt.Errorf("退款失败: %v", err)
-			}
-			logger.WithContext(ctx).Info("外部订单退款成功", logger.Int64("order_id", orderID), logger.Float64("amount", lockedOrder.Price))
-		} else {
+                logger.WithContextCategory(ctx, "order").Error("外部订单退款失败", logger.ErrorV2(err), logger.Int64V2("order_id", orderID))
+                return fmt.Errorf("退款失败: %v", err)
+            }
+            logger.WithContextCategory(ctx, "order").Info("外部订单退款成功", logger.Int64V2("order_id", orderID), logger.Float64V2("amount", lockedOrder.Price))
+        } else {
 			// 平台订单退款到用户余额
 			if err := s.rechargeService.GetUserBalanceService().RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, orderID, fmt.Sprintf("订单退款: %s", remark), "system"); err != nil {
-				logger.WithContext(ctx).Error("平台订单退款失败", logger.ErrorV2(err), logger.Int64("order_id", orderID))
-				return fmt.Errorf("退款失败: %v", err)
-			}
-			logger.WithContext(ctx).Info("平台订单退款成功", logger.Int64("order_id", orderID), logger.Float64("amount", lockedOrder.Price))
-		}
+                logger.WithContextCategory(ctx, "order").Error("平台订单退款失败", logger.ErrorV2(err), logger.Int64V2("order_id", orderID))
+                return fmt.Errorf("退款失败: %v", err)
+            }
+            logger.WithContextCategory(ctx, "order").Info("平台订单退款成功", logger.Int64V2("order_id", orderID), logger.Float64V2("amount", lockedOrder.Price))
+        }
 
 		// 4. 更新备注
 		if err := tx.Model(&model.Order{}).Where("id = ?", orderID).Update("remark", remark).Error; err != nil {
@@ -771,29 +771,29 @@ func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, re
 			return err
 		}
 
-		logger.Info("订单退款处理完成",
-			"order_id", orderID,
-			"status", model.OrderStatusRefunded)
-		return nil
-	})
+        logger.WithContextCategory(ctx, "order").Info("订单退款处理完成",
+            logger.Int64V2("order_id", orderID),
+            logger.IntV2("status", int(model.OrderStatusRefunded)))
+        return nil
+    })
 }
 
 // ProcessExternalRefund 处理外部订单退款
 func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum string, reason string) error {
-	logger.WithContext(ctx).Info("开始处理外部订单退款",
-		logger.String("out_trade_num", outTradeNum),
-		logger.String("reason", reason))
+    logger.WithContextCategory(ctx, "order").Info("开始处理外部订单退款",
+        logger.StringV2("out_trade_num", outTradeNum),
+        logger.StringV2("reason", reason))
 
 	// 使用事务确保订单状态更新和退款操作的原子性
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. 根据外部交易号获取订单
 		order, err := s.GetOrderByOutTradeNum(ctx, outTradeNum)
-		if err != nil {
-			logger.Error("获取订单失败",
-				"error", err,
-				"out_trade_num", outTradeNum)
-			return fmt.Errorf("订单不存在")
-		}
+        if err != nil {
+            logger.WithContextCategory(ctx, "order").Error("获取订单失败",
+                logger.ErrorV2(err),
+                logger.StringV2("out_trade_num", outTradeNum))
+            return fmt.Errorf("订单不存在")
+        }
 
 		// 使用行锁防止同一订单的并发处理
 		var lockedOrder model.Order
@@ -802,64 +802,64 @@ func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum st
 		}
 
 		// 2. 检查订单状态是否允许退款
-		if lockedOrder.Status == model.OrderStatusRefunded {
-			logger.Info("订单已退款，跳过处理",
-				"order_id", lockedOrder.ID,
-				"out_trade_num", outTradeNum)
-			return fmt.Errorf("订单已退款")
-		}
+        if lockedOrder.Status == model.OrderStatusRefunded {
+            logger.WithContextCategory(ctx, "order").Info("订单已退款，跳过处理",
+                logger.Int64V2("order_id", lockedOrder.ID),
+                logger.StringV2("out_trade_num", outTradeNum))
+            return fmt.Errorf("订单已退款")
+        }
 
 		// 只有成功、失败、待充值状态的订单可以退款
 		if lockedOrder.Status != model.OrderStatusSuccess &&
 			lockedOrder.Status != model.OrderStatusFailed &&
 			lockedOrder.Status != model.OrderStatusPendingRecharge {
-			logger.Error("订单状态不允许退款",
-				"order_id", lockedOrder.ID,
-				"status", lockedOrder.Status,
-				"out_trade_num", outTradeNum)
-			return fmt.Errorf("订单状态不允许退款")
-		}
+            logger.WithContextCategory(ctx, "order").Error("订单状态不允许退款",
+                logger.Int64V2("order_id", lockedOrder.ID),
+                logger.IntV2("status", int(lockedOrder.Status)),
+                logger.StringV2("out_trade_num", outTradeNum))
+            return fmt.Errorf("订单状态不允许退款")
+        }
 
 		// 3. 检查是否为外部订单
-		if lockedOrder.Client != 2 {
-			logger.Error("非外部订单，不能使用此退款方法",
-				"order_id", lockedOrder.ID,
-				"client", lockedOrder.Client,
-				"out_trade_num", outTradeNum)
-			return fmt.Errorf("非外部订单")
-		}
+        if lockedOrder.Client != 2 {
+            logger.WithContextCategory(ctx, "order").Error("非外部订单，不能使用此退款方法",
+                logger.Int64V2("order_id", lockedOrder.ID),
+                logger.IntV2("client", lockedOrder.Client),
+                logger.StringV2("out_trade_num", outTradeNum))
+            return fmt.Errorf("非外部订单")
+        }
 
 		// 4. 直接退款到用户余额（外部订单使用用户余额系统，使用当前事务）
 		balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
-		if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, lockedOrder.ID, fmt.Sprintf("外部订单退款: %s", reason), "system"); err != nil {
-			logger.Error("退款到用户余额失败",
-				"error", err,
-				"order_id", lockedOrder.ID,
-				"customer_id", lockedOrder.CustomerID,
-				"amount", lockedOrder.Price)
-			return fmt.Errorf("退款失败: %v", err)
-		}
+        if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, lockedOrder.ID, fmt.Sprintf("外部订单退款: %s", reason), "system"); err != nil {
+            logger.WithContextCategory(ctx, "order").Error("退款到用户余额失败",
+                logger.ErrorV2(err),
+                logger.Int64V2("order_id", lockedOrder.ID),
+                logger.Int64V2("customer_id", lockedOrder.CustomerID),
+                logger.Float64V2("amount", lockedOrder.Price))
+            return fmt.Errorf("退款失败: %v", err)
+        }
 
-		logger.Info("退款到用户余额成功",
-			"order_id", lockedOrder.ID,
-			"customer_id", lockedOrder.CustomerID,
-			"amount", lockedOrder.Price)
+        logger.WithContextCategory(ctx, "order").Info("退款到用户余额成功",
+            logger.Int64V2("order_id", lockedOrder.ID),
+            logger.Int64V2("customer_id", lockedOrder.CustomerID),
+            logger.Float64V2("amount", lockedOrder.Price))
 
 		// 5. 更新订单备注
-		if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Update("remark", fmt.Sprintf("外部订单退款: %s", reason)).Error; err != nil {
-			logger.WithContext(ctx).Error("更新订单备注失败", logger.ErrorV2(err), logger.Int64("order_id", lockedOrder.ID))
-			return fmt.Errorf("更新订单备注失败: %v", err)
-		}
+        if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Update("remark", fmt.Sprintf("外部订单退款: %s", reason)).Error; err != nil {
+            logger.WithContextCategory(ctx, "order").Error("更新订单备注失败", logger.ErrorV2(err), logger.Int64V2("order_id", lockedOrder.ID))
+            return fmt.Errorf("更新订单备注失败: %v", err)
+        }
 
 		// 6. 更新订单状态为已退款
-		if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Update("status", model.OrderStatusRefunded).Error; err != nil {
-			logger.WithContext(ctx).Error("更新订单状态失败", logger.ErrorV2(err), logger.Int64("order_id", lockedOrder.ID))
-			return fmt.Errorf("更新订单状态失败: %v", err)
-		}
+        if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Update("status", model.OrderStatusRefunded).Error; err != nil {
+            logger.WithContextCategory(ctx, "order").Error("更新订单状态失败", logger.ErrorV2(err), logger.Int64V2("order_id", lockedOrder.ID))
+            return fmt.Errorf("更新订单状态失败: %v", err)
+        }
 
-		logger.WithContext(ctx).Info("外部订单退款完成",
-			logger.Int64("order_id", lockedOrder.ID),
-			logger.String("order_number", lockedOrder.OrderNumber))
+        logger.WithContextCategory(ctx, "order").Info("外部订单退款完成",
+            logger.Int64V2("order_id", lockedOrder.ID),
+            logger.StringV2("order_number", lockedOrder.OrderNumber))
 
 		return nil
 	})
@@ -935,12 +935,12 @@ func (s *orderService) GetOrdersWithNotification(ctx context.Context, params map
         hasUserID = true
         userIDVal = v
     }
-    logger.WithContext(ctx).Info("OrderService.GetOrdersWithNotification",
-        logger.Bool("has_user_id", hasUserID),
-        logger.Any("user_id_val", userIDVal),
-        logger.Int("page", page),
-        logger.Int("page_size", pageSize),
-        logger.Any("params", params),
+    logger.WithContextCategory(ctx, "order").Info("OrderService.GetOrdersWithNotification",
+        logger.BoolV2("has_user_id", hasUserID),
+        logger.AnyV2("user_id_val", userIDVal),
+        logger.IntV2("page", page),
+        logger.IntV2("page_size", pageSize),
+        logger.AnyV2("params", params),
     )
     // 调用仓储层的新方法
     return s.orderRepo.GetOrdersWithNotification(ctx, params, page, pageSize)
@@ -948,76 +948,76 @@ func (s *orderService) GetOrdersWithNotification(ctx context.Context, params map
 
 // GetSuccessStatsByIspDenom 按运营商与面值统计成功订单数与金额
 func (s *orderService) GetSuccessStatsByIspDenom(ctx context.Context, params map[string]interface{}) ([]model.IspDenomSuccessStat, error) {
-    logger.WithContext(ctx).Info("OrderService.GetSuccessStatsByIspDenom", logger.Any("params", params))
+    logger.WithContextCategory(ctx, "order").Info("OrderService.GetSuccessStatsByIspDenom", logger.AnyV2("params", params))
     return s.orderRepo.GetSuccessStatsByIspDenom(ctx, params)
 }
 
 // CreateExternalOrder 创建外部订单（事务性处理：先验证商品再扣款创建订单）
 func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Order, userID int64) error {
-	logger.WithContext(ctx).Info("开始创建外部订单",
-		logger.String("out_trade_num", order.OutTradeNum),
-		logger.Any("user_id", userID),
-		logger.Any("product_id", order.ProductID))
+    logger.WithContextCategory(ctx, "order").Info("开始创建外部订单",
+        logger.StringV2("out_trade_num", order.OutTradeNum),
+        logger.Int64V2("user_id", userID),
+        logger.Int64V2("product_id", order.ProductID))
 
 	// 1. 验证商品是否存在
 	product, err := s.productRepo.GetByID(ctx, order.ProductID)
-	if err != nil {
-		logger.WithContext(ctx).Error("获取商品信息失败",
-			logger.ErrorV2(err),
-			logger.Any("product_id", order.ProductID))
-		return fmt.Errorf("商品不存在: %v", err)
-	}
+    if err != nil {
+        logger.WithContextCategory(ctx, "order").Error("获取商品信息失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("product_id", order.ProductID))
+        return fmt.Errorf("商品不存在: %v", err)
+    }
 
 	// 检查商品状态
-	if product.Status != 1 {
-		logger.WithContext(ctx).Error("商品已下架",
-			logger.Any("product_id", order.ProductID),
-			logger.Int("status", product.Status))
-		return fmt.Errorf("商品已下架")
-	}
+    if product.Status != 1 {
+        logger.WithContextCategory(ctx, "order").Error("商品已下架",
+            logger.Int64V2("product_id", order.ProductID),
+            logger.IntV2("status", product.Status))
+        return fmt.Errorf("商品已下架")
+    }
 
 	// 使用商品表的价格
 	actualPrice := product.Price
-	logger.WithContext(ctx).Info("使用商品表价格",
-		logger.Any("product_id", order.ProductID),
-		logger.String("product_name", product.Name),
-		logger.Any("actual_price", actualPrice))
+    logger.WithContextCategory(ctx, "order").Info("使用商品表价格",
+        logger.Int64V2("product_id", order.ProductID),
+        logger.StringV2("product_name", product.Name),
+        logger.Float64V2("actual_price", actualPrice))
 
 	// 开启事务
 	tx := s.orderRepo.(*repository.OrderRepositoryImpl).DB().Begin()
 	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-			logger.WithContext(ctx).Error("创建外部订单发生panic，事务回滚", 
-				logger.Any("panic", r))
-		}
+        if r := recover(); r != nil {
+            tx.Rollback()
+            logger.WithContextCategory(ctx, "order").Error("创建外部订单发生panic，事务回滚", 
+                logger.AnyV2("panic", r))
+        }
 	}()
 
-	if tx.Error != nil {
-		logger.WithContext(ctx).Error("开启事务失败", 
-			logger.ErrorV2(tx.Error))
-		return fmt.Errorf("开启事务失败: %v", tx.Error)
-	}
+    if tx.Error != nil {
+        logger.WithContextCategory(ctx, "order").Error("开启事务失败", 
+            logger.ErrorV2(tx.Error))
+        return fmt.Errorf("开启事务失败: %v", tx.Error)
+    }
 
 	// 2. 智能扣款（优先使用余额，不足时使用授信额度）
-	logger.WithContext(ctx).Info("开始智能扣款",
-		logger.Any("user_id", userID),
-		logger.Any("amount", actualPrice))
+    logger.WithContextCategory(ctx, "order").Info("开始智能扣款",
+        logger.Int64V2("user_id", userID),
+        logger.Float64V2("amount", actualPrice))
 
 	// 创建带授信功能的余额服务实例
 	balanceService := NewBalanceServiceWithCredit(s.balanceLogRepo, s.userRepo, s.creditService)
-	if err := balanceService.SmartDeduct(ctx, userID, actualPrice, model.BalanceStyleOrderDeduct, "外部订单智能扣款", "system"); err != nil {
-		tx.Rollback()
-		logger.WithContext(ctx).Error("智能扣款失败",
-			logger.ErrorV2(err),
-			logger.Any("user_id", userID),
-			logger.Any("amount", actualPrice))
-		return fmt.Errorf("余额和授信额度均不足: %v", err)
-	}
+    if err := balanceService.SmartDeduct(ctx, userID, actualPrice, model.BalanceStyleOrderDeduct, "外部订单智能扣款", "system"); err != nil {
+        tx.Rollback()
+        logger.WithContextCategory(ctx, "order").Error("智能扣款失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("user_id", userID),
+            logger.Float64V2("amount", actualPrice))
+        return fmt.Errorf("余额和授信额度均不足: %v", err)
+    }
 
-	logger.WithContext(ctx).Info("智能扣款成功",
-		logger.Any("user_id", userID),
-		logger.Any("amount", actualPrice))
+    logger.WithContextCategory(ctx, "order").Info("智能扣款成功",
+        logger.Int64V2("user_id", userID),
+        logger.Float64V2("amount", actualPrice))
 
 	// 3. 创建订单（直接设置为待充值状态，使用商品表价格）
 	order.OrderNumber = generateOrderNumber()
@@ -1028,57 +1028,57 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 	order.IsDel = 0
 	order.Price = actualPrice // 使用商品表的价格
 
-	if err := s.orderRepo.Create(ctx, order); err != nil {
-		tx.Rollback()
-		// 回滚扣款
-		if refundErr := balanceService.Refund(ctx, userID, actualPrice, 0, "订单创建失败退款", "system"); refundErr != nil {
-			logger.WithContext(ctx).Error("订单创建失败，退款也失败",
-				logger.ErrorV2(err),
-				logger.ErrorV2(refundErr),
-				logger.Any("user_id", userID),
-				logger.Any("amount", actualPrice))
-		} else {
-			logger.WithContext(ctx).Info("订单创建失败，已自动退款",
-				logger.Any("user_id", userID),
-				logger.Any("amount", actualPrice))
-		}
-		return fmt.Errorf("创建订单失败: %v", err)
-	}
+    if err := s.orderRepo.Create(ctx, order); err != nil {
+        tx.Rollback()
+        // 回滚扣款
+        if refundErr := balanceService.Refund(ctx, userID, actualPrice, 0, "订单创建失败退款", "system"); refundErr != nil {
+            logger.WithContextCategory(ctx, "order").Error("订单创建失败，退款也失败",
+                logger.ErrorV2(err),
+                logger.ErrorV2(refundErr),
+                logger.Int64V2("user_id", userID),
+                logger.Float64V2("amount", actualPrice))
+        } else {
+            logger.WithContextCategory(ctx, "order").Info("订单创建失败，已自动退款",
+                logger.Int64V2("user_id", userID),
+                logger.Float64V2("amount", actualPrice))
+        }
+        return fmt.Errorf("创建订单失败: %v", err)
+    }
 
-	logger.WithContext(ctx).Info("订单创建成功",
-		logger.Any("order_id", order.ID),
-		logger.String("order_number", order.OrderNumber),
-		logger.Int("status", int(order.Status)),
-		logger.Any("actual_price", actualPrice))
+    logger.WithContextCategory(ctx, "order").Info("订单创建成功",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.IntV2("status", int(order.Status)),
+        logger.Float64V2("actual_price", actualPrice))
 
 	// 4. 更新扣款记录的订单ID（将之前的临时扣款记录关联到具体订单）
-	if err := s.updateUserBalanceLogOrderID(ctx, userID, actualPrice, order.ID); err != nil {
-		logger.WithContext(ctx).Error("更新扣款记录订单ID失败", 
-			logger.ErrorV2(err), 
-			logger.Any("order_id", order.ID))
-		// 这个错误不影响主流程，只记录日志
-	}
+    if err := s.updateUserBalanceLogOrderID(ctx, userID, actualPrice, order.ID); err != nil {
+        logger.WithContextCategory(ctx, "order").Error("更新扣款记录订单ID失败", 
+            logger.ErrorV2(err), 
+            logger.Int64V2("order_id", order.ID))
+        // 这个错误不影响主流程，只记录日志
+    }
 
 	// 5. 推送到充值队列
-	if err := s.rechargeService.PushToRechargeQueue(ctx, order.ID); err != nil {
-		logger.WithContext(ctx).Error("推送到充值队列失败", 
-			logger.ErrorV2(err), 
-			logger.Any("order_id", order.ID))
-		// 这个错误不影响主流程，只记录日志
-	}
+    if err := s.rechargeService.PushToRechargeQueue(ctx, order.ID); err != nil {
+        logger.WithContextCategory(ctx, "order").Error("推送到充值队列失败", 
+            logger.ErrorV2(err), 
+            logger.Int64V2("order_id", order.ID))
+        // 这个错误不影响主流程，只记录日志
+    }
 
 	// 提交事务
-	if err := tx.Commit().Error; err != nil {
-		logger.WithContext(ctx).Error("提交事务失败",
-			logger.ErrorV2(err),
-			logger.Any("order_id", order.ID))
-		return fmt.Errorf("提交事务失败: %v", err)
-	}
+    if err := tx.Commit().Error; err != nil {
+        logger.WithContextCategory(ctx, "order").Error("提交事务失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("order_id", order.ID))
+        return fmt.Errorf("提交事务失败: %v", err)
+    }
 
-	logger.WithContext(ctx).Info("外部订单创建完成",
-		logger.Any("order_id", order.ID),
-		logger.String("order_number", order.OrderNumber),
-		logger.Int("status", int(order.Status)))
+    logger.WithContextCategory(ctx, "order").Info("外部订单创建完成",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.IntV2("status", int(order.Status)))
 
 	return nil
 }
@@ -1094,19 +1094,19 @@ func (s *orderService) updateBalanceLogOrderID(ctx context.Context, platformAcco
 		Limit(1).
 		Update("order_id", orderID).Error
 
-	if err != nil {
-		logger.Error("更新余额日志订单ID失败",
-			"error", err,
-			"platform_account_id", platformAccountID,
-			"amount", amount,
-			"order_id", orderID)
-		return err
-	}
+    if err != nil {
+        logger.WithContextCategory(ctx, "order").Error("更新余额日志订单ID失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("platform_account_id", platformAccountID),
+            logger.Float64V2("amount", amount),
+            logger.Int64V2("order_id", orderID))
+        return err
+    }
 
-	logger.Info("更新余额日志订单ID成功",
-		"platform_account_id", platformAccountID,
-		"amount", amount,
-		"order_id", orderID)
+    logger.WithContextCategory(ctx, "order").Info("更新余额日志订单ID成功",
+        logger.Int64V2("platform_account_id", platformAccountID),
+        logger.Float64V2("amount", amount),
+        logger.Int64V2("order_id", orderID))
 
 	return nil
 }
@@ -1122,19 +1122,19 @@ func (s *orderService) updateUserBalanceLogOrderID(ctx context.Context, userID i
 		Limit(1).
 		Update("order_id", orderID).Error
 
-	if err != nil {
-		logger.Error("更新用户余额日志订单ID失败",
-			"error", err,
-			"user_id", userID,
-			"amount", amount,
-			"order_id", orderID)
-		return err
-	}
+    if err != nil {
+        logger.WithContextCategory(ctx, "order").Error("更新用户余额日志订单ID失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("user_id", userID),
+            logger.Float64V2("amount", amount),
+            logger.Int64V2("order_id", orderID))
+        return err
+    }
 
-	logger.Info("更新用户余额日志订单ID成功",
-		"user_id", userID,
-		"amount", amount,
-		"order_id", orderID)
+    logger.WithContextCategory(ctx, "order").Info("更新用户余额日志订单ID成功",
+        logger.Int64V2("user_id", userID),
+        logger.Float64V2("amount", amount),
+        logger.Int64V2("order_id", orderID))
 
 	return nil
 }
@@ -1151,29 +1151,29 @@ func (s *orderService) SetRechargeService(rechargeService RechargeService) {
 
 // DeleteOrder 删除订单（软删除）
 func (s *orderService) DeleteOrder(ctx context.Context, id string) error {
-	logger.WithContext(ctx).Info("开始软删除订单", logger.String("order_id", id))
-	orderID, err := strconv.ParseInt(id, 10, 64)
-	if err != nil {
-		logger.WithContext(ctx).Error("订单ID格式错误", logger.String("order_id", id), logger.ErrorV2(err))
-		return fmt.Errorf("订单ID格式错误: %v", err)
-	}
+    logger.WithContextCategory(ctx, "order").Info("开始软删除订单", logger.StringV2("order_id", id))
+    orderID, err := strconv.ParseInt(id, 10, 64)
+    if err != nil {
+        logger.WithContextCategory(ctx, "order").Error("订单ID格式错误", logger.StringV2("order_id", id), logger.ErrorV2(err))
+        return fmt.Errorf("订单ID格式错误: %v", err)
+    }
 	// 查询订单信息
 	order, err := s.orderRepo.GetByID(ctx, orderID)
-	if err != nil {
-		logger.WithContext(ctx).Error("订单不存在", logger.String("order_id", id), logger.ErrorV2(err))
-		return fmt.Errorf("订单不存在: %v", err)
-	}
+    if err != nil {
+        logger.WithContextCategory(ctx, "order").Error("订单不存在", logger.StringV2("order_id", id), logger.ErrorV2(err))
+        return fmt.Errorf("订单不存在: %v", err)
+    }
 	userID := ctx.Value("user_id").(int64)
-	if !isSuperAdmin(ctx) && order.CustomerID != userID {
-		logger.WithContext(ctx).Error("无权限删除该订单", logger.String("order_id", id), logger.Int64("user_id", userID), logger.Int64("order_customer_id", order.CustomerID))
-		return fmt.Errorf("无权限删除该订单")
-	}
-	if err := s.orderRepo.SoftDeleteByID(ctx, orderID); err != nil {
-		logger.WithContext(ctx).Error("软删除订单失败", logger.String("order_id", id), logger.ErrorV2(err))
-		return fmt.Errorf("软删除订单失败: %v", err)
-	}
-	logger.WithContext(ctx).Info("软删除订单成功", logger.String("order_id", id))
-	return nil
+    if !isSuperAdmin(ctx) && order.CustomerID != userID {
+        logger.WithContextCategory(ctx, "order").Error("无权限删除该订单", logger.StringV2("order_id", id), logger.Int64V2("user_id", userID), logger.Int64V2("order_customer_id", order.CustomerID))
+        return fmt.Errorf("无权限删除该订单")
+    }
+    if err := s.orderRepo.SoftDeleteByID(ctx, orderID); err != nil {
+        logger.WithContextCategory(ctx, "order").Error("软删除订单失败", logger.StringV2("order_id", id), logger.ErrorV2(err))
+        return fmt.Errorf("软删除订单失败: %v", err)
+    }
+    logger.WithContextCategory(ctx, "order").Info("软删除订单成功", logger.StringV2("order_id", id))
+    return nil
 }
 
 // CleanupOrders 清理指定时间范围的订单及相关日志
@@ -1208,50 +1208,54 @@ func (s *orderService) CleanupOrders(ctx context.Context, start, end string) (in
 }
 
 // GetProductID 根据价格、ISP和状态获取产品ID
-// 支持价格误差容忍（0.01），并输出详细日志
 func (s *orderService) GetProductID(price float64, isp int, status int) (*model.Product, error) {
-	logger.Info("GetProductID called",
-		"price", price,
-		"isp", isp,
-		"status", status,
+	logger.GetCategoryLogger("order").Info("GetProductID called",
+		logger.Float64V2("price", price),
+		logger.IntV2("isp", isp),
+		logger.IntV2("status", status),
 	)
 	product, err := s.orderRepo.FindProductByPriceAndISPWithTolerance(price, isp, status, 0.01)
 	if err != nil {
-		logger.Error("未找到匹配的产品",
-			"price", price,
-			"isp", isp,
-			"status", status,
-			"error", err,
+		logger.GetCategoryLogger("order").Error("未找到匹配的产品",
+			logger.Float64V2("price", price),
+			logger.IntV2("isp", isp),
+			logger.IntV2("status", status),
+			logger.ErrorV2(err),
 		)
 		return nil, fmt.Errorf("未找到匹配的产品: price=%.2f, isp=%d, status=%d", price, isp, status)
 	}
-	logger.Info("匹配到产品", "product_id", product.ID, "price", product.Price, "isp", product.ISP, "status", product.Status)
+	logger.GetCategoryLogger("order").Info("匹配到产品",
+		logger.Int64V2("product_id", product.ID),
+		logger.Float64V2("price", product.Price),
+		logger.StringV2("isp", product.ISP),
+		logger.IntV2("status", product.Status),
+	)
 	return product, nil
 }
 
 // GetProductByNameValue 根据产品名称数字部分、ISP和状态获取产品
 func (s *orderService) GetProductByNameValue(nameValue float64, isp int, status int) (*model.Product, error) {
-	logger.Info("GetProductByNameValue called",
-		"nameValue", nameValue,
-		"isp", isp,
-		"status", status,
+	logger.GetCategoryLogger("order").Info("GetProductByNameValue called",
+		logger.Float64V2("name_value", nameValue),
+		logger.IntV2("isp", isp),
+		logger.IntV2("status", status),
 	)
 	
 	product, err := s.orderRepo.FindProductByNameValueAndISP(int(nameValue), isp, status)
 	if err != nil {
-		logger.Error("未找到匹配的产品",
-			"nameValue", nameValue,
-			"isp", isp,
-			"status", status,
-			"error", err,
+		logger.GetCategoryLogger("order").Error("未找到匹配的产品",
+			logger.Float64V2("name_value", nameValue),
+			logger.IntV2("isp", isp),
+			logger.IntV2("status", status),
+			logger.ErrorV2(err),
 		)
 		return nil, fmt.Errorf("未找到匹配的产品: nameValue=%.0f, isp=%d, status=%d", nameValue, isp, status)
 	}
 	
-	logger.Info("找到匹配的产品",
-		"productID", product.ID,
-		"productName", product.Name,
-		"nameValue", nameValue,
+	logger.GetCategoryLogger("order").Info("找到匹配的产品",
+		logger.Int64V2("product_id", product.ID),
+		logger.StringV2("product_name", product.Name),
+		logger.Float64V2("name_value", nameValue),
 	)
 	
 	return product, nil
@@ -1292,23 +1296,27 @@ func (s *orderService) GetOrderStatistics(ctx context.Context, customerID int64)
 
 // SendNotification 发送订单回调通知
 func (s *orderService) SendNotification(ctx context.Context, orderID int64) error {
-	// 获取订单信息
-	order, err := s.GetOrderByID(ctx, orderID)
-	if err != nil {
-		return fmt.Errorf("获取订单失败: %w", err)
-	}
+    // 获取订单信息
+    order, err := s.GetOrderByID(ctx, orderID)
+    if err != nil {
+        return fmt.Errorf("获取订单失败: %w", err)
+    }
 
-	// 注入订单号上下文并记录发送动作
-	ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
-	logger.WithContext(ctx).Info(fmt.Sprintf("【发送订单回调通知】开始 | order_id=%d order_number=%s status=%d", order.ID, order.OrderNumber, order.Status))
+    // 注入订单号上下文并记录发送动作
+    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+    logger.WithContextCategory(ctx, "order").Info("【发送订单回调通知】开始",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.IntV2("status", int(order.Status)),
+    )
 
 	err = s.notificationHelper.SendOrderCallbackNotification(ctx, orderID, order)
-	if err != nil {
-		logger.WithContext(ctx).Error(fmt.Sprintf("【发送订单回调通知失败】error=%v", err))
-		return err
-	}
-	logger.WithContext(ctx).Info("【发送订单回调通知成功】")
-	return nil
+    if err != nil {
+        logger.WithContextCategory(ctx, "order").Error("【发送订单回调通知失败】", logger.ErrorV2(err))
+        return err
+    }
+    logger.WithContextCategory(ctx, "order").Info("【发送订单回调通知成功】")
+    return nil
 }
 
 // GetOrdersByUserID 根据用户ID获取订单列表

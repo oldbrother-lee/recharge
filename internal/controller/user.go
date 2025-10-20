@@ -5,6 +5,7 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
+	"recharge-go/pkg/logger"
 	"recharge-go/pkg/utils/response"
 	"strconv"
 
@@ -142,7 +143,7 @@ func (c *UserController) GetUserInfo(ctx *gin.Context) {
 // @Success 200 {object} response.Response{data=model.UserResponse}
 // @Router /api/v1/users/{id} [put]
 func (c *UserController) UpdateProfile(ctx *gin.Context) {
-	fmt.Println("UpdateProfile", ctx.Param("id"))
+	logger.WithContextCategory(ctx.Request.Context(), "user").Info("更新用户资料请求", logger.StringV2("user_id", ctx.Param("id")))
 	userID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
 		response.Error(ctx, 400, "无效的用户ID")
@@ -758,7 +759,7 @@ func (c *UserController) GetUser(ctx *gin.Context) {
 // @Success 200 {object} response.Response{data=model.UserResponse}
 // @Router /api/v1/users/{id} [put]
 func (c *UserController) UpdateUser(ctx *gin.Context) {
-	fmt.Println("UpdateUser", ctx.Param("id"))
+	logger.WithContextCategory(ctx.Request.Context(), "user").Info("更新用户信息请求", logger.StringV2("user_id", ctx.Param("id")))
 	userID, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
 		response.Error(ctx, 400, "无效的用户ID")

@@ -129,9 +129,11 @@ func (s *Service) SubmitTask(ctx context.Context, channelID int, productID strin
 	}
 	url := fmt.Sprintf("%s/api/task/recharge/submit", strings.TrimRight(apiURL, "/"))
 
-	//添加请求头
-	// 创建请求体
-	logger.Info(fmt.Sprintf("申请做单url: %s", url))
+	// 创建请求体与日志
+	l := logger.WithContextCategory(ctx, "platform")
+	l.Info("申请做单请求开始",
+		logger.StringV2("url", url),
+	)
 	jsonData, err := json.Marshal(params)
 	if err != nil {
 		return "", fmt.Errorf("创建请求体失败: %v", err)
@@ -143,25 +145,52 @@ func (s *Service) SubmitTask(ctx context.Context, channelID int, productID strin
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth_Token", authToken)
-	logger.Info(fmt.Sprintf("申请做单params: %s userid: %s", params, userID))
+	previewLen := 256
+	if len(jsonData) < previewLen {
+		previewLen = len(jsonData)
+	}
+	l.Info("申请做单请求体与头设置完成",
+		logger.IntV2("request_body_size", len(jsonData)),
+		logger.StringV2("request_body_preview", string(jsonData[:previewLen])),
+		logger.IntV2("auth_token_length", len(authToken)),
+	)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Error(fmt.Sprintf("申请做单请求发送失败: url=%s, error=%v", url, err))
+		l.Error("申请做单请求发送失败",
+			logger.StringV2("url", url),
+			logger.ErrorV2(err),
+		)
 		return "", fmt.Errorf("发送请求失败: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Error(fmt.Sprintf("申请做单响应读取失败: url=%s, error=%v", url, err))
+		l.Error("申请做单响应读取失败",
+			logger.StringV2("url", url),
+			logger.ErrorV2(err),
+		)
 		return "", fmt.Errorf("读取响应失败: %v", err)
 	}
 
-	logger.Info(fmt.Sprintf("申请做单响应: url=%s, status=%d, body=%s", url, resp.StatusCode, string(body)))
+	respPreviewLen := 256
+	if len(body) < respPreviewLen {
+		respPreviewLen = len(body)
+	}
+	l.Info("申请做单响应",
+		logger.StringV2("url", url),
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.IntV2("response_body_size", len(body)),
+		logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+	)
 
 	if resp.StatusCode != http.StatusOK {
-		logger.Error(fmt.Sprintf("申请做单HTTP状态码错误: url=%s, status=%d, body=%s", url, resp.StatusCode, string(body)))
+		l.Error("申请做单HTTP状态码错误",
+			logger.StringV2("url", url),
+			logger.IntV2("status_code", resp.StatusCode),
+			logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+		)
 		return "", fmt.Errorf("请求失败: %s", string(body))
 	}
 
@@ -174,16 +203,27 @@ func (s *Service) SubmitTask(ctx context.Context, channelID int, productID strin
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Error(fmt.Sprintf("申请做单响应解析失败: url=%s, body=%s, error=%v", url, string(body), err))
+		l.Error("申请做单响应解析失败",
+			logger.StringV2("url", url),
+			logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+			logger.ErrorV2(err),
+		)
 		return "", fmt.Errorf("解析响应失败: %v", err)
 	}
 
 	if result.Code != 0 {
-		logger.Error(fmt.Sprintf("申请做单业务错误: url=%s, code=%d, msg=%s", url, result.Code, result.Msg))
+		l.Error("申请做单业务错误",
+			logger.StringV2("url", url),
+			logger.IntV2("code", result.Code),
+			logger.StringV2("msg", result.Msg),
+		)
 		return "", fmt.Errorf("业务错误: %s", result.Msg)
 	}
 
-	logger.Info(fmt.Sprintf("申请做单成功: url=%s, token=%s", url, result.Result.Token))
+	l.Info("申请做单成功",
+		logger.StringV2("url", url),
+		logger.IntV2("token_length", len(result.Result.Token)),
+	)
 	return result.Result.Token, nil
 }
 
@@ -206,7 +246,10 @@ func (s *Service) QueryTask(ctx context.Context, token string, apiURL string, ap
 	// url := "http://ip.jikelab.com:5000/api/orders"
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		logger.Error("创建HTTP请求失败", "url", url, "error", err)
+		logger.WithContextCategory(ctx, "platform").Error("创建HTTP请求失败",
+			logger.StringV2("url", url),
+			logger.ErrorV2(err),
+		)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -228,7 +271,15 @@ func (s *Service) QueryTask(ctx context.Context, token string, apiURL string, ap
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("请求失败: %s", string(body))
 	}
-	logger.Info(fmt.Sprintf("做单查询接口返回: %v\n", string(body)))
+	respPreviewLen := 256
+	if len(body) < respPreviewLen {
+		respPreviewLen = len(body)
+	}
+	logger.WithContextCategory(ctx, "platform").Info("做单查询接口返回",
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.IntV2("response_body_size", len(body)),
+		logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+	)
 
 	var result struct {
 		Code   int    `json:"code"`
@@ -240,27 +291,55 @@ func (s *Service) QueryTask(ctx context.Context, token string, apiURL string, ap
 	}
 
 	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Error(fmt.Sprintf("查询订单响应解析失败: userid=%s url=%s, body=%s, error=%v", userID, url, string(body), err))
+		logger.WithContextCategory(ctx, "platform").Error("查询订单响应解析失败",
+			logger.StringV2("userid", userID),
+			logger.StringV2("url", url),
+			logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+			logger.ErrorV2(err),
+		)
 		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 
 	if result.Code != 0 {
-		logger.Info(fmt.Sprintf("查询订单业务错误:userid=%s url=%s, code=%d, msg=%s", userID, url, result.Code, result.Msg))
+		logger.WithContextCategory(ctx, "platform").Warn("查询订单业务错误",
+			logger.StringV2("userid", userID),
+			logger.StringV2("url", url),
+			logger.IntV2("code", result.Code),
+			logger.StringV2("msg", result.Msg),
+		)
 		return nil, fmt.Errorf("业务错误: %s", result.Msg)
 	}
 	// result.Result.MatchStatus 如果等于 2 表示匹配失败，返回 nil
 	if result.Result.MatchStatus == 2 {
-		logger.Info(fmt.Sprintf("查询订单匹配失败:userid=%s, url=%s, code=%d, msg=%s, MatchStatus=%d", userID, url, result.Code, result.Msg, result.Result.MatchStatus))
+		logger.WithContextCategory(ctx, "platform").Info("查询订单匹配失败",
+			logger.StringV2("userid", userID),
+			logger.StringV2("url", url),
+			logger.IntV2("code", result.Code),
+			logger.StringV2("msg", result.Msg),
+			logger.IntV2("match_status", result.Result.MatchStatus),
+		)
 		return nil, errors.New("匹配失败")
 	}
 	// result.Result.MatchStatus 如果等于 3 表示匹配成功，返回 result.Result.Orders[0]
 	if result.Result.MatchStatus == 3 && len(result.Result.Orders) > 0 {
-		logger.Info(fmt.Sprintf("查询订单匹配成功:userid=%s url=%s, code=%d, msg=%s, MatchStatus=%d", userID, url, result.Code, result.Msg, result.Result.MatchStatus))
+		logger.WithContextCategory(ctx, "platform").Info("查询订单匹配成功",
+			logger.StringV2("userid", userID),
+			logger.StringV2("url", url),
+			logger.IntV2("code", result.Code),
+			logger.StringV2("msg", result.Msg),
+			logger.IntV2("match_status", result.Result.MatchStatus),
+		)
 		return &result.Result.Orders[0], nil
 	}
 	//result.Result.MatchStatus 如果等于 1 表示匹配中，返回 nil
 	if result.Result.MatchStatus == 1 {
-		logger.Info(fmt.Sprintf("查询订单匹配中:userid=%s url=%s, code=%d, msg=%s, MatchStatus=%d", userID, url, result.Code, result.Msg, result.Result.MatchStatus))
+		logger.WithContextCategory(ctx, "platform").Info("查询订单匹配中",
+			logger.StringV2("userid", userID),
+			logger.StringV2("url", url),
+			logger.IntV2("code", result.Code),
+			logger.StringV2("msg", result.Msg),
+			logger.IntV2("match_status", result.Result.MatchStatus),
+		)
 		return nil, nil
 	}
 
@@ -342,7 +421,10 @@ func (s *Service) GetOrderDetail(ctx context.Context, orderNumber string) (*Plat
 	url := fmt.Sprintf("%s/api/task/recharge/orderDetail", s.baseURL)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
-		logger.Error("创建HTTP请求失败", "url", url, "error", err)
+		logger.WithContextCategory(ctx, "platform").Error("创建HTTP请求失败",
+			logger.StringV2("url", url),
+			logger.ErrorV2(err),
+		)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 
@@ -392,7 +474,10 @@ func (s *Service) GetOrderList(ctx context.Context, orderNumber string, orderSta
 		"pageNum":  strconv.Itoa(pageNum),
 		"pageSize": strconv.Itoa(pageSize),
 	}
-	logger.Info(fmt.Sprintf("key %s userid %s", account.AppKey, account.AccountName))
+	logger.WithContextCategory(ctx, "platform").Info("准备获取订单列表",
+		logger.StringV2("account_name", account.AccountName),
+		logger.IntV2("app_key_length", len(account.AppKey)),
+	)
 	authToken, queryTime, err := signature.GenerateXianzhuanxiaSignature(params, account.AppKey, account.AccountName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("生成签名失败: %v", err)
@@ -400,11 +485,16 @@ func (s *Service) GetOrderList(ctx context.Context, orderNumber string, orderSta
 	url := fmt.Sprintf("%s/api/task/recharge/page", apiurl)
 	jsonData, err := json.Marshal(params)
 	if err != nil {
-		logger.Error("创建HTTP请求失败", "url", url, "error", err)
+		logger.WithContextCategory(ctx, "platform").Error("创建HTTP请求失败",
+			logger.StringV2("url", url),
+			logger.ErrorV2(err),
+		)
 		return nil, nil, err
 	}
 
-	logger.Info(fmt.Sprintf("获取订单列表url: %s", url))
+	logger.WithContextCategory(ctx, "platform").Info("获取订单列表请求",
+		logger.StringV2("url", url),
+	)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, nil, fmt.Errorf("创建请求失败: %v", err)
@@ -426,7 +516,15 @@ func (s *Service) GetOrderList(ctx context.Context, orderNumber string, orderSta
 	if err != nil {
 		return nil, nil, fmt.Errorf("读取响应失败: %v", err)
 	}
-	logger.Info(fmt.Sprintf("获取订单列表响应: %s", string(body)))
+	respPreviewLen := 256
+	if len(body) < respPreviewLen {
+		respPreviewLen = len(body)
+	}
+	logger.WithContextCategory(ctx, "platform").Info("获取订单列表响应",
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.IntV2("response_body_size", len(body)),
+		logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+	)
 	if resp.StatusCode != http.StatusOK {
 		return nil, nil, fmt.Errorf("请求失败: %s", string(body))
 	}
@@ -470,10 +568,12 @@ func (s *Service) GetChannelList(ctx context.Context, appkey string, userid stri
 	}
 
 	url := fmt.Sprintf("%s/api/task/recharge/taskChannelList", strings.TrimRight(apiUrl, "/"))
-	fmt.Println(url, "************")
 	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
-		logger.Error("创建HTTP请求失败", "url", url, "error", err)
+		logger.WithContextCategory(ctx, "platform").Error("创建HTTP请求失败",
+			logger.StringV2("url", url),
+			logger.ErrorV2(err),
+		)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 
@@ -485,13 +585,25 @@ func (s *Service) GetChannelList(ctx context.Context, appkey string, userid stri
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		logger.Error("发送HTTP请求失败", "url", url, "error", err)
+		logger.WithContextCategory(ctx, "platform").Error("发送HTTP请求失败",
+			logger.StringV2("url", url),
+			logger.ErrorV2(err),
+		)
 		return nil, fmt.Errorf("发送请求失败: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-	logger.Info("获取渠道列表", "url", url, "status", resp.StatusCode, "body", string(body))
+	respPreviewLen := 256
+	if len(body) < respPreviewLen {
+		respPreviewLen = len(body)
+	}
+	logger.WithContextCategory(ctx, "platform").Info("获取渠道列表响应",
+		logger.StringV2("url", url),
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.IntV2("response_body_size", len(body)),
+		logger.StringV2("response_body_preview", string(body[:respPreviewLen])),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %v", err)
 	}
@@ -538,7 +650,10 @@ func (s *Service) GetStockInfo(ctx context.Context, channelID, productID int, pr
 	url := fmt.Sprintf("%s/api/task/recharge/stock", s.baseURL)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 	if err != nil {
-		logger.Error("创建HTTP请求失败", "url", url, "error", err)
+		logger.WithContextCategory(ctx, "platform").Error("创建HTTP请求失败",
+			logger.StringV2("url", url),
+			logger.ErrorV2(err),
+		)
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
 
@@ -592,7 +707,9 @@ func (s *Service) GetTokenWithContext(ctx context.Context, taskConfigID int64, c
 	tokenData, err := s.tokenRepo.Get(taskConfigID)
 	if err != nil {
 		// 如果获取失败（记录不存在），申请新 token
-		logger.Info(fmt.Sprintf("token 不存在，申请新 token: ChannelID=%d, ProductID=%s", channelID, productID))
+		logger.InfoV2("token 不存在，申请新 token",
+			logger.Int64V2("channel_id", int64(channelID)),
+			logger.StringV2("product_id", productID))
 		token, err := s.submitTaskWithRetryContext(ctx, channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
 		if err != nil {
 			return "", err
@@ -603,7 +720,9 @@ func (s *Service) GetTokenWithContext(ctx context.Context, taskConfigID int64, c
 
 	// 检查 token 是否过期（5分钟）
 	if time.Since(tokenData.CreatedAt) >= 5*time.Minute {
-		logger.Info(fmt.Sprintf("token 已过期，申请新 token: ChannelID=%d, ProductID=%s", channelID, productID))
+		logger.InfoV2("token 已过期，申请新 token",
+			logger.Int64V2("channel_id", int64(channelID)),
+			logger.StringV2("product_id", productID))
 		token, err := s.submitTaskWithRetryContext(ctx, channelID, productID, provinces, faceValues, minSettleAmounts, apiKey, userID, apiURL)
 		if err != nil {
 			return "", err
@@ -614,7 +733,10 @@ func (s *Service) GetTokenWithContext(ctx context.Context, taskConfigID int64, c
 
 	// token 有效，更新最后使用时间
 	_ = s.tokenRepo.UpdateLastUsed(taskConfigID)
-	logger.Info(fmt.Sprintf("使用现有 token: ChannelID=%d, ProductID=%s, token=%s", channelID, productID, tokenData.Token))
+	logger.InfoV2("使用现有 token",
+		logger.Int64V2("channel_id", int64(channelID)),
+		logger.StringV2("product_id", productID),
+		logger.StringV2("token", tokenData.Token))
 	return tokenData.Token, nil
 }
 
@@ -634,7 +756,10 @@ func (s *Service) submitTaskWithRetryContext(ctx context.Context, channelID int,
 		// 检查context是否被取消
 		select {
 		case <-ctx.Done():
-			logger.Info(fmt.Sprintf("Token申请被取消: ChannelID=%d, ProductID=%s, 原因=%v", channelID, productID, ctx.Err()))
+			logger.InfoV2("Token申请被取消",
+				logger.Int64V2("channel_id", int64(channelID)),
+				logger.StringV2("product_id", productID),
+				logger.StringV2("reason", fmt.Sprintf("%v", ctx.Err())))
 			return "", ctx.Err()
 		default:
 		}
@@ -644,12 +769,20 @@ func (s *Service) submitTaskWithRetryContext(ctx context.Context, channelID int,
 			return token, nil
 		}
 
-		logger.Error(fmt.Sprintf("Token申请失败 (第%d次重试), 错误: %v, 60秒后重试", attempt+1, err))
+		logger.ErrorLogV2("Token申请失败",
+			logger.Int64V2("attempt", int64(attempt+1)),
+			logger.Int64V2("retry_seconds", int64(time.Minute/time.Second)),
+			logger.Int64V2("channel_id", int64(channelID)),
+			logger.StringV2("product_id", productID),
+			logger.ErrorV2(err))
 		
 		// 在等待期间也要检查context取消
 		select {
-		case <-ctx.Done():
-			logger.Info(fmt.Sprintf("Token申请在等待期间被取消: ChannelID=%d, ProductID=%s, 原因=%v", channelID, productID, ctx.Err()))
+			case <-ctx.Done():
+			logger.InfoV2("Token申请在等待期间被取消",
+				logger.Int64V2("channel_id", int64(channelID)),
+				logger.StringV2("product_id", productID),
+				logger.StringV2("reason", fmt.Sprintf("%v", ctx.Err())))
 			return "", ctx.Err()
 		case <-time.After(retryDelay):
 			// 继续下一次重试

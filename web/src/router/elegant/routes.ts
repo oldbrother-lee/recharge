@@ -130,6 +130,17 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       },
       {
+        name: 'order_xianyingke',
+        path: '/order/xianyingke',
+        component: 'view.order_xianyingke',
+        meta: {
+          title: 'order_xianyingke',
+          icon: 'mdi:account-cash-outline',
+          i18nKey: 'route.order_xianyingke',
+          roles: ['SUPER_ADMIN']
+        }
+      },
+      {
         name: 'order_xianzhuanxia',
         path: '/order/xianzhuanxia',
         component: 'view.order_xianzhuanxia',

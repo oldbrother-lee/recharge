@@ -35,7 +35,9 @@ func InitRedis(host string, port int, password string, db int) error {
 		return fmt.Errorf("redis connect failed: %v", err)
 	}
 
-	logger.Info("Redis连接成功: %s:%d", host, port)
+	logger.InfoV2("Redis连接成功",
+		logger.StringV2("host", host),
+		logger.Int64V2("port", int64(port)))
 	return nil
 }
 

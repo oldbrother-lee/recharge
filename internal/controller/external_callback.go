@@ -88,13 +88,13 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 
 	// 基于请求上下文注入订单号（先用 out_trade_num 兜底，稍后查到内部订单再覆盖）
 	baseCtx := ctx.Request.Context()
-	ctxWithOrder := logger.InjectOrderNumber(baseCtx, req.OutTradeNum)
-	logger.WithContext(ctxWithOrder).Info("收到外部回调请求",
-		logger.String("app_id", req.AppID),
-		logger.String("out_trade_num", req.OutTradeNum),
-		logger.Int("status", req.Status),
-		logger.Int64("timestamp", req.Timestamp),
-	)
+    ctxWithOrder := logger.InjectOrderNumber(baseCtx, req.OutTradeNum)
+    logger.WithContextCategory(ctxWithOrder, "callback").Info("收到外部回调请求",
+        logger.StringV2("app_id", req.AppID),
+        logger.StringV2("out_trade_num", req.OutTradeNum),
+        logger.IntV2("status", req.Status),
+        logger.Int64V2("timestamp", req.Timestamp),
+    )
 
 	// 初始化日志
 	logData = model.ExternalOrderLog{
@@ -176,9 +176,9 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 	if int(order.Status) == req.Status {
 		// 状态未变更，但如果是成功状态，仍需要确保通知已发送
 		if req.Status == int(model.OrderStatusSuccess) {
-			logger.WithContext(ctxWithOrder).Info("订单状态未变更但为成功状态，直接创建通知记录",
-				logger.Int64("order_id", order.ID),
-				logger.Int("status", req.Status))
+            logger.WithContextCategory(ctxWithOrder, "callback").Info("订单状态未变更但为成功状态，直接创建通知记录",
+                logger.Int64V2("order_id", order.ID),
+                logger.IntV2("status", req.Status))
 			// 对于成功状态，即使状态未变更也要直接创建通知记录
 			if err := c.createNotificationForUnchangedSuccessOrder(ctxWithOrder, order); err != nil {
 				logData.ErrorMsg = fmt.Sprintf("Create notification failed: %v", err)
@@ -186,9 +186,9 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 				return
 			}
 		} else {
-			logger.WithContext(ctxWithOrder).Info("订单状态未变更，直接返回成功",
-				logger.Int64("order_id", order.ID),
-				logger.Int("status", req.Status))
+            logger.WithContextCategory(ctxWithOrder, "callback").Info("订单状态未变更，直接返回成功",
+                logger.Int64V2("order_id", order.ID),
+                logger.IntV2("status", req.Status))
 		}
 		logData.Status = 1
 		c.respondCallbackSuccess(ctx, "Status unchanged", &logData)
@@ -209,12 +209,12 @@ func (c *ExternalCallbackController) HandleCallback(ctx *gin.Context) {
 
 // handleOrderStatusUpdate 处理订单状态更新，失败时检查是否有其他可用通道进行重试
 func (c *ExternalCallbackController) handleOrderStatusUpdate(ctx context.Context, order *model.Order, newStatus model.OrderStatus, outTradeNum string) error {
-	logger.WithContext(ctx).Info("处理订单状态更新",
-		logger.Int64("order_id", order.ID),
-		logger.String("order_number", order.OrderNumber),
-		logger.Int64("product_id", order.ProductID),
-		logger.Any("old_status", order.Status),
-		logger.Any("new_status", newStatus))
+    logger.WithContextCategory(ctx, "callback").Info("处理订单状态更新",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.Int64V2("product_id", order.ProductID),
+        logger.IntV2("old_status", int(order.Status)),
+        logger.IntV2("new_status", int(newStatus)))
 	
 	// 如果是失败状态，检查是否有其他可用通道进行重试
 	if newStatus == model.OrderStatusFailed {
@@ -226,54 +226,54 @@ func (c *ExternalCallbackController) handleOrderStatusUpdate(ctx context.Context
 		return c.unifiedOrderService.ProcessOrderStatusChange(ctx, order.ID, newStatus, "external")
 	} else {
 		// 统一订单服务未初始化时，使用原有逻辑但确保通知发送
-		logger.WithContext(ctx).Warn("统一订单服务未初始化，使用原有的简单状态更新", logger.Int64("order_id", order.ID))
-		err := c.orderService.UpdateOrderStatus(ctx, order.ID, newStatus)
-		if err != nil {
-			logger.WithContext(ctx).Error("订单状态更新失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
-			return err
-		}
-		
-		// 确保通知发送成功，如果 orderService.UpdateOrderStatus 的通知发送失败，
-		// 这里可以添加额外的通知发送逻辑作为备用方案
-		logger.WithContext(ctx).Info("订单状态更新完成，通知已推送到队列", logger.Int64("order_id", order.ID), logger.Any("new_status", newStatus))
-		return nil
-	}
+        logger.WithContextCategory(ctx, "callback").Warn("统一订单服务未初始化，使用原有的简单状态更新", logger.Int64V2("order_id", order.ID))
+        err := c.orderService.UpdateOrderStatus(ctx, order.ID, newStatus)
+        if err != nil {
+            logger.WithContextCategory(ctx, "callback").Error("订单状态更新失败", logger.Int64V2("order_id", order.ID), logger.ErrorV2(err))
+            return err
+        }
+        
+        // 确保通知发送成功，如果 orderService.UpdateOrderStatus 的通知发送失败，
+        // 这里可以添加额外的通知发送逻辑作为备用方案
+        logger.WithContextCategory(ctx, "callback").Info("订单状态更新完成，通知已推送到队列", logger.Int64V2("order_id", order.ID), logger.IntV2("new_status", int(newStatus)))
+        return nil
+    }
 }
 
 // handleFailedOrderWithRetry 处理失败订单，检查是否有其他可用通道进行重试
 func (c *ExternalCallbackController) handleFailedOrderWithRetry(ctx context.Context, order *model.Order, outTradeNum string) error {
-	logger.WithContext(ctx).Info("处理失败订单，检查是否有其他可用通道",
-		logger.Int64("order_id", order.ID),
-		logger.String("order_number", order.OrderNumber),
-		logger.Int64("product_id", order.ProductID),
-		logger.String("used_apis", order.UsedAPIs))
+    logger.WithContextCategory(ctx, "callback").Info("处理失败订单，检查是否有其他可用通道",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.Int64V2("product_id", order.ProductID),
+        logger.StringV2("used_apis", order.UsedAPIs))
 
 	// 获取商品的所有API关系
 	relations, err := c.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
 	if err != nil {
-		logger.WithContext(ctx).Error("获取API关系失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
-		return err
-	}
+        logger.WithContextCategory(ctx, "callback").Error("获取API关系失败", logger.Int64V2("order_id", order.ID), logger.ErrorV2(err))
+        return err
+    }
 
-	logger.WithContext(ctx).Info("获取到的API关系列表",
-		logger.Int64("order_id", order.ID),
-		logger.Int("relations_count", len(relations)))
+    logger.WithContextCategory(ctx, "callback").Info("获取到的API关系列表",
+        logger.Int64V2("order_id", order.ID),
+        logger.IntV2("relations_count", len(relations)))
 
 	// 解析已使用的API列表
 	var usedAPIs []map[string]interface{}
 	if order.UsedAPIs != "" {
 		if err := json.Unmarshal([]byte(order.UsedAPIs), &usedAPIs); err != nil {
-			logger.WithContext(ctx).Error("解析已使用API列表失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
-			usedAPIs = []map[string]interface{}{}
-		}
-	}
+            logger.WithContextCategory(ctx, "callback").Error("解析已使用API列表失败", logger.Int64V2("order_id", order.ID), logger.ErrorV2(err))
+            usedAPIs = []map[string]interface{}{}
+        }
+    }
 
 	// 检查是否还有未使用的API
 	hasAvailableAPI := false
-	logger.WithContext(ctx).Info("开始检查可用API",
-		logger.Int64("order_id", order.ID),
-		logger.Int("total_relations", len(relations)),
-		logger.Int("used_apis_count", len(usedAPIs)))
+    logger.WithContextCategory(ctx, "callback").Info("开始检查可用API",
+        logger.Int64V2("order_id", order.ID),
+        logger.IntV2("total_relations", len(relations)),
+        logger.IntV2("used_apis_count", len(usedAPIs)))
 
 	// 记录当前通道关系和同通道配置
 	type curRelInfo struct {
@@ -293,11 +293,11 @@ func (c *ExternalCallbackController) handleFailedOrderWithRetry(ctx context.Cont
 		// 兜底保护：排除当前订单正在使用的通道（无论 UsedAPIs 是否已写入）
 		if relation.APIID == order.APICurID || relation.APIID == order.APIID {
 			alreadyUsed = true
-			logger.WithContext(ctx).Info("当前订单正在使用的API，默认排除",
-				logger.Int64("order_id", order.ID),
-				logger.Int64("api_id", relation.APIID),
-				logger.Int64("api_cur_id", order.APICurID),
-				logger.Int64("api_id_field", order.APIID))
+            logger.WithContextCategory(ctx, "callback").Info("当前订单正在使用的API，默认排除",
+                logger.Int64V2("order_id", order.ID),
+                logger.Int64V2("api_id", relation.APIID),
+                logger.Int64V2("api_cur_id", order.APICurID),
+                logger.Int64V2("api_id_field", order.APIID))
 		}
 
 		// 记录当前通道的关系配置
@@ -313,40 +313,40 @@ func (c *ExternalCallbackController) handleFailedOrderWithRetry(ctx context.Cont
 			for _, usedAPI := range usedAPIs {
 				if apiID, ok := usedAPI["api_id"].(float64); ok && int64(apiID) == relation.APIID {
 					alreadyUsed = true
-					logger.WithContext(ctx).Info("API已被使用",
-						logger.Int64("order_id", order.ID),
-						logger.Int64("api_id", relation.APIID))
+                    logger.WithContextCategory(ctx, "callback").Info("API已被使用",
+                        logger.Int64V2("order_id", order.ID),
+                        logger.Int64V2("api_id", relation.APIID))
 					break
 				}
 			}
 		}
 
 		if !alreadyUsed {
-			logger.WithContext(ctx).Info("发现可用API",
-				logger.Int64("order_id", order.ID),
-				logger.Int64("api_id", relation.APIID))
-			hasAvailableAPI = true
-			break
-		}
-	}
+            logger.WithContextCategory(ctx, "callback").Info("发现可用API",
+                logger.Int64V2("order_id", order.ID),
+                logger.Int64V2("api_id", relation.APIID))
+            hasAvailableAPI = true
+            break
+        }
+    }
 
-	logger.WithContext(ctx).Info("API可用性检查结果",
-		logger.Int64("order_id", order.ID),
-		logger.Bool("has_available_api", hasAvailableAPI))
+    logger.WithContextCategory(ctx, "callback").Info("API可用性检查结果",
+        logger.Int64V2("order_id", order.ID),
+        logger.BoolV2("has_available_api", hasAvailableAPI))
 
 	if hasAvailableAPI {
 		// 有可用通道，推送重试任务到消息队列，不更新订单状态，不发送通知
-		logger.WithContext(ctx).Info("发现可用通道，推送重试任务到队列，暂不发送失败通知", logger.Int64("order_id", order.ID))
-		if err := c.pushRetryTaskToQueue(ctx, order.ID, 2, "外部回调失败，切换通道重试"); err != nil {
-			logger.WithContext(ctx).Error("推送重试任务到队列失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
-			// 推送失败，仍然更新订单状态为失败并发送通知
-			logger.WithContext(ctx).Info("推送重试任务失败，执行最终失败处理", logger.Int64("order_id", order.ID))
-			return c.handleAllRetriesCompleted(ctx, order)
-		}
-		// 推送成功，不更新订单状态为失败，也不发送通知，等待重试结果
-		logger.WithContext(ctx).Info("重试任务推送成功，等待重试处理，暂不发送失败通知", logger.Int64("order_id", order.ID))
-		return nil
-	} else {
+        logger.WithContextCategory(ctx, "callback").Info("发现可用通道，推送重试任务到队列，暂不发送失败通知", logger.Int64V2("order_id", order.ID))
+        if err := c.pushRetryTaskToQueue(ctx, order.ID, 2, "外部回调失败，切换通道重试"); err != nil {
+            logger.WithContextCategory(ctx, "callback").Error("推送重试任务到队列失败", logger.Int64V2("order_id", order.ID), logger.ErrorV2(err))
+            // 推送失败，仍然更新订单状态为失败并发送通知
+            logger.WithContextCategory(ctx, "callback").Info("推送重试任务失败，执行最终失败处理", logger.Int64V2("order_id", order.ID))
+            return c.handleAllRetriesCompleted(ctx, order)
+        }
+        // 推送成功，不更新订单状态为失败，也不发送通知，等待重试结果
+        logger.WithContextCategory(ctx, "callback").Info("重试任务推送成功，等待重试处理，暂不发送失败通知", logger.Int64V2("order_id", order.ID))
+        return nil
+    } else {
 		// 没有可用通道：根据 outTradeNum 的 -rN 后缀与关系配置判定是否继续同通道重试
 		attemptNo := 0
 		if i := strings.LastIndex(outTradeNum, "-r"); i >= 0 && i+2 < len(outTradeNum) {
@@ -362,35 +362,35 @@ func (c *ExternalCallbackController) handleFailedOrderWithRetry(ctx context.Cont
 			maxTimes = curRel.SameChannelRetryTimes
 		}
 
-		logger.WithContext(ctx).Info("同通道重试判定",
-			logger.Int64("order_id", order.ID),
-			logger.String("out_trade_num", outTradeNum),
-			logger.Int("attempt_no", attemptNo),
-			logger.Bool("same_channel_enabled", sameEnabled),
-			logger.Int("same_channel_max_times", maxTimes))
+        logger.WithContextCategory(ctx, "callback").Info("同通道重试判定",
+            logger.Int64V2("order_id", order.ID),
+            logger.StringV2("out_trade_num", outTradeNum),
+            logger.IntV2("attempt_no", attemptNo),
+            logger.BoolV2("same_channel_enabled", sameEnabled),
+            logger.IntV2("same_channel_max_times", maxTimes))
 
 		// 若未开启同通道或已达到上限，则直接做最终失败处理
 		if !sameEnabled {
-			logger.WithContext(ctx).Info("当前通道未开启同通道重试，执行最终失败处理", logger.Int64("order_id", order.ID))
-			return c.handleAllRetriesCompleted(ctx, order)
-		}
-		if attemptNo >= maxTimes && maxTimes > 0 {
-			logger.WithContext(ctx).Info("同通道重试次数已达上限，执行最终失败处理",
-				logger.Int64("order_id", order.ID),
-				logger.Int("attempt_no", attemptNo),
-				logger.Int("max_times", maxTimes))
-			return c.handleAllRetriesCompleted(ctx, order)
-		}
+            logger.WithContextCategory(ctx, "callback").Info("当前通道未开启同通道重试，执行最终失败处理", logger.Int64V2("order_id", order.ID))
+            return c.handleAllRetriesCompleted(ctx, order)
+        }
+        if attemptNo >= maxTimes && maxTimes > 0 {
+            logger.WithContextCategory(ctx, "callback").Info("同通道重试次数已达上限，执行最终失败处理",
+                logger.Int64V2("order_id", order.ID),
+                logger.IntV2("attempt_no", attemptNo),
+                logger.IntV2("max_times", maxTimes))
+            return c.handleAllRetriesCompleted(ctx, order)
+        }
 
 		// 仍可继续同通道重试
-		logger.WithContext(ctx).Info("没有可用通道，改为同通道重试，推送重试任务到队列", logger.Int64("order_id", order.ID))
-		if err := c.pushRetryTaskToQueue(ctx, order.ID, model.RetryTypeSameChannel, "外部回调失败，改为同通道重试"); err != nil {
-			logger.WithContext(ctx).Error("推送同通道重试任务到队列失败，执行最终失败处理", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
-			return c.handleAllRetriesCompleted(ctx, order)
-		}
-		logger.WithContext(ctx).Info("同通道重试任务推送成功，等待重试处理，暂不发送失败通知", logger.Int64("order_id", order.ID))
-		return nil
-	}
+        logger.WithContextCategory(ctx, "callback").Info("没有可用通道，改为同通道重试，推送重试任务到队列", logger.Int64V2("order_id", order.ID))
+        if err := c.pushRetryTaskToQueue(ctx, order.ID, model.RetryTypeSameChannel, "外部回调失败，改为同通道重试"); err != nil {
+            logger.WithContextCategory(ctx, "callback").Error("推送同通道重试任务到队列失败，执行最终失败处理", logger.Int64V2("order_id", order.ID), logger.ErrorV2(err))
+            return c.handleAllRetriesCompleted(ctx, order)
+        }
+        logger.WithContextCategory(ctx, "callback").Info("同通道重试任务推送成功，等待重试处理，暂不发送失败通知", logger.Int64V2("order_id", order.ID))
+        return nil
+    }
 }
 
 // pushRetryTaskToQueue 推送重试任务到队列
@@ -403,8 +403,8 @@ func (c *ExternalCallbackController) pushRetryTaskToQueue(ctx context.Context, o
 		return fmt.Errorf("推送重试任务到队列失败: %v", err)
 	}
 
-	logger.WithContext(ctx).Info("重试任务推送到队列成功", logger.Int64("order_id", orderID), logger.Int("retry_type", retryType), logger.String("queue_name", queueName))
-	return nil
+    logger.WithContextCategory(ctx, "callback").Info("重试任务推送到队列成功", logger.Int64V2("order_id", orderID), logger.IntV2("retry_type", retryType), logger.StringV2("queue_name", queueName))
+    return nil
 }
 
 // createRetryRecord 创建重试记录
@@ -437,14 +437,14 @@ func (c *ExternalCallbackController) createRetryRecord(ctx context.Context, orde
 		return fmt.Errorf("创建重试记录失败: %v", err)
 	}
 
-	logger.WithContext(ctx).Info("创建重试记录成功", logger.Int64("order_id", order.ID), logger.Int64("next_api_id", nextAPIID))
-	return nil
+    logger.WithContextCategory(ctx, "callback").Info("创建重试记录成功", logger.Int64V2("order_id", order.ID), logger.Int64V2("next_api_id", nextAPIID))
+    return nil
 }
 
 // handleAllRetriesCompleted 处理所有重试完成后的通知发送
 func (c *ExternalCallbackController) handleAllRetriesCompleted(ctx context.Context, order *model.Order) error {
-	logger.WithContext(ctx).Info("所有重试已完成，发送失败通知", logger.Int64("order_id", order.ID))
-	return c.updateOrderStatusWithNotification(ctx, order, model.OrderStatusFailed)
+    logger.WithContextCategory(ctx, "callback").Info("所有重试已完成，发送失败通知", logger.Int64V2("order_id", order.ID))
+    return c.updateOrderStatusWithNotification(ctx, order, model.OrderStatusFailed)
 }
 
 // updateOrderStatusWithNotification 更新订单状态并发送通知
@@ -454,18 +454,18 @@ func (c *ExternalCallbackController) updateOrderStatusWithNotification(ctx conte
 		return c.unifiedOrderService.ProcessOrderStatusChange(ctx, order.ID, newStatus, "external")
 	} else {
 		// 统一订单服务未初始化时，使用原有逻辑但确保通知发送
-		logger.WithContext(ctx).Warn("统一订单服务未初始化，使用原有的简单状态更新", logger.Int64("order_id", order.ID))
-		err := c.orderService.UpdateOrderStatus(ctx, order.ID, newStatus)
-		if err != nil {
-			logger.WithContext(ctx).Error("订单状态更新失败", logger.Int64("order_id", order.ID), logger.ErrorV2(err))
-			return err
-		}
-		
-		// 确保通知发送成功，如果 orderService.UpdateOrderStatus 的通知发送失败，
-		// 这里可以添加额外的通知发送逻辑作为备用方案
-		logger.WithContext(ctx).Info("订单状态更新完成，通知已推送到队列", logger.Int64("order_id", order.ID), logger.Any("new_status", newStatus))
-		return nil
-	}
+        logger.WithContextCategory(ctx, "callback").Warn("统一订单服务未初始化，使用原有的简单状态更新", logger.Int64V2("order_id", order.ID))
+        err := c.orderService.UpdateOrderStatus(ctx, order.ID, newStatus)
+        if err != nil {
+            logger.WithContextCategory(ctx, "callback").Error("订单状态更新失败", logger.Int64V2("order_id", order.ID), logger.ErrorV2(err))
+            return err
+        }
+        
+        // 确保通知发送成功，如果 orderService.UpdateOrderStatus 的通知发送失败，
+        // 这里可以添加额外的通知发送逻辑作为备用方案
+        logger.WithContextCategory(ctx, "callback").Info("订单状态更新完成，通知已推送到队列", logger.Int64V2("order_id", order.ID), logger.AnyV2("new_status", newStatus))
+        return nil
+    }
 }
 
 // respondCallbackError 回调错误响应
@@ -486,7 +486,7 @@ func (c *ExternalCallbackController) respondCallbackError(ctx *gin.Context, stat
 	if logData.OrderID != "" {
 		if err := c.logRepo.Create(ctx, logData); err != nil {
 			// 日志记录失败不影响主流程，只记录错误
-			fmt.Printf("Failed to create callback error log: %v\n", err)
+			logger.WithContextCategory(ctx.Request.Context(), "external_callback").Error("创建回调错误日志失败", logger.ErrorV2(err), logger.StringV2("order_id", logData.OrderID))
 		}
 	}
 
@@ -507,7 +507,7 @@ func (c *ExternalCallbackController) respondCallbackSuccess(ctx *gin.Context, me
 	if logData.OrderID != "" {
 		if err := c.logRepo.Create(ctx, logData); err != nil {
 			// 日志记录失败不影响主流程，只记录错误
-			fmt.Printf("Failed to create callback success log: %v\n", err)
+			logger.WithContextCategory(ctx.Request.Context(), "external_callback").Error("创建回调成功日志失败", logger.ErrorV2(err), logger.StringV2("order_id", logData.OrderID))
 		}
 	}
 
@@ -516,16 +516,16 @@ func (c *ExternalCallbackController) respondCallbackSuccess(ctx *gin.Context, me
 
 // createNotificationForUnchangedSuccessOrder 为状态未变更的成功订单创建通知记录
 func (c *ExternalCallbackController) createNotificationForUnchangedSuccessOrder(ctx context.Context, order *model.Order) error {
-	logger.WithContext(ctx).Info("开始为状态未变更的成功订单创建通知记录", logger.Int64("order_id", order.ID))
-	
-	// 优先使用统一订单服务
-	if c.unifiedOrderService != nil {
-		return c.unifiedOrderService.ProcessOrderStatusChange(ctx, order.ID, model.OrderStatusSuccess, "external")
-	} else {
-		// 统一订单服务未初始化时，直接创建通知记录
-		logger.WithContext(ctx).Warn("统一订单服务未初始化，直接创建通知记录", logger.Int64("order_id", order.ID))
-		return c.orderService.SendNotification(ctx, order.ID)
-	}
+    logger.WithContextCategory(ctx, "callback").Info("开始为状态未变更的成功订单创建通知记录", logger.Int64V2("order_id", order.ID))
+    
+    // 优先使用统一订单服务
+    if c.unifiedOrderService != nil {
+        return c.unifiedOrderService.ProcessOrderStatusChange(ctx, order.ID, model.OrderStatusSuccess, "external")
+    } else {
+        // 统一订单服务未初始化时，直接创建通知记录
+        logger.WithContextCategory(ctx, "callback").Warn("统一订单服务未初始化，直接创建通知记录", logger.Int64V2("order_id", order.ID))
+        return c.orderService.SendNotification(ctx, order.ID)
+    }
 }
 
 // getClientIP 获取客户端真实IP（复用中间件中的函数）

@@ -13,6 +13,7 @@ import (
 	"recharge-go/pkg/queue"
 	notificationService "recharge-go/internal/service/notification"
 	"recharge-go/internal/service"
+	"recharge-go/pkg/logger"
 )
 
 // NotificationTask 通知任务处理器
@@ -54,7 +55,7 @@ func NewNotificationTask(
 
 // Start 启动通知任务处理器
 func (t *NotificationTask) Start(ctx context.Context) error {
-	t.logger.Info("starting notification task processor")
+	logger.WithContextCategory(ctx, "notification_task").Info("starting notification task processor")
 
 	// 启动工作协程池
 	for i := 0; i < t.workerCount; i++ {
@@ -67,13 +68,13 @@ func (t *NotificationTask) Start(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			t.logger.Info("notification task processor stopped")
+			logger.WithContextCategory(ctx, "notification_task").Info("notification task processor stopped")
 			return nil
 		default:
 			// 从队列Pop一个通知
 			value, err := t.queue.Pop(ctx, t.queueName)
 			if err != nil {
-				t.logger.Error("Pop notification from queue failed", zap.Error(err))
+				logger.WithContextCategory(ctx, "notification_task").Error("Pop notification from queue failed", logger.ErrorV2(err))
 				select {
 				case <-ctx.Done():
 					return nil
@@ -95,22 +96,26 @@ func (t *NotificationTask) Start(ctx context.Context) error {
 			switch v := value.(type) {
 			case string:
 				if err := json.Unmarshal([]byte(v), &record); err != nil {
-					t.logger.Error("队列值反序列化失败", zap.Error(err), zap.String("raw", v))
+					logger.WithContextCategory(ctx, "notification_task").Error("队列值反序列化失败", logger.ErrorV2(err), logger.StringV2("raw", v))
 					continue
 				}
 			case []byte:
 				if err := json.Unmarshal(v, &record); err != nil {
-					t.logger.Error("队列值反序列化失败", zap.Error(err), zap.String("raw", string(v)))
+					logger.WithContextCategory(ctx, "notification_task").Error("队列值反序列化失败", logger.ErrorV2(err), logger.StringV2("raw", string(v)))
 					continue
 				}
 			default:
-				t.logger.Error("队列值类型错误", zap.Any("type", value))
+				logger.WithContextCategory(ctx, "notification_task").Error("队列值类型错误", logger.AnyV2("type", value))
 				continue
 			}
 			// 分发到worker
 			select {
 			case t.jobChan <- &record:
-				t.logger.Info("通知已分发到工作协程", zap.Int64("notification_id", record.ID), zap.Int64("order_id", record.OrderID), zap.Int("retry_count", record.RetryCount), zap.String("platform_code", record.PlatformCode))
+				logger.WithContextCategory(ctx, "notification_task").Info("通知已分发到工作协程", 
+				    logger.Int64V2("notification_id", record.ID), 
+				    logger.Int64V2("order_id", record.OrderID), 
+				    logger.IntV2("retry_count", record.RetryCount), 
+				    logger.StringV2("platform_code", record.PlatformCode))
 			case <-ctx.Done():
 				return nil
 			}
@@ -120,21 +125,21 @@ func (t *NotificationTask) Start(ctx context.Context) error {
 
 // worker 工作协程
 func (t *NotificationTask) worker(ctx context.Context, id int) {
-	t.logger.Info("worker started", zap.Int("worker_id", id))
+	logger.WithContextCategory(ctx, "notification_task").Info("worker started", logger.IntV2("worker_id", id))
 	for {
 		select {
 		case <-ctx.Done():
-			t.logger.Info("worker stopped", zap.Int("worker_id", id))
+			logger.WithContextCategory(ctx, "notification_task").Info("worker stopped", logger.IntV2("worker_id", id))
 			return
 		case record := <-t.jobChan:
 			if err := t.processSingleNotification(ctx, record, id); err != nil {
-				t.logger.Error("process notification failed",
-					zap.Error(err),
-					zap.Int("worker_id", id),
-					zap.Int64("notification_id", record.ID),
-					zap.Int64("order_id", record.OrderID),
-					zap.Int("retry_count", record.RetryCount),
-					zap.String("platform_code", record.PlatformCode),
+				logger.WithContextCategory(ctx, "notification_task").Error("process notification failed",
+					logger.ErrorV2(err),
+					logger.IntV2("worker_id", id),
+					logger.Int64V2("notification_id", record.ID),
+					logger.Int64V2("order_id", record.OrderID),
+					logger.IntV2("retry_count", record.RetryCount),
+					logger.StringV2("platform_code", record.PlatformCode),
 				)
 			}
 		}
@@ -148,33 +153,33 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 	if err != nil {
 		// 如果通知记录不存在（可能被清理任务删除），使用队列中的记录信息继续发送通知
 		if strings.Contains(err.Error(), "record not found") {
-			t.logger.Warn("通知记录已被删除，使用队列记录继续发送通知",
-				zap.Int64("notification_id", record.ID),
-				zap.Int64("order_id", record.OrderID),
-				zap.Int("retry_count", record.RetryCount),
-				zap.String("platform_code", record.PlatformCode),
-				zap.String("reason", "可能被数据清理任务删除"),
+			logger.WithContextCategory(ctx, "notification_task").Warn("通知记录已被删除，使用队列记录继续发送通知",
+				logger.Int64V2("notification_id", record.ID),
+				logger.Int64V2("order_id", record.OrderID),
+				logger.IntV2("retry_count", record.RetryCount),
+				logger.StringV2("platform_code", record.PlatformCode),
+				logger.StringV2("reason", "可能被数据清理任务删除"),
 			)
 			// 使用队列中的记录信息发送通知
 			return t.sendNotificationWithQueueRecord(ctx, record, workerID)
 		}
 		// 其他类型的错误才记录ERROR日志
-		t.logger.Error("获取通知记录失败",
-			zap.Error(err),
-			zap.Int64("notification_id", record.ID),
-			zap.Int64("order_id", record.OrderID),
-			zap.Int("retry_count", record.RetryCount),
-			zap.String("platform_code", record.PlatformCode),
+		logger.WithContextCategory(ctx, "notification_task").Error("获取通知记录失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("notification_id", record.ID),
+			logger.Int64V2("order_id", record.OrderID),
+			logger.IntV2("retry_count", record.RetryCount),
+			logger.StringV2("platform_code", record.PlatformCode),
 		)
 		return err
 	}
 	if dbRecord.Status != 1 {
-		t.logger.Info("通知状态不是待处理，跳过",
-			zap.Int64("notification_id", dbRecord.ID),
-			zap.Int64("order_id", dbRecord.OrderID),
-			zap.Int("status", dbRecord.Status),
-			zap.Int("retry_count", dbRecord.RetryCount),
-			zap.String("platform_code", dbRecord.PlatformCode),
+		logger.WithContextCategory(ctx, "notification_task").Info("通知状态不是待处理，跳过",
+			logger.Int64V2("notification_id", dbRecord.ID),
+			logger.Int64V2("order_id", dbRecord.OrderID),
+			logger.IntV2("status", dbRecord.Status),
+			logger.IntV2("retry_count", dbRecord.RetryCount),
+			logger.StringV2("platform_code", dbRecord.PlatformCode),
 		)
 		return nil
 	}
@@ -184,12 +189,12 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 		// 使用快照数据
 		order = &model.Order{}
 		if err := json.Unmarshal([]byte(dbRecord.OrderSnapshot), order); err != nil {
-			t.logger.Error("反序列化订单快照失败",
-				zap.Error(err),
-				zap.Int64("notification_id", dbRecord.ID),
-				zap.Int64("order_id", dbRecord.OrderID),
-				zap.Int("retry_count", dbRecord.RetryCount),
-				zap.String("platform_code", dbRecord.PlatformCode),
+			logger.WithContextCategory(ctx, "notification_task").Error("反序列化订单快照失败",
+				logger.ErrorV2(err),
+				logger.Int64V2("notification_id", dbRecord.ID),
+				logger.Int64V2("order_id", dbRecord.OrderID),
+				logger.IntV2("retry_count", dbRecord.RetryCount),
+				logger.StringV2("platform_code", dbRecord.PlatformCode),
 			)
 			return err
 		}
@@ -197,69 +202,69 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 		if dbRecord.TargetStatus > 0 {
 			order.Status = model.OrderStatus(dbRecord.TargetStatus)
 		}
-		t.logger.Info("使用订单快照数据发送通知",
-			zap.Int64("notification_id", dbRecord.ID),
-			zap.Int64("order_id", dbRecord.OrderID),
-			zap.Int("target_status", dbRecord.TargetStatus),
-			zap.String("platform_code", dbRecord.PlatformCode),
+		logger.WithContextCategory(ctx, "notification_task").Info("使用订单快照数据发送通知",
+			logger.Int64V2("notification_id", dbRecord.ID),
+			logger.Int64V2("order_id", dbRecord.OrderID),
+			logger.IntV2("target_status", dbRecord.TargetStatus),
+			logger.StringV2("platform_code", dbRecord.PlatformCode),
 		)
 	} else {
 		// 兼容旧数据：查询数据库
 		var err error
 		order, err = t.platformService.GetOrder(ctx, dbRecord.OrderID)
 		if err != nil {
-			t.logger.Error("获取订单信息失败",
-				zap.Error(err),
-				zap.Int64("notification_id", dbRecord.ID),
-				zap.Int64("order_id", dbRecord.OrderID),
-				zap.Int("retry_count", dbRecord.RetryCount),
-				zap.String("platform_code", dbRecord.PlatformCode),
+			logger.WithContextCategory(ctx, "notification_task").Error("获取订单信息失败",
+				logger.ErrorV2(err),
+				logger.Int64V2("notification_id", dbRecord.ID),
+				logger.Int64V2("order_id", dbRecord.OrderID),
+				logger.IntV2("retry_count", dbRecord.RetryCount),
+				logger.StringV2("platform_code", dbRecord.PlatformCode),
 			)
 			// 如果是 record not found，可以直接标记为失败，避免无意义重试
 			if strings.Contains(err.Error(), "record not found") {
 				err2 := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 4)
 				if err2 != nil {
-					t.logger.Error("更新通知状态失败", zap.Error(err2), zap.Int64("notification_id", dbRecord.ID), zap.Int64("order_id", dbRecord.OrderID), zap.Int("retry_count", dbRecord.RetryCount), zap.String("platform_code", dbRecord.PlatformCode))
+					logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态失败", logger.ErrorV2(err2), logger.Int64V2("notification_id", dbRecord.ID), logger.Int64V2("order_id", dbRecord.OrderID), logger.IntV2("retry_count", dbRecord.RetryCount), logger.StringV2("platform_code", dbRecord.PlatformCode))
 				}
-				t.logger.Info("订单不存在，通知已标记为失败", zap.Int64("notification_id", dbRecord.ID), zap.Int64("order_id", dbRecord.OrderID), zap.Int("retry_count", dbRecord.RetryCount), zap.String("platform_code", dbRecord.PlatformCode))
+				logger.WithContextCategory(ctx, "notification_task").Info("订单不存在，通知已标记为失败", logger.Int64V2("notification_id", dbRecord.ID), logger.Int64V2("order_id", dbRecord.OrderID), logger.IntV2("retry_count", dbRecord.RetryCount), logger.StringV2("platform_code", dbRecord.PlatformCode))
 			}
 			return err
 		}
-		t.logger.Warn("使用数据库查询订单数据（兼容旧通知记录）",
-			zap.Int64("notification_id", dbRecord.ID),
-			zap.Int64("order_id", dbRecord.OrderID),
-			zap.String("platform_code", dbRecord.PlatformCode),
+		logger.WithContextCategory(ctx, "notification_task").Warn("使用数据库查询订单数据（兼容旧通知记录）",
+			logger.Int64V2("notification_id", dbRecord.ID),
+			logger.Int64V2("order_id", dbRecord.OrderID),
+			logger.StringV2("platform_code", dbRecord.PlatformCode),
 		)
 	}
 	// 发送通知
 	if err := t.platformService.SendNotification(ctx, order); err != nil {
 		// 记录通知发送失败的详细错误信息
-		t.logger.Error("通知发送失败",
-			zap.Error(err),
-			zap.Int64("notification_id", dbRecord.ID),
-			zap.Int64("order_id", dbRecord.OrderID),
-			zap.String("order_number", order.OrderNumber),
-			zap.String("platform_code", dbRecord.PlatformCode),
-			zap.String("notification_type", dbRecord.NotificationType),
-			zap.Int("retry_count", dbRecord.RetryCount),
-			zap.String("callback_url", order.PlatformCallbackURL),
+		logger.WithContextCategory(ctx, "notification_task").Error("通知发送失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("notification_id", dbRecord.ID),
+			logger.Int64V2("order_id", dbRecord.OrderID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("platform_code", dbRecord.PlatformCode),
+			logger.StringV2("notification_type", dbRecord.NotificationType),
+			logger.IntV2("retry_count", dbRecord.RetryCount),
+			logger.StringV2("callback_url", order.PlatformCallbackURL),
 		)
 
 		// 业务终态错误关键字
 		if strings.Contains(err.Error(), "此订单已做单失败") {
-			t.logger.Error("遇到终态业务错误，不再重试",
-				zap.Error(err),
-				zap.Int64("notification_id", dbRecord.ID),
-				zap.Int64("order_id", dbRecord.OrderID),
-				zap.String("order_number", order.OrderNumber),
-				zap.String("platform_code", dbRecord.PlatformCode),
-				zap.String("notification_type", dbRecord.NotificationType),
-				zap.Int("retry_count", dbRecord.RetryCount),
+			logger.WithContextCategory(ctx, "notification_task").Error("遇到终态业务错误，不再重试",
+				logger.ErrorV2(err),
+				logger.Int64V2("notification_id", dbRecord.ID),
+				logger.Int64V2("order_id", dbRecord.OrderID),
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.StringV2("platform_code", dbRecord.PlatformCode),
+				logger.StringV2("notification_type", dbRecord.NotificationType),
+				logger.IntV2("retry_count", dbRecord.RetryCount),
 			)
 			// 标记为失败
 			err2 := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 4)
 			if err2 != nil {
-				t.logger.Error("更新通知状态失败", zap.Error(err2), zap.Int64("notification_id", dbRecord.ID), zap.Int64("order_id", dbRecord.OrderID), zap.Int("retry_count", dbRecord.RetryCount), zap.String("platform_code", dbRecord.PlatformCode))
+				logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态失败", logger.ErrorV2(err2), logger.Int64V2("notification_id", dbRecord.ID), logger.Int64V2("order_id", dbRecord.OrderID), logger.IntV2("retry_count", dbRecord.RetryCount), logger.StringV2("platform_code", dbRecord.PlatformCode))
 			}
 			return nil
 		}
@@ -268,21 +273,21 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 		if dbRecord.RetryCount < t.maxRetries {
 			// 延迟重试（加入到队列）——重试次数在 RetryFailedNotification 中自增
 			if err := t.notificationService.RetryFailedNotification(ctx, dbRecord.ID); err != nil {
-				t.logger.Error("加入重试队列失败", zap.Error(err), zap.Int64("notification_id", dbRecord.ID), zap.Int64("order_id", dbRecord.OrderID), zap.Int("retry_count", dbRecord.RetryCount), zap.String("platform_code", dbRecord.PlatformCode))
+				logger.WithContextCategory(ctx, "notification_task").Error("加入重试队列失败", logger.ErrorV2(err), logger.Int64V2("notification_id", dbRecord.ID), logger.Int64V2("order_id", dbRecord.OrderID), logger.IntV2("retry_count", dbRecord.RetryCount), logger.StringV2("platform_code", dbRecord.PlatformCode))
 			}
 			return nil
 		}
 
 		// 达到最大重试次数，标记为失败
 		if err := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 4); err != nil {
-			t.logger.Error("更新通知状态失败", zap.Error(err), zap.Int64("notification_id", dbRecord.ID), zap.Int64("order_id", dbRecord.OrderID), zap.Int("retry_count", dbRecord.RetryCount), zap.String("platform_code", dbRecord.PlatformCode))
+			logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态失败", logger.ErrorV2(err), logger.Int64V2("notification_id", dbRecord.ID), logger.Int64V2("order_id", dbRecord.OrderID), logger.IntV2("retry_count", dbRecord.RetryCount), logger.StringV2("platform_code", dbRecord.PlatformCode))
 		}
 		return nil
 	}
 
 	// 通知发送成功，标记为已完成
 	if err := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 3); err != nil {
-		t.logger.Error("更新通知状态失败", zap.Error(err), zap.Int64("notification_id", dbRecord.ID), zap.Int64("order_id", dbRecord.OrderID), zap.Int("retry_count", dbRecord.RetryCount), zap.String("platform_code", dbRecord.PlatformCode))
+		logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态失败", logger.ErrorV2(err), logger.Int64V2("notification_id", dbRecord.ID), logger.Int64V2("order_id", dbRecord.OrderID), logger.IntV2("retry_count", dbRecord.RetryCount), logger.StringV2("platform_code", dbRecord.PlatformCode))
 	}
 
 	return nil
@@ -305,7 +310,7 @@ func (t *NotificationTask) processNotifications(ctx context.Context) (bool, erro
 	for _, record := range records {
 		if err := t.processSingleNotification(ctx, record, 0); err != nil {
 			// 记录错误，但继续处理其他记录
-			t.logger.Error("处理通知失败", zap.Error(err), zap.Int64("notification_id", record.ID), zap.Int64("order_id", record.OrderID), zap.Int("retry_count", record.RetryCount), zap.String("platform_code", record.PlatformCode))
+			logger.WithContextCategory(ctx, "notification_task").Error("处理通知失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID), logger.Int64V2("order_id", record.OrderID), logger.IntV2("retry_count", record.RetryCount), logger.StringV2("platform_code", record.PlatformCode))
 		}
 	}
 	return true, nil
@@ -323,13 +328,13 @@ func (t *NotificationTask) startRetryTask(ctx context.Context) {
 				"status": 4, // 发送失败
 			}, 1, 20)
 			if err != nil {
-				t.logger.Error("扫描失败的通知记录失败", zap.Error(err))
+				logger.WithContextCategory(ctx, "notification_task").Error("扫描失败的通知记录失败", logger.ErrorV2(err))
 				continue
 			}
 			for _, record := range records {
 				// 加入重试队列——重试次数在 RetryFailedNotification 中自增
 				if err := t.notificationService.RetryFailedNotification(ctx, record.ID); err != nil {
-					t.logger.Error("加入重试队列失败", zap.Error(err), zap.Int64("notification_id", record.ID), zap.Int64("order_id", record.OrderID), zap.Int("retry_count", record.RetryCount), zap.String("platform_code", record.PlatformCode))
+					logger.WithContextCategory(ctx, "notification_task").Error("加入重试队列失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID), logger.Int64V2("order_id", record.OrderID), logger.IntV2("retry_count", record.RetryCount), logger.StringV2("platform_code", record.PlatformCode))
 				}
 			}
 		}
@@ -343,7 +348,7 @@ func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, 
 	if record.OrderSnapshot != "" {
 		order = &model.Order{}
 		if err := json.Unmarshal([]byte(record.OrderSnapshot), order); err != nil {
-			t.logger.Error("反序列化订单快照失败", zap.Error(err), zap.Int64("notification_id", record.ID), zap.Int64("order_id", record.OrderID), zap.Int("retry_count", record.RetryCount), zap.String("platform_code", record.PlatformCode))
+			logger.WithContextCategory(ctx, "notification_task").Error("反序列化订单快照失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID), logger.Int64V2("order_id", record.OrderID), logger.IntV2("retry_count", record.RetryCount), logger.StringV2("platform_code", record.PlatformCode))
 			return err
 		}
 		// 使用记录时的状态
@@ -355,7 +360,7 @@ func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, 
 		var err error
 		order, err = t.orderService.GetOrderByID(ctx, record.OrderID)
 		if err != nil {
-			t.logger.Error("获取订单信息失败", zap.Error(err), zap.Int64("notification_id", record.ID), zap.Int64("order_id", record.OrderID), zap.Int("retry_count", record.RetryCount), zap.String("platform_code", record.PlatformCode))
+			logger.WithContextCategory(ctx, "notification_task").Error("获取订单信息失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID), logger.Int64V2("order_id", record.OrderID), logger.IntV2("retry_count", record.RetryCount), logger.StringV2("platform_code", record.PlatformCode))
 			return err
 		}
 	}
@@ -363,25 +368,25 @@ func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, 
 	// 发送通知
 	if err := t.platformService.SendNotification(ctx, order); err != nil {
 		// 记录失败
-		t.logger.Error("通知发送失败", zap.Error(err), zap.Int64("notification_id", record.ID), zap.Int64("order_id", record.OrderID), zap.String("order_number", order.OrderNumber), zap.Int("retry_count", record.RetryCount), zap.String("platform_code", record.PlatformCode))
+		logger.WithContextCategory(ctx, "notification_task").Error("通知发送失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID), logger.Int64V2("order_id", record.OrderID), logger.StringV2("order_number", order.OrderNumber), logger.IntV2("retry_count", record.RetryCount), logger.StringV2("platform_code", record.PlatformCode))
 		// 重试策略
 		if record.RetryCount < t.maxRetries {
 			// 加入重试队列——重试次数在 RetryFailedNotification 中自增
 			if err := t.notificationService.RetryFailedNotification(ctx, record.ID); err != nil {
-				t.logger.Error("加入重试队列失败", zap.Error(err), zap.Int64("notification_id", record.ID))
+				logger.WithContextCategory(ctx, "notification_task").Error("加入重试队列失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID))
 			}
 			return nil
 		}
 		// 达到最大重试次数
 		if err := t.notificationService.UpdateNotificationStatus(ctx, record.ID, 4); err != nil {
-			t.logger.Error("更新通知状态失败", zap.Error(err), zap.Int64("notification_id", record.ID))
+			logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID))
 		}
 		return nil
 	}
 
 	// 成功
 	if err := t.notificationService.UpdateNotificationStatus(ctx, record.ID, 3); err != nil {
-		t.logger.Error("更新通知状态失败", zap.Error(err), zap.Int64("notification_id", record.ID))
+		logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID))
 	}
 	return nil
 }
@@ -389,5 +394,5 @@ func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, 
 // Stop 停止通知任务处理器
 func (t *NotificationTask) Stop() {
 	// 资源清理
-	t.logger.Info("notification task processor stopped")
+	logger.WithContextCategory(context.Background(), "notification_task").Info("notification task processor stopped")
 }

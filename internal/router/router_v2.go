@@ -60,13 +60,19 @@ func SetupRouterV2(
 	// 类型断言
 	userSvc, ok := userService.(*service.UserService)
 	if !ok {
-		logger.Error("Failed to assert userService type")
+		logger.GetCategoryLogger("router").Error("SetupRouterV2.type_assert_failed",
+			logger.StringV2("target", "UserService"),
+			logger.StringV2("got_type", reflect.TypeOf(userService).String()),
+		)
 		return nil
 	}
 
 	userLogCtrl, ok := userLogController.(*controller.UserLogController)
 	if !ok {
-		logger.Error("Failed to assert userLogController type")
+		logger.GetCategoryLogger("router").Error("SetupRouterV2.type_assert_failed",
+			logger.StringV2("target", "UserLogController"),
+			logger.StringV2("got_type", reflect.TypeOf(userLogController).String()),
+		)
 		return nil
 	}
 

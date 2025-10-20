@@ -174,6 +174,7 @@ const routeMap: RouteMap = {
   "order_exception": "/order/exception",
   "order_kekebang": "/order/kekebang",
   "order_mf178": "/order/mf178",
+  "order_xianyingke": "/order/xianyingke",
   "order_xianzhuanxia": "/order/xianzhuanxia",
   "platform": "/platform",
   "platformapi": "/platformapi",

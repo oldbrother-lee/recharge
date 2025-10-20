@@ -3,9 +3,9 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
+	"recharge-go/pkg/logger"
 
 	"gorm.io/gorm"
 )
@@ -39,7 +39,8 @@ func NewPlatformAPIService(repo repository.PlatformAPIRepository) PlatformAPISer
 func (s *platformAPIService) CreateAPI(ctx context.Context, api *model.PlatformAPI) error {
 	// 检查接口代码是否已存在
 	existing, err := s.repo.GetByCode(ctx, api.Code)
-	fmt.Println(api.Code, "#######")
+	// 替换调试输出为结构化日志
+	logger.WithContextCategory(ctx, "platform").Info("检查接口代码是否存在", logger.StringV2("code", api.Code))
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}

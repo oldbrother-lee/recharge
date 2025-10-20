@@ -49,10 +49,10 @@ func (s *KekebangSubmitter) handleResponse(resp map[string]interface{}) error {
 	// 根据状态码处理
 	switch int(status) {
 	case 1: // 成功
-		logger.Info("客客帮订单提交成功", "response", resp)
+		logger.GetCategoryLogger("platform").Info("客客帮订单提交成功", logger.AnyV2("response", resp))
 		return nil
 	case 2: // 处理中
-		logger.Info("客客帮订单处理中", "response", resp)
+		logger.GetCategoryLogger("platform").Info("客客帮订单处理中", logger.AnyV2("response", resp))
 		return nil
 	case 3: // 失败
 		msg, _ := resp["msg"].(string)

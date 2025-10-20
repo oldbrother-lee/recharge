@@ -37,22 +37,22 @@ func NewPlatformAccountBalanceService(
 
 // DeductBalance 扣除余额，支持授信额度
 func (s *PlatformAccountBalanceService) DeductBalance(ctx context.Context, accountID int64, amount float64, orderID int64, remark string) error {
-	logger.Info("开始扣除本地账号余额",
-		"platform_account_id", accountID,
-		"amount", amount,
-		"order_id", orderID,
-		"remark", remark)
+	logger.InfoV2("开始扣除本地账号余额",
+		logger.Int64V2("platform_account_id", accountID),
+		logger.Float64V2("amount", amount),
+		logger.Int64V2("order_id", orderID),
+		logger.StringV2("remark", remark))
 
 	// 开启事务确保操作原子性
 	tx := s.db.Begin()
 	if tx.Error != nil {
-		logger.Error("开启事务失败", "error", tx.Error, "order_id", orderID)
+		logger.ErrorLogV2("开启事务失败", logger.ErrorV2(tx.Error), logger.Int64V2("order_id", orderID))
 		return tx.Error
 	}
 	defer func() {
 		if r := recover(); r != nil {
 			tx.Rollback()
-			logger.Error("panic, 事务回滚", "panic", r)
+			logger.ErrorLogV2("panic, 事务回滚", logger.AnyV2("panic", r))
 		}
 	}()
 
@@ -63,12 +63,12 @@ func (s *PlatformAccountBalanceService) DeductBalance(ctx context.Context, accou
 		Count(&existCount).Error
 	if err != nil {
 		tx.Rollback()
-		logger.Error("幂等性校验失败", "error", err, "order_id", orderID)
+		logger.ErrorLogV2("幂等性校验失败", logger.ErrorV2(err), logger.Int64V2("order_id", orderID))
 		return err
 	}
 	if existCount > 0 {
 		tx.Rollback()
-		logger.Info("已存在扣款日志，跳过重复扣款", "order_id", orderID, "account_id", accountID)
+		logger.InfoV2("已存在扣款日志，跳过重复扣款", logger.Int64V2("order_id", orderID), logger.Int64V2("account_id", accountID))
 		return nil
 	}
 
@@ -77,14 +77,14 @@ func (s *PlatformAccountBalanceService) DeductBalance(ctx context.Context, accou
 	err = tx.Preload("Platform").Where("id = ?", accountID).First(&account).Error
 	if err != nil {
 		tx.Rollback()
-		logger.Error("获取平台账号信息失败", "error", err, "account_id", accountID)
+		logger.ErrorLogV2("获取平台账号信息失败", logger.ErrorV2(err), logger.Int64V2("account_id", accountID))
 		return err
 	}
 
 	// 3. 获取本地用户账号（通过 bind_user_id 字段）
 	if account.BindUserID == nil {
 		tx.Rollback()
-		logger.Error("平台账号未绑定本地用户", "account_id", accountID)
+		logger.ErrorLogV2("平台账号未绑定本地用户", logger.Int64V2("account_id", accountID))
 		return errors.New("平台账号未绑定本地用户")
 	}
 	userID := *account.BindUserID
@@ -93,7 +93,7 @@ func (s *PlatformAccountBalanceService) DeductBalance(ctx context.Context, accou
 	var user model.User
 	if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", userID).First(&user).Error; err != nil {
 		tx.Rollback()
-		logger.Error("获取本地用户账号失败", "error", err, "user_id", userID)
+		logger.ErrorLogV2("获取本地用户账号失败", logger.ErrorV2(err), logger.Int64V2("user_id", userID))
 		return err
 	}
 
@@ -101,7 +101,11 @@ func (s *PlatformAccountBalanceService) DeductBalance(ctx context.Context, accou
 	available := user.Balance + user.Credit
 	if available < amount {
 		tx.Rollback()
-		logger.Error("余额和授信额度均不足", "user_id", userID, "current_balance", user.Balance, "credit", user.Credit, "required_amount", amount)
+		logger.ErrorLogV2("余额和授信额度均不足",
+			logger.Int64V2("user_id", userID),
+			logger.Float64V2("current_balance", user.Balance),
+			logger.Float64V2("credit", user.Credit),
+			logger.Float64V2("required_amount", amount))
 		return errors.New("余额和授信额度均不足")
 	}
 
@@ -110,7 +114,7 @@ func (s *PlatformAccountBalanceService) DeductBalance(ctx context.Context, accou
 	user.Balance -= amount
 	if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("balance", user.Balance).Error; err != nil {
 		tx.Rollback()
-		logger.Error("更新本地用户余额失败", "error", err, "user_id", userID)
+		logger.ErrorLogV2("更新本地用户余额失败", logger.ErrorV2(err), logger.Int64V2("user_id", userID))
 		return err
 	}
 
@@ -139,17 +143,22 @@ func (s *PlatformAccountBalanceService) DeductBalance(ctx context.Context, accou
 	}
 	if err := tx.Create(userLog).Error; err != nil {
 		tx.Rollback()
-		logger.Error("创建用户余额变动日志失败", "error", err, "user_id", userID)
+		logger.ErrorLogV2("创建用户余额变动日志失败", logger.ErrorV2(err), logger.Int64V2("user_id", userID))
 		return err
 	}
 
 	// 9. 提交事务
 	if err := tx.Commit().Error; err != nil {
-		logger.Error("提交事务失败", "error", err, "order_id", orderID)
+		logger.ErrorLogV2("提交事务失败", logger.ErrorV2(err), logger.Int64V2("order_id", orderID))
 		return err
 	}
 
-	logger.Info("扣除本地账号余额成功", "user_id", userID, "amount", amount, "balance_before", before, "balance_after", user.Balance, "credit_used", creditUsed)
+	logger.InfoV2("扣除本地账号余额成功",
+		logger.Int64V2("user_id", userID),
+		logger.Float64V2("amount", amount),
+		logger.Float64V2("balance_before", before),
+		logger.Float64V2("balance_after", user.Balance),
+		logger.Float64V2("credit_used", creditUsed))
 	return nil
 }
 
@@ -246,19 +255,19 @@ func (s *PlatformAccountBalanceService) GetBalanceLogs(ctx context.Context, acco
 
 // AdjustBalance 手动调整余额
 func (s *PlatformAccountBalanceService) AdjustBalance(ctx context.Context, accountID int64, amount float64, style int, remark string, operator string) error {
-	logger.Info("开始手动调整余额",
-		"account_id", accountID,
-		"amount", amount,
-		"style", style,
-		"remark", remark,
-		"operator", operator)
+	logger.InfoV2("开始手动调整余额",
+		logger.Int64V2("account_id", accountID),
+		logger.Float64V2("amount", amount),
+		logger.IntV2("style", style),
+		logger.StringV2("remark", remark),
+		logger.StringV2("operator", operator))
 
 	// 开启事务
 	tx := s.db.Begin()
 	if tx.Error != nil {
-		logger.Error("开启事务失败",
-			"error", tx.Error,
-			"account_id", accountID)
+		logger.ErrorLogV2("开启事务失败",
+			logger.ErrorV2(tx.Error),
+			logger.Int64V2("account_id", accountID))
 		return tx.Error
 	}
 	defer func() {
@@ -271,16 +280,16 @@ func (s *PlatformAccountBalanceService) AdjustBalance(ctx context.Context, accou
 	account, err := s.platformAccountRepo.GetByID(accountID)
 	if err != nil {
 		tx.Rollback()
-		logger.Error("获取平台账号信息失败",
-			"error", err,
-			"account_id", accountID)
+		logger.ErrorLogV2("获取平台账号信息失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("account_id", accountID))
 		return err
 	}
 
 	// 2. 获取本地用户账号（通过 bind_user_id 字段）
 	if account.BindUserID == nil {
 		tx.Rollback()
-		logger.Error("平台账号未绑定本地用户", "account_id", accountID)
+		logger.ErrorLogV2("平台账号未绑定本地用户", logger.Int64V2("account_id", accountID))
 		return errors.New("平台账号未绑定本地用户")
 	}
 	userID := *account.BindUserID
@@ -292,15 +301,15 @@ func (s *PlatformAccountBalanceService) AdjustBalance(ctx context.Context, accou
 	
 	if result.Error != nil {
 		tx.Rollback()
-		logger.Error("更新本地用户余额失败",
-			"error", result.Error,
-			"user_id", userID)
+		logger.ErrorLogV2("更新本地用户余额失败",
+			logger.ErrorV2(result.Error),
+			logger.Int64V2("user_id", userID))
 		return result.Error
 	}
 	
 	if result.RowsAffected == 0 {
 		tx.Rollback()
-		logger.Error("用户不存在", "user_id", userID)
+		logger.ErrorLogV2("用户不存在", logger.Int64V2("user_id", userID))
 		return errors.New("用户不存在")
 	}
 	
@@ -308,7 +317,7 @@ func (s *PlatformAccountBalanceService) AdjustBalance(ctx context.Context, accou
 	var updatedUser model.User
 	if err := tx.Where("id = ?", userID).First(&updatedUser).Error; err != nil {
 		tx.Rollback()
-		logger.Error("获取更新后用户信息失败", "error", err, "user_id", userID)
+		logger.ErrorLogV2("获取更新后用户信息失败", logger.ErrorV2(err), logger.Int64V2("user_id", userID))
 		return err
 	}
 	
@@ -333,25 +342,25 @@ func (s *PlatformAccountBalanceService) AdjustBalance(ctx context.Context, accou
 	}
 	if err := tx.Create(userLog).Error; err != nil {
 		tx.Rollback()
-		logger.Error("创建用户余额变动日志失败",
-			"error", err,
-			"user_id", userID)
+		logger.ErrorLogV2("创建用户余额变动日志失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("user_id", userID))
 		return err
 	}
 
 	// 提交事务
 	if err := tx.Commit().Error; err != nil {
-		logger.Error("提交事务失败",
-			"error", err,
-			"account_id", accountID)
+		logger.ErrorLogV2("提交事务失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("account_id", accountID))
 		return err
 	}
 
-	logger.Info("手动调整余额成功",
-		"user_id", userID,
-		"amount", amount,
-		"balance_before", beforeBalance,
-		"balance_after", afterBalance)
+	logger.InfoV2("手动调整余额成功",
+		logger.Int64V2("user_id", userID),
+		logger.Float64V2("amount", amount),
+		logger.Float64V2("balance_before", beforeBalance),
+		logger.Float64V2("balance_after", afterBalance))
 	return nil
 }
 

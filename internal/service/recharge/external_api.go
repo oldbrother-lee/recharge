@@ -39,27 +39,27 @@ func (p *ExternalAPIPlatform) GetName() string {
 
 // getAPIKeyAndSecret 获取API密钥和密钥
 func (p *ExternalAPIPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int64) (string, string, string, string, error) {
-	logger.WithContext(ctx).Info("【获取外部API账号与平台信息】", logger.Int64("account_id", accountID))
-	account, err := p.platformRepo.GetAccountByID(ctx, accountID)
-	if err != nil {
-		logger.WithContext(ctx).Error("【获取平台账号失败】", logger.Int64("account_id", accountID), logger.ErrorV2(err))
-		return "", "", "", "", fmt.Errorf("get platform account failed: %v", err)
-	}
-	// 不再在此处查询平台记录，URL 由调用方根据 api/url 字段传入或回退
-	return account.AccountName, account.AppKey, account.AppSecret, "", nil
+    logger.WithContextCategory(ctx, "recharge").Info("【获取外部API账号与平台信息】", logger.Int64V2("account_id", accountID))
+    account, err := p.platformRepo.GetAccountByID(ctx, accountID)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("【获取平台账号失败】", logger.Int64V2("account_id", accountID), logger.ErrorV2(err))
+        return "", "", "", "", fmt.Errorf("get platform account failed: %v", err)
+    }
+    // 不再在此处查询平台记录，URL 由调用方根据 api/url 字段传入或回退
+    return account.AccountName, account.AppKey, account.AppSecret, "", nil
 }
 
 // SubmitOrder 提交订单到外部API
 func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-	logger.WithContext(ctx).Info("【开始提交外部API订单】",
-		logger.Int64("order_id", order.ID),
-		logger.String("order_number", order.OrderNumber),
-		logger.Int64("api_id", api.ID),
-		logger.Int64("api_account_id", api.AccountID),
-		logger.Int64("platform_id", api.PlatformID),
-		logger.String("api_code", api.Code),
-		logger.Int64("param_id", apiParam.ID),
-	)
+    logger.WithContextCategory(ctx, "recharge").Info("【开始提交外部API订单】",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.Int64V2("api_id", api.ID),
+        logger.Int64V2("api_account_id", api.AccountID),
+        logger.Int64V2("platform_id", api.PlatformID),
+        logger.StringV2("api_code", api.Code),
+        logger.Int64V2("param_id", apiParam.ID),
+    )
 
 	// 获取API密钥和URL
 	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
@@ -79,11 +79,11 @@ func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Orde
 		callbackURL = api.CallbackURL
 		callbackFrom = "api"
 	}
-	logger.WithContext(ctx).Info("【选择回调地址】",
-		logger.Int64("order_id", order.ID),
-		logger.String("callback_url", callbackURL),
-		logger.String("from", callbackFrom),
-	)
+    logger.WithContextCategory(ctx, "recharge").Info("【选择回调地址】",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("callback_url", callbackURL),
+        logger.StringV2("from", callbackFrom),
+    )
 
 	// 构建请求参数
 	params := map[string]interface{}{
@@ -114,50 +114,50 @@ func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Orde
 	sign := p.generateSign(ctx, params, appSecret)
 	params["sign"] = sign
 
-	logger.WithContext(ctx).Info("【准备发送外部API请求】",
-		logger.String("url", apiBaseURL+"/external/order"),
-		logger.String("order_number", order.OrderNumber),
-		logger.String("out_trade_num", order.OrderNumber),
-		logger.Any("param_keys", func() []string { keys := make([]string, 0, len(params)); for k := range params { if k != "sign" { keys = append(keys, k) } }; return keys }()),
-	)
+    logger.WithContextCategory(ctx, "recharge").Info("【准备发送外部API请求】",
+        logger.StringV2("url", apiBaseURL+"/external/order"),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.StringV2("out_trade_num", order.OrderNumber),
+        logger.AnyV2("param_keys", func() []string { keys := make([]string, 0, len(params)); for k := range params { if k != "sign" { keys = append(keys, k) } }; return keys }()),
+    )
 
 	// 发送请求到外部API
-	resp, err := p.sendRequest(ctx, appKey, apiBaseURL+"/external/order", params)
-	if err != nil {
-		logger.WithContext(ctx).Error("【提交到外部系统订单失败】",
-			logger.String("url", apiBaseURL+"/external/order"),
-			logger.String("order_number", order.OrderNumber),
-			logger.String("out_trade_num", order.OrderNumber),
-			logger.ErrorV2(err),
-		)
-		return fmt.Errorf("submit order failed: %v", err)
-	}
+    resp, err := p.sendRequest(ctx, appKey, apiBaseURL+"/external/order", params)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("【提交到外部系统订单失败】",
+            logger.StringV2("url", apiBaseURL+"/external/order"),
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("out_trade_num", order.OrderNumber),
+            logger.ErrorV2(err),
+        )
+        return fmt.Errorf("submit order failed: %v", err)
+    }
 
 	// 检查响应
-	if resp.Code != 200 {
-		logger.WithContext(ctx).Error("【提交订单失败】",
-			logger.String("order_number", order.OrderNumber),
-			logger.String("out_trade_num", order.OrderNumber),
-			logger.Int("code", resp.Code),
-			logger.String("message", resp.Message),
-		)
-		return fmt.Errorf("submit order failed: %s", resp.Message)
-	}
+    if resp.Code != 200 {
+        logger.WithContextCategory(ctx, "recharge").Error("【提交订单失败】",
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("out_trade_num", order.OrderNumber),
+            logger.IntV2("code", resp.Code),
+            logger.StringV2("message", resp.Message),
+        )
+        return fmt.Errorf("submit order failed: %s", resp.Message)
+    }
 
-	logger.WithContext(ctx).Info("【外部API提交订单成功】",
-		logger.String("order_number", order.OrderNumber),
-		logger.String("out_trade_num", order.OrderNumber),
-	)
-	return nil
+    logger.WithContextCategory(ctx, "recharge").Info("【外部API提交订单成功】",
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.StringV2("out_trade_num", order.OrderNumber),
+    )
+    return nil
 }
 
 // QueryOrderStatus 查询订单状态
 func (p *ExternalAPIPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-	logger.WithContext(ctx).Info("internal_api 查询订单状态",
-		logger.Int64("order_id", order.ID),
-		logger.String("order_number", order.OrderNumber),
-		logger.String("out_trade_num", order.OrderNumber),
-	)
+    logger.WithContextCategory(ctx, "recharge").Info("internal_api 查询订单状态",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.StringV2("out_trade_num", order.OrderNumber),
+    )
 
 	// 获取API密钥和URL
 	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, order.PlatformAccountID)
@@ -310,12 +310,12 @@ func (p *ExternalAPIPlatform) generateNonce() string {
 
 // generateSign 生成签名
 func (p *ExternalAPIPlatform) generateSign(ctx context.Context, params map[string]interface{}, appSecret string) string {
-	sign, err := p.signatureValidator.GenerateExternalAPISignature(params, appSecret)
-	if err != nil {
-		logger.WithContext(ctx).Error("Failed to generate external API signature", logger.ErrorV2(err))
-		return ""
-	}
-	return sign
+    sign, err := p.signatureValidator.GenerateExternalAPISignature(params, appSecret)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("Failed to generate external API signature", logger.ErrorV2(err))
+        return ""
+    }
+    return sign
 }
 
 // mapOrderStatus 映射订单状态
@@ -389,11 +389,11 @@ func (p *ExternalAPIPlatform) sendRequest(ctx context.Context, app_key, url stri
 	if len(bodyStr) > 1000 {
 		bodyStr = bodyStr[:1000] + "..."
 	}
-	logger.WithContext(ctx).Info("【外部API响应】",
-		logger.String("url", url),
-		logger.Int("status_code", resp.StatusCode),
-		logger.String("body_preview", bodyStr),
-	)
+    logger.WithContextCategory(ctx, "recharge").Info("【外部API响应】",
+        logger.StringV2("url", url),
+        logger.IntV2("status_code", resp.StatusCode),
+        logger.StringV2("body_preview", bodyStr),
+    )
 
 	// 解析响应
 	var apiResp APIResponse

@@ -1,15 +1,16 @@
 package logger
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"path/filepath"
-	"runtime"
-	"time"
+    "context"
+    "fmt"
+    "os"
+    "path/filepath"
+    "sync"
+    "runtime"
+    "time"
 
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+    "go.uber.org/zap"
+    "go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -186,43 +187,64 @@ func InitGlobalLogger(config *LoggerConfigV2) error {
 
 // GetGlobalLogger 获取全局日志器
 func GetGlobalLogger() *LoggerV2 {
-	if globalLogger == nil {
-		// 如果全局日志器未初始化，创建一个默认的
-		config := &LoggerConfigV2{
-			Level:  "info",
-			Format: "console",
-			Output: "stdout",
-			Caller: true,
-		}
-		logger, _ := NewLoggerV2(config)
-		globalLogger = logger
-	}
-	return globalLogger
+    if globalLogger == nil {
+        // 如果全局日志器未初始化，创建一个默认的
+        config := &LoggerConfigV2{
+            Level:  "info",
+            Format: "console",
+            Output: "stdout",
+            Caller: true,
+        }
+        logger, _ := NewLoggerV2(config)
+        globalLogger = logger
+    }
+    return globalLogger
 }
 
 // WithContext 添加上下文信息
 func (l *LoggerV2) WithContext(ctx context.Context) *LoggerV2 {
-	// 从上下文中提取常用字段
+	// 从上下文中提取常用字段（安全类型处理，避免panic）
 	fields := []Field{}
 
-	// 添加请求ID
-	if requestID := ctx.Value("request_id"); requestID != nil {
-		fields = append(fields, String("request_id", requestID.(string)))
+	// 请求ID
+	if v := ctx.Value("request_id"); v != nil {
+		if s, ok := v.(string); ok {
+			fields = append(fields, StringV2("request_id", s))
+		} else {
+			fields = append(fields, StringV2("request_id", fmt.Sprint(v)))
+		}
 	}
 
-	// 添加用户ID
-	if userID := ctx.Value("user_id"); userID != nil {
-		fields = append(fields, String("user_id", userID.(string)))
+	// 用户ID（可能为int64）
+	if v := ctx.Value("user_id"); v != nil {
+		switch u := v.(type) {
+		case int64:
+			fields = append(fields, Int64V2("user_id", u))
+		case int:
+			fields = append(fields, IntV2("user_id", u))
+		case string:
+			fields = append(fields, StringV2("user_id", u))
+		default:
+			fields = append(fields, StringV2("user_id", fmt.Sprint(u)))
+		}
 	}
 
-	// 添加跟踪ID
-	if traceID := ctx.Value("trace_id"); traceID != nil {
-		fields = append(fields, String("trace_id", traceID.(string)))
+	// 跟踪ID
+	if v := ctx.Value("trace_id"); v != nil {
+		if s, ok := v.(string); ok {
+			fields = append(fields, StringV2("trace_id", s))
+		} else {
+			fields = append(fields, StringV2("trace_id", fmt.Sprint(v)))
+		}
 	}
 
-	// 添加订单号
-	if orderNumber := ctx.Value("order_number"); orderNumber != nil {
-		fields = append(fields, String("order_number", orderNumber.(string)))
+	// 订单号
+	if v := ctx.Value("order_number"); v != nil {
+		if s, ok := v.(string); ok {
+			fields = append(fields, StringV2("order_number", s))
+		} else {
+			fields = append(fields, StringV2("order_number", fmt.Sprint(v)))
+		}
 	}
 
 	return &LoggerV2{
@@ -233,10 +255,91 @@ func (l *LoggerV2) WithContext(ctx context.Context) *LoggerV2 {
 
 // InjectOrderNumber 将订单号注入到上下文，便于全链路日志携带
 func InjectOrderNumber(ctx context.Context, orderNumber string) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return context.WithValue(ctx, "order_number", orderNumber)
+    if ctx == nil {
+        ctx = context.Background()
+    }
+    return context.WithValue(ctx, "order_number", orderNumber)
+}
+
+// ========= 分类日志支持 =========
+// 允许按功能将日志写入不同文件，例如 "recharge"、"notification" 等
+
+type loggerRegistry struct {
+    mu        sync.RWMutex
+    loggers   map[string]*LoggerV2
+    baseConf  *LoggerConfigV2
+}
+
+var categoryRegistry *loggerRegistry
+
+// InitLoggerRegistry 初始化分类日志注册表（可选），传入基础配置用于克隆
+func InitLoggerRegistry(config LoggerConfigV2) {
+    categoryRegistry = &loggerRegistry{
+        loggers:  make(map[string]*LoggerV2),
+        baseConf: &config,
+    }
+}
+
+// getBaseConfig 获取用于创建分类日志器的基础配置
+func getBaseConfig() *LoggerConfigV2 {
+    if categoryRegistry != nil && categoryRegistry.baseConf != nil {
+        return categoryRegistry.baseConf
+    }
+    if globalLogger != nil && globalLogger.config != nil {
+        return globalLogger.config
+    }
+    // 默认配置（写到 stdout，避免因未初始化而崩溃）
+    return &LoggerConfigV2{
+        Level:  "info",
+        Format: "json",
+        Output: "stdout",
+        MaxSize:    100,
+        MaxBackups: 5,
+        MaxAge:     30,
+        Compress:   true,
+        Caller:     true,
+        Stacktrace: true,
+    }
+}
+
+// GetCategoryLogger 获取或创建指定类别的日志器，输出到 logs/<name>.log
+func GetCategoryLogger(name string) *LoggerV2 {
+    if name == "" {
+        return GetGlobalLogger()
+    }
+    if categoryRegistry == nil {
+        // 懒初始化注册表
+        InitLoggerRegistry(*getBaseConfig())
+    }
+    categoryRegistry.mu.RLock()
+    l := categoryRegistry.loggers[name]
+    categoryRegistry.mu.RUnlock()
+    if l != nil {
+        return l
+    }
+    // 创建新日志器（克隆基础配置并设置独立输出文件）
+    base := getBaseConfig()
+    cfg := *base
+    // 始终写到 logs/<name>.log，确保分类隔离
+    cfg.Output = filepath.Join("logs", name+".log")
+    newLogger, err := NewLoggerV2(&cfg)
+    if err != nil {
+        // 退回到全局日志器避免中断
+        return GetGlobalLogger()
+    }
+    categoryRegistry.mu.Lock()
+    categoryRegistry.loggers[name] = newLogger
+    categoryRegistry.mu.Unlock()
+    return newLogger
+}
+
+// WithContextCategory 创建带上下文的分类日志器
+func WithContextCategory(ctx context.Context, name string) *LoggerV2 {
+    l := GetCategoryLogger(name)
+    if l == nil {
+        return nil
+    }
+    return l.WithContext(ctx)
 }
 
 // WithFields 添加字段

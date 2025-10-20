@@ -43,69 +43,80 @@ func NewRechargeService(
 
 // ProcessRechargeTask 处理充值任务
 func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.Order) error {
-	logger.Info("开始处理充值任务！！！",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"amount", order.Price)
-	// 1. 检查平台账号余额
-	account, err := s.platformAccountRepo.GetByID(order.PlatformAccountID)
-	if err != nil {
-		logger.Error("获取平台账号失败",
-			"error", err,
-			"account_id", order.PlatformAccountID)
-		return err
-	}
-	logger.Info("获取平台账号成功",
-		"account_id", order.PlatformAccountID,
-		"current_balance", account.Balance)
+    logger.WithContextCategory(ctx, "recharge").Info("开始处理充值任务！！！",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.Float64V2("amount", order.Price),
+    )
+    // 1. 检查平台账号余额
+    account, err := s.platformAccountRepo.GetByID(order.PlatformAccountID)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("获取平台账号失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("account_id", order.PlatformAccountID),
+        )
+        return err
+    }
+    logger.WithContextCategory(ctx, "recharge").Info("获取平台账号成功",
+        logger.Int64V2("account_id", order.PlatformAccountID),
+        logger.Float64V2("current_balance", account.Balance),
+    )
 
 	// 2. 扣除平台账号余额
-	if err := s.balanceService.DeductBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单充值扣除"); err != nil {
-		logger.Error("扣除平台账号余额失败",
-			"error", err,
-			"account_id", order.PlatformAccountID,
-			"amount", order.Price)
-		return err
-	}
-	logger.Info("扣除平台账号余额成功",
-		"account_id", order.PlatformAccountID,
-		"amount", order.Price)
+    if err := s.balanceService.DeductBalance(ctx, order.PlatformAccountID, order.Price, order.ID, "订单充值扣除"); err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("扣除平台账号余额失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("account_id", order.PlatformAccountID),
+            logger.Float64V2("amount", order.Price),
+        )
+        return err
+    }
+    logger.WithContextCategory(ctx, "recharge").Info("扣除平台账号余额成功",
+        logger.Int64V2("account_id", order.PlatformAccountID),
+        logger.Float64V2("amount", order.Price),
+    )
 
 	// 3. 获取平台API信息
-	api, apiParam, err := s.getPlatformAPIByOrderID(ctx, order)
-	if err != nil {
-		logger.Error("获取平台API信息失败",
-			"error", err,
-			"order_id", order.ID)
-		// 如果获取API信息失败，退还余额
-		if refundErr := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "获取API信息失败退还"); refundErr != nil {
-			logger.Error("退还余额失败",
-				"error", refundErr,
-				"account_id", order.PlatformAccountID,
-				"amount", order.Price)
-		}
-		return err
-	}
-	logger.Info("获取平台API信息成功",
-		"order_id", order.ID,
-		"api_name", api.Name)
+    api, apiParam, err := s.getPlatformAPIByOrderID(ctx, order)
+    if err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("获取平台API信息失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("order_id", order.ID),
+        )
+        // 如果获取API信息失败，退还余额
+        if refundErr := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "获取API信息失败退还"); refundErr != nil {
+            logger.WithContextCategory(ctx, "recharge").Error("退还余额失败",
+                logger.ErrorV2(refundErr),
+                logger.Int64V2("account_id", order.PlatformAccountID),
+                logger.Float64V2("amount", order.Price),
+            )
+        }
+        return err
+    }
+    logger.WithContextCategory(ctx, "recharge").Info("获取平台API信息成功",
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("api_name", api.Name),
+    )
 
 	// 4. 提交订单到平台
-	if err := s.manager.SubmitOrder(ctx, order, api, apiParam); err != nil {
-		logger.Error("提交订单到平台失败",
-			"error", err,
-			"order_id", order.ID)
-		// 5. 如果提交失败，退还余额
-		if refundErr := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "订单提交失败退还"); refundErr != nil {
-			logger.Error("退还余额失败",
-				"error", refundErr,
-				"account_id", order.PlatformAccountID,
-				"amount", order.Price)
-		}
-		return err
-	}
-	logger.Info("提交订单到平台成功",
-		"order_id", order.ID)
+    if err := s.manager.SubmitOrder(ctx, order, api, apiParam); err != nil {
+        logger.WithContextCategory(ctx, "recharge").Error("提交订单到平台失败",
+            logger.ErrorV2(err),
+            logger.Int64V2("order_id", order.ID),
+        )
+        // 5. 如果提交失败，退还余额
+        if refundErr := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "订单提交失败退还"); refundErr != nil {
+            logger.WithContextCategory(ctx, "recharge").Error("退还余额失败",
+                logger.ErrorV2(refundErr),
+                logger.Int64V2("account_id", order.PlatformAccountID),
+                logger.Float64V2("amount", order.Price),
+            )
+        }
+        return err
+    }
+    logger.WithContextCategory(ctx, "recharge").Info("提交订单到平台成功",
+        logger.Int64V2("order_id", order.ID),
+    )
 
 	return nil
 }
@@ -142,17 +153,16 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	}
 
 	// 如果充值失败，退还余额
-	if callbackData.Status == "failed" {
-		if err := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "充值失败退还"); err != nil {
-			logger.Error("退还余额失败",
-				"error", err,
-				"account_id", order.PlatformAccountID,
-				"amount", order.Price)
-			// 这里不返回错误，因为回调处理不应该因为余额退还失败而失败
-		}
-	}
+    if callbackData.Status == "failed" {
+        if err := s.balanceService.RefundBalance(ctx, nil, order.PlatformAccountID, order.Price, order.ID, "充值失败退还"); err != nil {
+            logger.WithContextCategory(ctx, "recharge").Error("退还余额失败",
+                logger.ErrorV2(err),
+                logger.Int64V2("account_id", order.PlatformAccountID),
+                logger.Float64V2("amount", order.Price),
+            )
+            // 这里不返回错误，因为回调处理不应该因为余额退还失败而失败
+        }
+    }
 
 	return nil
 }
-
-// ... existing code ...

@@ -64,11 +64,14 @@ type QueryOrderStatusResult struct {
 
 // SubmitOrder 提交订单
 func (p *XianzhuanxiaPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-	logger.Info("开始提交闲赚侠订单",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"mobile", order.Mobile,
-	)
+    l := logger.WithContextCategory(ctx, "recharge")
+    if l != nil {
+        l.Info("开始提交闲赚侠订单",
+            logger.Int64V2("order_id", order.ID),
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("mobile", order.Mobile),
+        )
+    }
 
 	// 获取API密钥和密钥
 	appKey, _, accountName, err := p.getAPIKeyAndSecret(ctx, uint(api.AccountID))
@@ -87,105 +90,133 @@ func (p *XianzhuanxiaPlatform) SubmitOrder(ctx context.Context, order *model.Ord
 	}
 
 	// 生成签名
-	authToken, _, err := signature.GenerateXianzhuanxiaSignature(params, appKey, accountName)
-	if err != nil {
-		logger.Error("生成签名失败",
-			"error", err,
-			"params", params,
-		)
-		return fmt.Errorf("生成签名失败: %v", err)
-	}
+    authToken, _, err := signature.GenerateXianzhuanxiaSignature(params, appKey, accountName)
+    if err != nil {
+        if l != nil {
+            l.Error("生成签名失败",
+                logger.ErrorV2(err),
+                logger.AnyV2("params_keys", func() []string { ks := make([]string, 0, len(params)); for k := range params { ks = append(ks, k) }; return ks }()),
+            )
+        }
+        return fmt.Errorf("生成签名失败: %v", err)
+    }
 
 	// 发送请求
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		logger.Error("序列化请求参数失败",
-			"error", err,
-			"params", params,
-		)
-		return fmt.Errorf("序列化请求参数失败: %v", err)
-	}
+    jsonData, err := json.Marshal(params)
+    if err != nil {
+        if l != nil {
+            l.Error("序列化请求参数失败",
+                logger.ErrorV2(err),
+                logger.AnyV2("params_keys", func() []string { ks := make([]string, 0, len(params)); for k := range params { ks = append(ks, k) }; return ks }()),
+            )
+        }
+        return fmt.Errorf("序列化请求参数失败: %v", err)
+    }
 
-	req, err := http.NewRequestWithContext(ctx, "POST", api.URL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		logger.Error("创建HTTP请求失败",
-			"error", err,
-			"url", order.PlatformURL,
-		)
-		return fmt.Errorf("创建HTTP请求失败: %v", err)
-	}
+    req, err := http.NewRequestWithContext(ctx, "POST", api.URL, bytes.NewBuffer(jsonData))
+    if err != nil {
+        if l != nil {
+            l.Error("创建HTTP请求失败",
+                logger.ErrorV2(err),
+                logger.StringV2("url", order.PlatformURL),
+            )
+        }
+        return fmt.Errorf("创建HTTP请求失败: %v", err)
+    }
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth_Token", authToken)
-	logger.Info(fmt.Sprintf("请求参数 req: %+v", req))
+    if l != nil {
+        l.Info("闲赚侠请求",
+            logger.StringV2("method", req.Method),
+            logger.StringV2("url", req.URL.String()),
+            logger.IntV2("content_length", int(req.ContentLength)),
+            logger.AnyV2("header_keys", func() []string { ks := make([]string, 0, len(req.Header)); for k := range req.Header { ks = append(ks, k) }; return ks }()),
+        )
+    }
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("发送HTTP请求失败",
-			"error", err,
-			"url", req.URL.String(),
-		)
-		return fmt.Errorf("发送HTTP请求失败: %v", err)
-	}
+    if err != nil {
+        if l != nil {
+            l.Error("发送HTTP请求失败",
+                logger.ErrorV2(err),
+                logger.StringV2("url", req.URL.String()),
+            )
+        }
+        return fmt.Errorf("发送HTTP请求失败: %v", err)
+    }
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error("读取响应内容失败",
-			"error", err,
-			"status_code", resp.StatusCode,
-		)
-		return fmt.Errorf("读取响应内容失败: %v", err)
-	}
+    if err != nil {
+        if l != nil {
+            l.Error("读取响应内容失败",
+                logger.ErrorV2(err),
+                logger.IntV2("status_code", resp.StatusCode),
+            )
+        }
+        return fmt.Errorf("读取响应内容失败: %v", err)
+    }
 
 	// 记录平台原始响应内容
-	logger.Info("平台响应内容",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"response", string(body),
-	)
+    if l != nil {
+        l.Info("平台响应内容",
+            logger.Int64V2("order_id", order.ID),
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("response_preview", func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." } ; return string(b) }(body)),
+        )
+    }
 
 	// 解析响应
 	var result SubmitOrderResult
-	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Error("解析响应内容失败",
-			"error", err,
-			"body", string(body),
-		)
-		return fmt.Errorf("解析响应内容失败: %v", err)
-	}
+    if err := json.Unmarshal(body, &result); err != nil {
+        if l != nil {
+            l.Error("解析响应内容失败",
+                logger.ErrorV2(err),
+                logger.StringV2("body_preview", func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." } ; return string(b) }(body)),
+            )
+        }
+        return fmt.Errorf("解析响应内容失败: %v", err)
+    }
 
-	if result.Code != 0 {
-		logger.Error("提交订单失败",
-			"platform", "xianzhuanxia",
-			"order_id", order.ID,
-			"order_number", order.OrderNumber,
-			"error", result.Message,
-			"response", string(body),
-		)
-		return fmt.Errorf("submit order failed: %v", result.Message)
-	}
+    if result.Code != 0 {
+        if l != nil {
+            l.Error("提交订单失败",
+                logger.StringV2("platform", "xianzhuanxia"),
+                logger.Int64V2("order_id", order.ID),
+                logger.StringV2("order_number", order.OrderNumber),
+                logger.StringV2("error", result.Message),
+                logger.StringV2("response_preview", func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." } ; return string(b) }(body)),
+            )
+        }
+        return fmt.Errorf("submit order failed: %v", result.Message)
+    }
 
 	// 更新订单信息
 	order.APIOrderNumber = result.Data.OrderID
 	order.APITradeNum = result.Data.OrderID
 
-	logger.Info("提交订单成功",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"api_order_id", result.Data.OrderID,
-	)
+    if l != nil {
+        l.Info("提交订单成功",
+            logger.Int64V2("order_id", order.ID),
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("api_order_id", result.Data.OrderID),
+        )
+    }
 
 	return nil
 }
 
 // QueryOrderStatus 查询订单状态
 func (p *XianzhuanxiaPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-	logger.Info("开始查询闲赚侠订单状态",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"api_order_id", order.APIOrderNumber,
-	)
+    l := logger.WithContextCategory(ctx, "recharge")
+    if l != nil {
+        l.Info("开始查询闲赚侠订单状态",
+            logger.Int64V2("order_id", order.ID),
+            logger.StringV2("order_number", order.OrderNumber),
+            logger.StringV2("api_order_id", order.APIOrderNumber),
+        )
+    }
 
 	// 获取API密钥和密钥
 	appKey, appSecret, _, err := p.getAPIKeyAndSecret(ctx, uint(order.APICurID))
@@ -201,73 +232,87 @@ func (p *XianzhuanxiaPlatform) QueryOrderStatus(ctx context.Context, order *mode
 	}
 
 	// 生成签名
-	authToken, _, err := signature.GenerateXianzhuanxiaSignature(params, appKey, appSecret)
-	if err != nil {
-		logger.Error("生成签名失败",
-			"error", err,
-			"params", params,
-		)
-		return 0, fmt.Errorf("生成签名失败: %v", err)
-	}
+    authToken, _, err := signature.GenerateXianzhuanxiaSignature(params, appKey, appSecret)
+    if err != nil {
+        if l != nil {
+            l.Error("生成签名失败",
+                logger.ErrorV2(err),
+                logger.AnyV2("params_keys", func() []string { ks := make([]string, 0, len(params)); for k := range params { ks = append(ks, k) }; return ks }()),
+            )
+        }
+        return 0, fmt.Errorf("生成签名失败: %v", err)
+    }
 
 	// 发送请求
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		logger.Error("序列化请求参数失败",
-			"error", err,
-			"params", params,
-		)
-		return 0, fmt.Errorf("序列化请求参数失败: %v", err)
-	}
+    jsonData, err := json.Marshal(params)
+    if err != nil {
+        if l != nil {
+            l.Error("序列化请求参数失败",
+                logger.ErrorV2(err),
+                logger.AnyV2("params_keys", func() []string { ks := make([]string, 0, len(params)); for k := range params { ks = append(ks, k) }; return ks }()),
+            )
+        }
+        return 0, fmt.Errorf("序列化请求参数失败: %v", err)
+    }
 
-	req, err := http.NewRequestWithContext(ctx, "POST", order.PlatformURL+"/query", bytes.NewBuffer(jsonData))
-	if err != nil {
-		logger.Error("创建HTTP请求失败",
-			"error", err,
-			"url", order.PlatformURL+"/query",
-		)
-		return 0, fmt.Errorf("创建HTTP请求失败: %v", err)
-	}
+    req, err := http.NewRequestWithContext(ctx, "POST", order.PlatformURL+"/query", bytes.NewBuffer(jsonData))
+    if err != nil {
+        if l != nil {
+            l.Error("创建HTTP请求失败",
+                logger.ErrorV2(err),
+                logger.StringV2("url", order.PlatformURL+"/query"),
+            )
+        }
+        return 0, fmt.Errorf("创建HTTP请求失败: %v", err)
+    }
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+authToken)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("发送HTTP请求失败",
-			"error", err,
-			"url", req.URL.String(),
-		)
-		return 0, fmt.Errorf("发送HTTP请求失败: %v", err)
-	}
+    if err != nil {
+        if l != nil {
+            l.Error("发送HTTP请求失败",
+                logger.ErrorV2(err),
+                logger.StringV2("url", req.URL.String()),
+            )
+        }
+        return 0, fmt.Errorf("发送HTTP请求失败: %v", err)
+    }
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error("读取响应内容失败",
-			"error", err,
-			"status_code", resp.StatusCode,
-		)
-		return 0, fmt.Errorf("读取响应内容失败: %v", err)
-	}
+    if err != nil {
+        if l != nil {
+            l.Error("读取响应内容失败",
+                logger.ErrorV2(err),
+                logger.IntV2("status_code", resp.StatusCode),
+            )
+        }
+        return 0, fmt.Errorf("读取响应内容失败: %v", err)
+    }
 
 	var result QueryOrderStatusResult
-	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Error("解析响应内容失败",
-			"error", err,
-			"body", string(body),
-		)
-		return 0, fmt.Errorf("解析响应内容失败: %v", err)
-	}
+    if err := json.Unmarshal(body, &result); err != nil {
+        if l != nil {
+            l.Error("解析响应内容失败",
+                logger.ErrorV2(err),
+                logger.StringV2("body_preview", func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." } ; return string(b) }(body)),
+            )
+        }
+        return 0, fmt.Errorf("解析响应内容失败: %v", err)
+    }
 
-	if result.Code != 0 {
-		logger.Error("查询订单状态失败",
-			"code", result.Code,
-			"message", result.Message,
-		)
-		return 0, fmt.Errorf("查询订单状态失败: %s", result.Message)
-	}
+    if result.Code != 0 {
+        if l != nil {
+            l.Error("查询订单状态失败",
+                logger.IntV2("code", result.Code),
+                logger.StringV2("message", result.Message),
+            )
+        }
+        return 0, fmt.Errorf("查询订单状态失败: %s", result.Message)
+    }
 
 	switch result.Data.Status {
 	case 2:
@@ -337,9 +382,12 @@ func (p *XianzhuanxiaPlatform) ParseCallbackData(data []byte) (*model.CallbackDa
 
 // QueryBalance 查询账户余额
 func (p *XianzhuanxiaPlatform) QueryBalance(ctx context.Context, accountID int64) (float64, error) {
-	logger.Info("开始查询闲赚侠账户余额",
-		"account_id", accountID,
-	)
+    l := logger.WithContextCategory(ctx, "recharge")
+    if l != nil {
+        l.Info("开始查询闲赚侠账户余额",
+            logger.Int64V2("account_id", accountID),
+        )
+    }
 
 	// 获取API密钥和密钥
 	appKey, appSecret, accountName, err := p.getAPIKeyAndSecret(ctx, uint(accountID))
@@ -360,56 +408,66 @@ func (p *XianzhuanxiaPlatform) QueryBalance(ctx context.Context, accountID int64
 	}
 
 	// 生成签名
-	authToken, _, err := signature.GenerateXianzhuanxiaSignature(params, appKey, accountName)
-	if err != nil {
-		logger.Error("生成签名失败",
-			"error", err,
-			"params", params,
-		)
-		return 0, fmt.Errorf("生成签名失败: %v", err)
-	}
+    authToken, _, err := signature.GenerateXianzhuanxiaSignature(params, appKey, accountName)
+    if err != nil {
+        if l != nil {
+            l.Error("生成签名失败",
+                logger.ErrorV2(err),
+                logger.AnyV2("params_keys", func() []string { ks := make([]string, 0, len(params)); for k := range params { ks = append(ks, k) }; return ks }()),
+            )
+        }
+        return 0, fmt.Errorf("生成签名失败: %v", err)
+    }
 
 	// 发送请求
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		logger.Error("序列化请求参数失败",
-			"error", err,
-			"params", params,
-		)
-		return 0, fmt.Errorf("序列化请求参数失败: %v", err)
-	}
+    jsonData, err := json.Marshal(params)
+    if err != nil {
+        if l != nil {
+            l.Error("序列化请求参数失败",
+                logger.ErrorV2(err),
+                logger.AnyV2("params_keys", func() []string { ks := make([]string, 0, len(params)); for k := range params { ks = append(ks, k) }; return ks }()),
+            )
+        }
+        return 0, fmt.Errorf("序列化请求参数失败: %v", err)
+    }
 
-	req, err := http.NewRequestWithContext(ctx, "POST", api.URL+"/query-balance", bytes.NewBuffer(jsonData))
-	if err != nil {
-		logger.Error("创建HTTP请求失败",
-			"error", err,
-			"url", api.URL+"/query-balance",
-		)
-		return 0, fmt.Errorf("创建HTTP请求失败: %v", err)
-	}
+    req, err := http.NewRequestWithContext(ctx, "POST", api.URL+"/query-balance", bytes.NewBuffer(jsonData))
+    if err != nil {
+        if l != nil {
+            l.Error("创建HTTP请求失败",
+                logger.ErrorV2(err),
+                logger.StringV2("url", api.URL+"/query-balance"),
+            )
+        }
+        return 0, fmt.Errorf("创建HTTP请求失败: %v", err)
+    }
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth_Token", authToken)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
-	if err != nil {
-		logger.Error("发送HTTP请求失败",
-			"error", err,
-			"url", req.URL.String(),
-		)
-		return 0, fmt.Errorf("发送HTTP请求失败: %v", err)
-	}
+    if err != nil {
+        if l != nil {
+            l.Error("发送HTTP请求失败",
+                logger.ErrorV2(err),
+                logger.StringV2("url", req.URL.String()),
+            )
+        }
+        return 0, fmt.Errorf("发送HTTP请求失败: %v", err)
+    }
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		logger.Error("读取响应内容失败",
-			"error", err,
-			"status_code", resp.StatusCode,
-		)
-		return 0, fmt.Errorf("读取响应内容失败: %v", err)
-	}
+    if err != nil {
+        if l != nil {
+            l.Error("读取响应内容失败",
+                logger.ErrorV2(err),
+                logger.IntV2("status_code", resp.StatusCode),
+            )
+        }
+        return 0, fmt.Errorf("读取响应内容失败: %v", err)
+    }
 
 	// 解析响应
 	var result struct {
@@ -420,27 +478,33 @@ func (p *XianzhuanxiaPlatform) QueryBalance(ctx context.Context, accountID int64
 		} `json:"data"`
 	}
 
-	if err := json.Unmarshal(body, &result); err != nil {
-		logger.Error("解析响应内容失败",
-			"error", err,
-			"body", string(body),
-		)
-		return 0, fmt.Errorf("解析响应内容失败: %v", err)
-	}
+    if err := json.Unmarshal(body, &result); err != nil {
+        if l != nil {
+            l.Error("解析响应内容失败",
+                logger.ErrorV2(err),
+                logger.StringV2("body_preview", func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." } ; return string(b) }(body)),
+            )
+        }
+        return 0, fmt.Errorf("解析响应内容失败: %v", err)
+    }
 
-	if result.Code != 0 {
-		logger.Error("查询余额失败",
-			"platform", "xianzhuanxia",
-			"account_id", accountID,
-			"error", result.Message,
-		)
-		return 0, fmt.Errorf("查询余额失败: %s", result.Message)
-	}
+    if result.Code != 0 {
+        if l != nil {
+            l.Error("查询余额失败",
+                logger.StringV2("platform", "xianzhuanxia"),
+                logger.Int64V2("account_id", accountID),
+                logger.StringV2("error", result.Message),
+            )
+        }
+        return 0, fmt.Errorf("查询余额失败: %s", result.Message)
+    }
 
-	logger.Info("查询余额成功",
-		"account_id", accountID,
-		"balance", result.Data.Balance,
-	)
+    if l != nil {
+        l.Info("查询余额成功",
+            logger.Int64V2("account_id", accountID),
+            logger.Float64V2("balance", result.Data.Balance),
+        )
+    }
 
 	return result.Data.Balance, nil
 }

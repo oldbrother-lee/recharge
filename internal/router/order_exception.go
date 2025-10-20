@@ -28,7 +28,7 @@ func RegisterOrderExceptionRoutes(r *gin.RouterGroup, userService *service.UserS
 		exceptions.GET("", orderExceptionController.List)
 
 		// 获取异常详情
-		exceptions.GET("/:id", orderExceptionController.GetByID)
+		// exceptions.GET("/:id", orderExceptionController.GetByID)
 
 		// 更新异常状态
 		exceptions.PUT("/:id/status", orderExceptionController.UpdateStatus)

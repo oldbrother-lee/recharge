@@ -1,9 +1,9 @@
 package controller
 
 import (
-	"fmt"
 	"net/http"
 	"recharge-go/internal/utils"
+	"recharge-go/pkg/logger"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -18,7 +18,7 @@ func (c *OrderController) GetOrderStatistics(ctx *gin.Context) {
 		return
 	}
 	stats, err := c.orderService.GetOrderStatistics(ctx, customerID)
-	fmt.Printf("stats: %+v", stats)
+	logger.WithContextCategory(ctx.Request.Context(), "order").Info("订单统计结果", logger.AnyV2("stats", stats), logger.Int64V2("customer_id", customerID))
 	if err != nil {
 		utils.Error(ctx, http.StatusInternalServerError, err.Error())
 		return

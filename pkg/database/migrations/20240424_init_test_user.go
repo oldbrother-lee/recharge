@@ -23,6 +23,7 @@ func InitTestUser(db *gorm.DB) error {
 			return err
 		}
 
+		now := time.Now()
 		user := &model.User{
 			Username:  "test",
 			Password:  string(hashedPassword),
@@ -30,9 +31,9 @@ func InitTestUser(db *gorm.DB) error {
 			Phone:     "13800138000",
 			Email:     "test@example.com",
 			Status:    1,
-			LastLogin: time.Now(),
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			LastLogin: &now,
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
 		if err := db.Create(user).Error; err != nil {
 			return err

@@ -24,6 +24,7 @@ func InitAdmin(db *gorm.DB) error {
 		}
 
 		// 创建管理员用户
+		now := time.Now()
 		admin := &model.User{
 			Username:  "admin",
 			Password:  string(hashedPassword),
@@ -31,9 +32,9 @@ func InitAdmin(db *gorm.DB) error {
 			Phone:     "13800138001",
 			Email:     "admin@example.com",
 			Status:    1,
-			LastLogin: time.Now(),
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			LastLogin: &now,
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
 		if err := db.Create(admin).Error; err != nil {
 			return err
@@ -49,8 +50,8 @@ func InitAdmin(db *gorm.DB) error {
 		userRole := &model.UserRole{
 			UserID:    admin.ID,
 			RoleID:    role.ID,
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+			CreatedAt: now,
+			UpdatedAt: now,
 		}
 		if err := db.Create(userRole).Error; err != nil {
 			return err

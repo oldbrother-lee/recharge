@@ -6,21 +6,21 @@ import (
 
 // User 用户模型
 type User struct {
-	ID        int64     `json:"id" gorm:"primaryKey;type:bigint;not null"`
-	Username  string    `json:"username" gorm:"size:50;not null;unique"`
-	Password  string    `json:"-" gorm:"size:100;not null"`
-	Nickname  string    `json:"nickname" gorm:"size:50"`
-	Phone     string    `json:"phone" gorm:"size:20"`
-	Email     string    `json:"email" gorm:"size:100"`
-	Avatar    string    `json:"avatar" gorm:"size:255"`
-	Type      int       `json:"type" gorm:"type:tinyint;default:1;comment:用户类型(1:普通用户 2:代理商 3:管理员)"`
-	Gender    int       `json:"gender" gorm:"type:tinyint;default:0;comment:性别(0:未知 1:男 2:女)"`
-	Credit    float64   `json:"credit" gorm:"type:decimal(10,2);default:0.00;comment:授信额度"`
-	Balance   float64   `json:"balance" gorm:"type:decimal(10,2);default:0.00;comment:余额"`
-	Status    int       `json:"status" gorm:"type:bigint;default:1"`
-	LastLogin time.Time `json:"last_login" gorm:"type:datetime"`
-	CreatedAt time.Time `json:"created_at" gorm:"type:datetime;autoCreateTime"`
-	UpdatedAt time.Time `json:"updated_at" gorm:"type:datetime;autoUpdateTime"`
+	ID        int64      `json:"id" gorm:"primaryKey;type:bigint;not null"`
+	Username  string     `json:"username" gorm:"size:50;not null;unique"`
+	Password  string     `json:"-" gorm:"size:100;not null"`
+	Nickname  string     `json:"nickname" gorm:"size:50"`
+	Phone     string     `json:"phone" gorm:"size:20"`
+	Email     string     `json:"email" gorm:"size:100"`
+	Avatar    string     `json:"avatar" gorm:"size:255"`
+	Type      int        `json:"type" gorm:"type:tinyint;default:1;comment:用户类型(1:普通用户 2:代理商 3:管理员)"`
+	Gender    int        `json:"gender" gorm:"type:tinyint;default:0;comment:性别(0:未知 1:男 2:女)"`
+	Credit    float64    `json:"credit" gorm:"type:decimal(10,2);default:0.00;comment:授信额度"`
+	Balance   float64    `json:"balance" gorm:"type:decimal(10,2);default:0.00;comment:余额"`
+	Status    int        `json:"status" gorm:"type:bigint;default:1"`
+	LastLogin *time.Time `json:"last_login" gorm:"type:datetime"`
+	CreatedAt time.Time  `json:"created_at" gorm:"type:datetime;autoCreateTime"`
+	UpdatedAt time.Time  `json:"updated_at" gorm:"type:datetime;autoUpdateTime"`
 }
 
 // TableName 指定表名
@@ -125,6 +125,7 @@ type UserChangePasswordRequest struct {
 	NewPassword string `json:"newPassword" binding:"required"`
 }
 
+// UserListRequest 用户列表请求
 type UserListRequest struct {
 	Current  int    `json:"current" form:"current"`
 	Size     int    `json:"size" form:"size"`
@@ -196,21 +197,21 @@ func (Reward) TableName() string {
 
 // UserResponse 用户响应结构
 type UserResponse struct {
-	ID          int64     `json:"id"`
-	Username    string    `json:"username"`
-	Nickname    string    `json:"nickname"`
-	Phone       string    `json:"phone"`
-	Email       string    `json:"email"`
-	Avatar      string    `json:"avatar"`
-	Type        int       `json:"type"`
-	Gender      int       `json:"gender"`
-	Credit      float64   `json:"credit"`
-	Status      int       `json:"status"`
-	CreditLimit float64   `json:"credit_limit"`
-	Balance     float64   `json:"balance"`
-	LastLogin   time.Time `json:"last_login"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID          int64      `json:"id"`
+	Username    string     `json:"username"`
+	Nickname    string     `json:"nickname"`
+	Phone       string     `json:"phone"`
+	Email       string     `json:"email"`
+	Avatar      string     `json:"avatar"`
+	Type        int        `json:"type"`
+	Gender      int        `json:"gender"`
+	Credit      float64    `json:"credit"`
+	Status      int        `json:"status"`
+	CreditLimit float64    `json:"credit_limit"`
+	Balance     float64    `json:"balance"`
+	LastLogin   *time.Time `json:"last_login"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // UserListResponse 用户列表响应结构

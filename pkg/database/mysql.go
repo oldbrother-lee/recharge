@@ -93,6 +93,10 @@ func InitDB() error {
 		&model.OrderException{},
 		&model.BalanceQueryRecord{},
 		&model.OrderRetryRecord{},
+		// 新增：拉单相关表
+		&model.PullSource{},
+		&model.PullVariantConfig{},
+		&model.PullProductMap{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate tables: %v", err)
 	}

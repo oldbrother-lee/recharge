@@ -137,27 +137,31 @@ func getEncoderConfig(format string) zapcore.EncoderConfig {
 
 // getWriteSyncer 获取写入器
 func getWriteSyncer(config *LoggerConfigV2) zapcore.WriteSyncer {
-	if config.Output == "stdout" || config.Output == "" {
-		return zapcore.AddSync(os.Stdout)
-	}
+    if config.Output == "stdout" || config.Output == "" {
+        return zapcore.AddSync(os.Stdout)
+    }
 
-	// 确保日志目录存在
-	logDir := filepath.Dir(config.Output)
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		// 如果创建目录失败，回退到stdout
-		return zapcore.AddSync(os.Stdout)
-	}
+    // 确保日志目录存在
+    logDir := filepath.Dir(config.Output)
+    if err := os.MkdirAll(logDir, 0755); err != nil {
+        // 如果创建目录失败，回退到stdout
+        return zapcore.AddSync(os.Stdout)
+    }
 
-	// 使用lumberjack进行日志轮转
-	lumberjackLogger := &lumberjack.Logger{
-		Filename:   config.Output,
-		MaxSize:    config.MaxSize,
-		MaxBackups: config.MaxBackups,
-		MaxAge:     config.MaxAge,
-		Compress:   config.Compress,
-	}
+    // 使用lumberjack进行日志轮转
+    lumberjackLogger := &lumberjack.Logger{
+        Filename:   config.Output,
+        MaxSize:    config.MaxSize,
+        MaxBackups: config.MaxBackups,
+        MaxAge:     config.MaxAge,
+        Compress:   config.Compress,
+    }
 
-	return zapcore.AddSync(lumberjackLogger)
+    // 同时写入文件与终端，便于在终端查看详细日志
+    return zapcore.NewMultiWriteSyncer(
+        zapcore.AddSync(os.Stdout),
+        zapcore.AddSync(lumberjackLogger),
+    )
 }
 
 // InitGlobalLoggerV2 初始化全局日志器

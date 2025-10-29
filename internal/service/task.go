@@ -21,7 +21,7 @@ type TaskService struct {
 	daichongOrderRepo   *repository.DaichongOrderRepository
 	platformSvc         *platform.Service
 	orderService        OrderService
-	config           *configs.TaskConfig
+	config              *configs.TaskConfig
 	ctx                 context.Context
 	cancel              context.CancelFunc
 	wg                  sync.WaitGroup
@@ -34,8 +34,8 @@ type TaskService struct {
 	// 配置监听器
 	configListener *TaskConfigListener
 	// 订单数量监控相关字段
-	isPullingSuspended bool        // 是否暂停拉单
-	suspendMutex       sync.RWMutex // 保护暂停状态的读写锁
+	isPullingSuspended bool            // 是否暂停拉单
+	suspendMutex       sync.RWMutex    // 保护暂停状态的读写锁
 	orderThresholds    OrderThresholds // 订单数量阈值配置
 }
 
@@ -44,8 +44,6 @@ type TaskContext struct {
 	Ctx    context.Context
 	Cancel context.CancelFunc
 }
-
-
 
 // OrderThresholds 订单数量阈值配置
 type OrderThresholds struct {
@@ -666,9 +664,9 @@ func (s *TaskService) processTask() {
 		}
 
 		logger.InfoV2("启动新任务",
-		logger.Int64V2("task_id", config.ID),
-		logger.Int64V2("channel_id", int64(config.ChannelID)),
-		logger.StringV2("product_id", config.ProductID))
+			logger.Int64V2("task_id", config.ID),
+			logger.Int64V2("channel_id", int64(config.ChannelID)),
+			logger.StringV2("product_id", config.ProductID))
 
 		sem <- struct{}{} // 占用一个并发槽
 		wg.Add(1)
@@ -705,7 +703,7 @@ func (s *TaskService) checkAndStopObsoleteTasks(currentConfigs []model.TaskConfi
 	// 停止过时的任务
 	for _, taskID := range tasksToStop {
 		logger.InfoV2("正在停止过时任务",
-		logger.Int64V2("task_id", int64(taskID)))
+			logger.Int64V2("task_id", int64(taskID)))
 		s.StopTaskByID(taskID)
 		// 注意：不需要手动删除任务上下文，StopTaskByID会触发defer清理逻辑
 	}
@@ -759,9 +757,9 @@ func (s *TaskService) startNewEnabledTasks(configs []model.TaskConfig) {
 
 		newTaskCount++
 		logger.InfoV2("启动新任务",
-		logger.Int64V2("task_id", config.ID),
-		logger.Int64V2("channel_id", int64(config.ChannelID)),
-		logger.StringV2("product_id", config.ProductID))
+			logger.Int64V2("task_id", config.ID),
+			logger.Int64V2("channel_id", int64(config.ChannelID)),
+			logger.StringV2("product_id", config.ProductID))
 
 		sem <- struct{}{} // 占用一个并发槽
 		wg.Add(1)
@@ -867,7 +865,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 		// 再清理任务上下文映射
 		s.taskMutex.Lock()
 		defer s.taskMutex.Unlock()
-		
+
 		// 只有当前上下文仍然存在时才删除（避免重复删除）
 		if currentTaskCtx, exists := s.taskContexts[taskID]; exists && currentTaskCtx.Ctx == taskCtx {
 			delete(s.taskContexts, taskID)
@@ -942,12 +940,12 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 		break
 	}
 	logger.InfoV2("开始处理任务配置",
-	logger.Int64V2("channel_id", int64(channelID)),
-	logger.StringV2("product_id", productID),
-	logger.StringV2("account_name", accountName),
-	logger.StringV2("provinces", provinces),
-	logger.StringV2("face_values", faceValues),
-	logger.StringV2("min_settle_amounts", minSettleAmounts))
+		logger.Int64V2("channel_id", int64(channelID)),
+		logger.StringV2("product_id", productID),
+		logger.StringV2("account_name", accountName),
+		logger.StringV2("provinces", provinces),
+		logger.StringV2("face_values", faceValues),
+		logger.StringV2("min_settle_amounts", minSettleAmounts))
 
 	// 获取或申请token
 	logger.InfoV2("开始申请token",
@@ -1263,7 +1261,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 		select {
 		case <-taskCtx.Done():
 			logger.InfoV2("任务在查询间隔等待中被停止",
-			logger.Int64V2("task_id", int64(taskID)))
+				logger.Int64V2("task_id", int64(taskID)))
 			return
 		case <-time.After(time.Duration(queryInterval) * time.Second):
 			// 继续下一轮

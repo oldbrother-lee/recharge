@@ -13,6 +13,7 @@ import (
 	"os"
 	"sync"
 	"strconv"
+	"recharge-go/pkg/redis"
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
@@ -71,16 +72,15 @@ func rc4DecryptBase64(b64 string, key string) (string, error) {
 	return string(out), nil
 }
 
-// Pull 按变体ID拉取订单（严格按示例构造与请求）
+// Pull 按变体ID拉取订单（统一：Redis共享token，必要时登录并写回Redis）
 func (p *DzPullPlatform) Pull(ctx context.Context, variantID int64) ([]ExternalOrder, error) {
 	logger.InfoV2("[DZ] ===== 开始变体拉单 =====", logger.Int64V2("variant_id", variantID))
-	fmt.Printf("[DEBUG] DzPullPlatform.Pull called with variantID=%d\n", variantID)
 
 	// 1) 读取变体与源配置
 	variant, err := p.repo.GetVariantByID(ctx, variantID)
-	if err != nil { 
+	if err != nil {
 		logger.ErrorLogV2("[DZ] 读取变体失败", logger.ErrorV2(err), logger.Int64V2("variant_id", variantID))
-		return nil, fmt.Errorf("读取变体失败: %w", err) 
+		return nil, fmt.Errorf("读取变体失败: %w", err)
 	}
 	if variant == nil {
 		logger.ErrorLogV2("[DZ] 变体不存在", logger.Int64V2("variant_id", variantID))
@@ -132,10 +132,24 @@ func (p *DzPullPlatform) Pull(ctx context.Context, variantID int64) ([]ExternalO
 		Data   interface{} `json:"data"`
 	}
 
-	// 优先复用缓存 token；若不存在则登录一次
-	token := strings.TrimSpace(p.getToken(source.ID))
-	if token == "" {
-		// 2) 登录（严格按示例 payload）
+	// 优先复用Redis缓存 token；若不存在则内存缓存；最后登录一次
+	var token string
+	redisKey := fmt.Sprintf("dz:token:%d:%s", source.ID, username)
+	if rc := redis.GetClient(); rc != nil {
+		if v, err := rc.Get(ctx, redisKey).Result(); err == nil && strings.TrimSpace(v) != "" {
+			token = v
+			logger.InfoV2("[DZ] 复用Redis缓存token", logger.StringV2("token_mask", maskSecret(v)))
+		}
+	}
+	if strings.TrimSpace(token) == "" {
+		// 次选：内存缓存
+		token = strings.TrimSpace(p.getToken(source.ID))
+		if token != "" {
+			logger.InfoV2("[DZ] 复用内存缓存token", logger.StringV2("token_mask", maskSecret(token)))
+		}
+	}
+	if strings.TrimSpace(token) == "" {
+		// 登录（仅初次）
 		type LoginData struct { Username string `json:"username"`; Password string `json:"password"` }
 		type RequestData struct {
 			Action string      `json:"action"`
@@ -158,35 +172,30 @@ func (p *DzPullPlatform) Pull(ctx context.Context, variantID int64) ([]ExternalO
 			logger.ErrorLogV2("[DZ] 未配置平台登录密码", logger.StringV2("hint", "可在 pull_sources.account_password 入库或设置 RECHARGE_DZ_PASSWORD"))
 			return nil, fmt.Errorf("缺少登录密码: 请在数据库 pull_sources.account_password 或环境变量 RECHARGE_DZ_PASSWORD 配置")
 		}
-
-		loginReq := RequestData{
-			Action: "login",
-			Flag:   "invite_dxfs",
-			Ver:    "1.0.0.0",
-			Token:  "",
-			Data:   LoginData{Username: username, Password: password},
-		}
+		// 构造登录请求并加密
+		loginReq := RequestData{ Action: "login", Flag: "invite_dxfs", Ver: "1.0.0.0", Token: "", Data: LoginData{Username: username, Password: password} }
 		loginJSON, _ := json.Marshal(loginReq)
 		loginEnc, err := rc4EncryptBase64(loginJSON, rc4Key)
 		if err != nil { return nil, fmt.Errorf("登录报文加密失败: %w", err) }
 		logger.InfoV2("[DZ] 登录请求预览", logger.AnyV2("payload", loginReq))
-
 		loginRespDec, err := p.postAndDecrypt(baseURL, loginEnc, rc4Key)
 		if err != nil { return nil, fmt.Errorf("登录HTTP失败: %w", err) }
 		logger.InfoV2("[DZ] 登录响应解密", logger.StringV2("json", loginRespDec))
-
-		// 尝试解析登录token
 		var loginResp map[string]any
 		if err := json.Unmarshal([]byte(loginRespDec), &loginResp); err != nil {
 			logger.ErrorLogV2("[DZ] 登录响应JSON解析失败", logger.ErrorV2(err))
 			return nil, fmt.Errorf("登录响应解析失败: %w", err)
 		}
-		// 根据实际响应，token在data字段中
 		token = getString(loginResp, "data")
 		if token == "" { token = getString(loginResp, "token") }
 		if token == "" { return nil, fmt.Errorf("登录未返回token") }
 		logger.InfoV2("[DZ] 获取到登录token", logger.StringV2("token", maskSecret(token)))
 		p.setToken(source.ID, token)
+		// 写入 Redis（无过期）
+		if rc := redis.GetClient(); rc != nil {
+			_ = rc.Set(ctx, redisKey, token, 0).Err()
+			logger.InfoV2("[DZ] token已写入Redis(无过期)", logger.StringV2("key", redisKey))
+		}
 	} else {
 		logger.InfoV2("[DZ] 复用缓存token", logger.StringV2("token", maskSecret(token)))
 	}
@@ -244,7 +253,13 @@ func (p *DzPullPlatform) Pull(ctx context.Context, variantID int64) ([]ExternalO
 
 	pullRespDec, err := p.postAndDecrypt(baseURL, pullEnc, rc4Key)
 	if err != nil { return nil, fmt.Errorf("拉单HTTP失败: %w", err) }
-	logger.InfoV2("[DZ] 拉单响应解密", logger.StringV2("json", pullRespDec))
+	logger.InfoV2("[DZ] 拉单响应解密", 
+		logger.StringV2("json", pullRespDec),
+		logger.Int64V2("source_id", source.ID),
+		logger.Int64V2("variant_id", variant.ID),
+		logger.IntV2("isp", variant.ISP),
+		logger.Float64V2("face_value", variant.FaceValue),
+		logger.StringV2("source_name", source.Name))
 
 	// 解析拉单响应为外部订单
 	var resp map[string]any
@@ -255,7 +270,13 @@ func (p *DzPullPlatform) Pull(ctx context.Context, variantID int64) ([]ExternalO
 	if v, ok := resp["ret"].(float64); !ok || int(v) != 0 {
 		msg := ""
 		if s, ok := resp["msg"].(string); ok { msg = s }
-		logger.InfoV2("[DZ] 拉单返回非成功", logger.StringV2("msg", msg))
+		logger.InfoV2("[DZ] 拉单返回非成功", 
+			logger.StringV2("msg", msg),
+			logger.Int64V2("source_id", source.ID),
+			logger.Int64V2("variant_id", variant.ID),
+			logger.IntV2("isp", variant.ISP),
+			logger.Float64V2("face_value", variant.FaceValue),
+			logger.StringV2("source_name", source.Name))
 		// 若疑似 token 失效，尝试重登并重试一次
 		if strings.Contains(msg, "token") || strings.Contains(msg, "登录") || strings.Contains(msg, "未登录") || strings.Contains(msg, "失效") {
 			logger.InfoV2("[DZ] 检测到可能的token失效，尝试重登并重试一次")
@@ -274,34 +295,46 @@ func (p *DzPullPlatform) Pull(ctx context.Context, variantID int64) ([]ExternalO
 				if err == nil {
 					var loginResp map[string]any
 					if json.Unmarshal([]byte(loginRespDec), &loginResp) == nil {
-						token = getString(loginResp, "data"); if token == "" { token = getString(loginResp, "token") }
-						if token != "" {
-							p.setToken(source.ID, token)
-							// 重新构造拉单请求并重试
-							if pullAction == "get" {
-								type GetData struct { Amount string `json:"amount"`; MaxAmount string `json:"max_amount"`; Operator int `json:"operator"`; Discount int `json:"discount"`; Prov string `json:"prov"` }
-								amountStr := fmt.Sprintf("%g", variant.FaceValue)
-								pullReq = RequestData{ Action: pullAction, Flag: "invite_dxfs", Ver: "1.0.0.0", Token: token, Data: GetData{ Amount: amountStr, MaxAmount: amountStr, Operator: variant.ISP, Discount: 0, Prov: "" } }
-							} else {
-								type PullData struct { ISP int `json:"isp"`; FaceValue float64 `json:"face_value"`; CursorToken string `json:"cursor_token"`; Limit int `json:"limit"` }
-								pullReq = RequestData{ Action: pullAction, Flag: "invite_dxfs", Ver: "1.0.0.0", Token: token, Data: PullData{ ISP: variant.ISP, FaceValue: variant.FaceValue, CursorToken: variant.Cursor, Limit: 50 } }
-							}
-							pullJSON2, _ := json.Marshal(pullReq)
-							pullEnc2, err := rc4EncryptBase64(pullJSON2, rc4Key)
+						token = getString(loginResp, "data")
+						if token == "" { token = getString(loginResp, "token") }
+						if token == "" { return nil, fmt.Errorf("登录未返回token") }
+						logger.InfoV2("[DZ] 获取到登录token", logger.StringV2("token", maskSecret(token)))
+						p.setToken(source.ID, token)
+						// 写入 Redis（无过期）
+						if rc := redis.GetClient(); rc != nil {
+							_ = rc.Set(ctx, redisKey, token, 0).Err()
+							logger.InfoV2("[DZ] token已写入Redis(无过期)", logger.StringV2("key", redisKey))
+						}
+						// 重新构造拉单请求并重试
+						if pullAction == "get" {
+							type GetData struct { Amount string `json:"amount"`; MaxAmount string `json:"max_amount"`; Operator int `json:"operator"`; Discount int `json:"discount"`; Prov string `json:"prov"` }
+							amountStr := fmt.Sprintf("%g", variant.FaceValue)
+							pullReq = RequestData{ Action: pullAction, Flag: "invite_dxfs", Ver: "1.0.0.0", Token: token, Data: GetData{ Amount: amountStr, MaxAmount: amountStr, Operator: variant.ISP, Discount: 0, Prov: "" } }
+						} else {
+							type PullData struct { ISP int `json:"isp"`; FaceValue float64 `json:"face_value"`; CursorToken string `json:"cursor_token"`; Limit int `json:"limit"` }
+							pullReq = RequestData{ Action: pullAction, Flag: "invite_dxfs", Ver: "1.0.0.0", Token: token, Data: PullData{ ISP: variant.ISP, FaceValue: variant.FaceValue, CursorToken: variant.Cursor, Limit: 50 } }
+						}
+						pullJSON2, _ := json.Marshal(pullReq)
+						pullEnc2, err := rc4EncryptBase64(pullJSON2, rc4Key)
+						if err == nil {
+							pullRespDec2, err := p.postAndDecrypt(baseURL, pullEnc2, rc4Key)
 							if err == nil {
-								pullRespDec2, err := p.postAndDecrypt(baseURL, pullEnc2, rc4Key)
-								if err == nil {
-									var resp2 map[string]any
-									if json.Unmarshal([]byte(pullRespDec2), &resp2) == nil {
-										if v2, ok := resp2["ret"].(float64); ok && int(v2) == 0 {
-											resp = resp2 // 使用重试结果
-											logger.InfoV2("[DZ] 重登后拉单成功")
-										} else { logger.InfoV2("[DZ] 重登后拉单仍失败") }
+								var resp2 map[string]any
+								if json.Unmarshal([]byte(pullRespDec2), &resp2) == nil {
+									if v2, ok := resp2["ret"].(float64); ok && int(v2) == 0 {
+										resp = resp2
+										logger.InfoV2("[DZ] 重登后拉单成功")
+									} else {
+										logger.InfoV2("[DZ] 重登后拉单仍失败")
 									}
 								}
 							}
 						}
+					} else {
+						return nil, fmt.Errorf("登录响应解析失败")
 					}
+				} else {
+					return nil, fmt.Errorf("登录响应解析失败")
 				}
 			}
 		}
@@ -342,82 +375,43 @@ func (p *DzPullPlatform) Pull(ctx context.Context, variantID int64) ([]ExternalO
 		Discount:     discount,
 		ProvinceName: province,
 	}
-	logger.InfoV2("[DZ] 拉单解析到外部订单", logger.StringV2("out_trade_num", ext.ID), logger.Float64V2("amount", ext.Amount), logger.IntV2("operator_id", ext.OperatorID))
+	logger.InfoV2("[DZ] 拉单解析到外部订单", 
+		logger.StringV2("out_trade_num", ext.ID), 
+		logger.Float64V2("amount", ext.Amount), 
+		logger.IntV2("operator_id", ext.OperatorID),
+		logger.Int64V2("source_id", source.ID),
+		logger.Int64V2("variant_id", variant.ID),
+		logger.IntV2("isp", variant.ISP),
+		logger.Float64V2("face_value", variant.FaceValue),
+		logger.StringV2("source_name", source.Name))
 	return []ExternalOrder{ext}, nil
 }
 
 func (p *DzPullPlatform) postAndDecrypt(url string, enc string, rc4Key string) (string, error) {
-	// 记录请求详情
-	logger.InfoV2("[DZ] HTTP请求详情", 
-		logger.StringV2("url", url),
-		logger.StringV2("content_type", "application/x-www-form-urlencoded"),
-		logger.IntV2("payload_length", len(enc)),
-		logger.StringV2("payload_preview", enc[:min(100, len(enc))]),
-	)
-	
-	// 按示例：content-type application/x-www-form-urlencoded，直接发送加密后的Base64字符串
+	// 简化实现：发送请求并解密响应
 	resp, err := http.Post(url, "application/x-www-form-urlencoded", strings.NewReader(enc))
-	if err != nil { 
-		logger.ErrorLogV2("[DZ] HTTP请求失败", logger.ErrorV2(err))
-		return "", err 
-	}
+	if err != nil { return "", fmt.Errorf("发送请求失败: %w", err) }
 	defer resp.Body.Close()
-	
-	// 记录响应状态
-	logger.InfoV2("[DZ] HTTP响应状态", 
-		logger.IntV2("status_code", resp.StatusCode),
-		logger.StringV2("status", resp.Status),
-		logger.AnyV2("headers", resp.Header),
-	)
-	
+
 	body, err := io.ReadAll(resp.Body)
-	if err != nil { 
-		logger.ErrorLogV2("[DZ] 读取响应体失败", logger.ErrorV2(err))
-		return "", err 
-	}
-	
-	// 记录原始响应体
-	logger.InfoV2("[DZ] 原始响应体", 
-		logger.IntV2("body_length", len(body)),
-		logger.StringV2("body_preview", string(body)[:min(200, len(body))]),
-		logger.StringV2("body_full", string(body)), // 完整响应用于调试
-	)
-	
-	// 检查响应是否为空或非Base64格式
-	bodyStr := string(body)
-	if len(bodyStr) == 0 {
-		return "", fmt.Errorf("服务器返回空响应")
-	}
-	
-	// 检查响应是否为JSON字符串格式
+	if err != nil { return "", fmt.Errorf("读取响应失败: %w", err) }
+
+	// 响应可能是JSON字符串或直接Base64
 	var base64Data string
-	if len(bodyStr) > 0 && bodyStr[0] == '"' && bodyStr[len(bodyStr)-1] == '"' {
-		// 响应是JSON字符串，需要先解析
-		err := json.Unmarshal(body, &base64Data)
-		if err != nil {
-			logger.ErrorLogV2("[DZ] JSON解析失败", 
-				logger.ErrorV2(err),
-				logger.StringV2("raw_response", bodyStr),
-			)
-			return "", fmt.Errorf("JSON解析失败: %w", err)
-		}
-		logger.InfoV2("[DZ] 解析JSON字符串", logger.StringV2("base64_data", base64Data))
+	if len(body) > 0 && body[0] == '"' && body[len(body)-1] == '"' {
+		if err := json.Unmarshal(body, &base64Data); err != nil { return "", fmt.Errorf("JSON解析失败: %w", err) }
 	} else {
-		// 响应直接是Base64数据
-		base64Data = bodyStr
+		base64Data = string(body)
 	}
-	
-	// 响应也为 Base64(RC4(JSON))
-	decrypted, err := rc4DecryptBase64(base64Data, rc4Key)
-	if err != nil {
-		logger.ErrorLogV2("[DZ] 响应解密失败", 
-			logger.ErrorV2(err),
-			logger.StringV2("raw_response", bodyStr),
-		)
-		return "", fmt.Errorf("响应解密失败: %w", err)
-	}
-	
-	return decrypted, nil
+
+	// 解密
+	data, err := base64.StdEncoding.DecodeString(base64Data)
+	if err != nil { return "", fmt.Errorf("Base64解码失败: %w", err) }
+	c, err := rc4.NewCipher([]byte(rc4Key))
+	if err != nil { return "", fmt.Errorf("RC4初始化失败: %w", err) }
+	out := make([]byte, len(data))
+	c.XORKeyStream(out, data)
+	return string(out), nil
 }
 
 // 辅助函数：取最小值

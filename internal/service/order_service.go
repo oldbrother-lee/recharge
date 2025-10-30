@@ -159,6 +159,15 @@ func (s *orderService) CreateOrder(ctx context.Context, order *model.Order) erro
 		return err
 	}
 
+	// 自动取单订单创建后，发送“接单/处理中”预上报通知
+	if order.Client == 3 {
+		if notifyErr := s.notificationHelper.SendOrderStatusNotification(ctx, order, model.OrderStatusProcessing); notifyErr != nil {
+			logger.WithContextCategory(ctx, "order").Error("【预上报通知创建失败】", logger.ErrorV2(notifyErr))
+		} else {
+			logger.WithContextCategory(ctx, "order").Info("【已创建预上报通知】", logger.Int64V2("order_id", order.ID))
+		}
+	}
+
 	// 创建成功后，将订单推送到充值队列
 	if err := s.rechargeService.PushToRechargeQueue(ctx, order.ID); err != nil {
 		logger.WithContextCategory(ctx, "order").Error(fmt.Sprintf("【推送订单到充值队列失败】order_id=%d error=%v", order.ID, err))

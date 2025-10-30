@@ -85,6 +85,8 @@ func (s *PullOrderScheduler) ProcessOnce(ctx context.Context) error {
 				// 构造订单
 				order, err := s.mgr.GetPlatform(src.Code).(*DzPullPlatform).MapToOrder(ctx, ext, mapped.ProductID)
 				if err != nil { return fmt.Errorf("映射订单失败: %w", err) }
+				// 记录来源 SourceID，便于后续通知上报使用
+				order.Param1 = fmt.Sprintf("%d", src.ID)
 
 				logger.InfoV2("准备创建订单", logger.StringV2("out_trade_num", order.OutTradeNum), logger.Int64V2("product_id", mapped.ProductID))
 				// 创建订单（由系统服务处理状态与充值队列）

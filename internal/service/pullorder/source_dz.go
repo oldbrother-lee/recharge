@@ -421,14 +421,14 @@ func min(a, b int) int {
 }
 
 // MapToOrder 将得众订单映射为内部订单模型
-func (p *DzPullPlatform) MapToOrder(ctx context.Context, ext ExternalOrder, productID int64) (*model.Order, error) {
+func (p *DzPullPlatform) MapToOrder(ctx context.Context, ext ExternalOrder, productID int64, customerID int64) (*model.Order, error) {
 	isp := utils.DzOperatorIDToCode(ext.OperatorID)
 	if isp == 0 {
 		return nil, fmt.Errorf("未知运营商: operator_id=%d", ext.OperatorID)
 	}
 
 	order := &model.Order{
-		CustomerID:       0,
+		CustomerID:       customerID,
 		Mobile:           ext.Mobile,
 		ProductID:        productID,
 		Denom:            ext.Amount,

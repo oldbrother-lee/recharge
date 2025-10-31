@@ -82,8 +82,20 @@ func (s *PullOrderScheduler) ProcessOnce(ctx context.Context) error {
 					continue
 				}
 
+				// 获取拉单源绑定的用户ID
+				var customerID int64
+				if src.BindUserID != nil {
+					customerID = *src.BindUserID
+				} else {
+					logger.WarnV2("拉单源未绑定用户，跳过订单创建", 
+						logger.Int64V2("source_id", src.ID), 
+						logger.StringV2("source_name", src.Name),
+						logger.StringV2("out_trade_num", ext.ID))
+					continue
+				}
+
 				// 构造订单
-				order, err := s.mgr.GetPlatform(src.Code).(*DzPullPlatform).MapToOrder(ctx, ext, mapped.ProductID)
+				order, err := s.mgr.GetPlatform(src.Code).(*DzPullPlatform).MapToOrder(ctx, ext, mapped.ProductID, customerID)
 				if err != nil { return fmt.Errorf("映射订单失败: %w", err) }
 				// 记录来源 SourceID，便于后续通知上报使用
 				order.Param1 = fmt.Sprintf("%d", src.ID)

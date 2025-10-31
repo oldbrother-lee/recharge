@@ -38,7 +38,11 @@ export const useProductStore = defineStore('product', () => {
     try {
       const res = await request({
         url: '/product/list',
-        method: 'GET'
+        method: 'GET',
+        params: {
+          page: 1,
+          page_size: 100  // 获取足够多的商品用于选择器
+        }
       })
       if (res.data) {
         products.value = res.data.records
@@ -53,4 +57,4 @@ export const useProductStore = defineStore('product', () => {
     products,
     fetchProducts
   }
-}) 
+})

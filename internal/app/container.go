@@ -73,6 +73,7 @@ type Repositories struct {
 	SystemConfig        *repository.SystemConfigRepository  // 添加SystemConfig repository
 	ExternalAPIKey      repository.ExternalAPIKeyRepository // 添加ExternalAPIKey repository
 	OrderException      repository.OrderExceptionRepository // 添加OrderException repository
+	PullSource          *repository.PullSourceRepositoryImpl // 添加PullSource repository
 }
 
 // Services 服务集合
@@ -109,6 +110,7 @@ type Services struct {
 	SystemConfig           *service.SystemConfigService      // 添加SystemConfig服务
 	PhoneQuery             service.PhoneQueryService         // 添加PhoneQuery服务
 	OrderException         service.OrderExceptionService     // 添加OrderException服务
+	PullSource             service.PullSourceService         // 添加PullSource服务
 }
 
 // NewContainer 创建新的容器实例
@@ -250,6 +252,7 @@ func (c *Container) initRepositories() {
 		SystemConfig:        repository.NewSystemConfigRepository(c.db),
 		ExternalAPIKey:      repository.NewExternalAPIKeyRepository(c.db),
 		OrderException:      repository.NewOrderExceptionRepository(c.db),
+		PullSource:          repository.NewPullSourceRepository(c.db),
 	}
 }
 
@@ -465,6 +468,9 @@ func (c *Container) initServices() error {
 
 	// 初始化PlatformPushStatus服务
 	c.services.PlatformPushStatus = platform.NewPushStatusService(c.repositories.PlatformAccount)
+
+	// 初始化PullSource服务
+	c.services.PullSource = service.NewPullSourceService(c.repositories.PullSource, c.services.User)
 
 	// 初始化系统配置数据
 	if err := c.services.SystemConfig.InitSystemConfigs(context.Background()); err != nil {

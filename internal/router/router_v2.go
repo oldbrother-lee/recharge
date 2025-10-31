@@ -262,6 +262,11 @@ func SetupRouterV2(
 			// Order Exception routes
 			RegisterOrderExceptionRoutes(auth, userSvc)
 
+			// 拉单配置管理路由
+			pullSourceRepo := repository.NewPullSourceRepository(db)
+			pullSourceService := service.NewPullSourceService(pullSourceRepo, userSvc)
+			RegisterPullSourceRoutes(auth, pullSourceService)
+
 			// TODO: 以下路由对应的控制器暂未初始化，需要对应的服务支持
 			// 只允许管理员访问
 			// RegisterDaichongOrderRoutes(auth)

@@ -238,6 +238,18 @@ export const generatedRoutes: GeneratedRoute[] = [
     ]
   },
   {
+    name: 'pullsource',
+    path: '/pullsource',
+    component: 'layout.base$view.pullsource',
+    meta: {
+      title: 'pullsource',
+      i18nKey: 'route.pullsource',
+      icon: 'mdi:source-pull',
+      order: 9,
+      roles: ['SUPER_ADMIN']
+    }
+  },
+  {
     name: 'system',
     path: '/system',
     component: 'layout.base',

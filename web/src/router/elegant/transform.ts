@@ -183,6 +183,7 @@ const routeMap: RouteMap = {
   "product_phone-location": "/product/phone-location",
   "product_set-menu": "/product/set-menu",
   "product_type": "/product/type",
+  "pullsource": "/pullsource",
   "system": "/system",
   "system_phone-query": "/system/phone-query",
   "system_settings": "/system/settings",

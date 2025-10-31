@@ -11,6 +11,7 @@ type PullSource struct {
 	AppKey           string    `json:"app_key" gorm:"size:255;comment:平台AppKey/密钥"`
 	AccountName      string    `json:"account_name" gorm:"size:255;comment:平台账号名称"`
 	AccountPassword  string    `json:"account_password" gorm:"size:255;comment:平台账号密码(按需存储)"`
+	BindUserID       *int64    `json:"bind_user_id" gorm:"index;comment:绑定的本地用户ID"`
 	PullAction       string    `json:"pull_action" gorm:"size:64;comment:拉单动作名(如orderlist/pull_order)"`
 	Enabled          bool      `json:"enabled" gorm:"type:tinyint(1);default:1;comment:是否启用"`
 	MaxConcurrency   int       `json:"max_concurrency" gorm:"comment:最大并发拉取数"`
@@ -18,6 +19,9 @@ type PullSource struct {
 	Remark           string    `json:"remark" gorm:"size:255;comment:备注"`
 	CreatedAt        time.Time `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt        time.Time `json:"updated_at" gorm:"autoUpdateTime"`
+	
+	// 关联字段（用于查询时显示绑定用户名，不存储到数据库）
+	BindUserName     string    `json:"bind_user_name" gorm:"-"`
 }
 
 func (PullSource) TableName() string { return "pull_sources" }
@@ -28,6 +32,7 @@ type PullVariantConfig struct {
 	SourceID        int64      `json:"source_id" gorm:"index;not null"`
 	ISP             int        `json:"isp" gorm:"comment:运营商编码：1移动 2电信 3联通 0未知"`
 	FaceValue       float64    `json:"face_value" gorm:"type:decimal(10,2);comment:面值"`
+	ProductID       *int64     `json:"product_id" gorm:"index;comment:关联的商品ID"`
 	Enabled         bool       `json:"enabled" gorm:"type:tinyint(1);default:1"`
 	PollIntervalSec int        `json:"poll_interval_sec" gorm:"comment:轮询间隔秒"`
 	Concurrency     int        `json:"concurrency" gorm:"comment:并发度"`

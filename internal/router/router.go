@@ -174,6 +174,11 @@ func SetupRouter(
 			apiKeyRepo := repository.NewExternalAPIKeyRepository(database.DB)
 			apiKeyController := controller.NewExternalAPIKeyController(apiKeyRepo, userRepo)
 			RegisterExternalAPIKeyRoutes(auth, apiKeyController, userService)
+
+			// 拉单配置管理路由
+			pullSourceRepo := repository.NewPullSourceRepository(database.DB)
+			pullSourceService := service.NewPullSourceService(pullSourceRepo, userService)
+			RegisterPullSourceRoutes(auth, pullSourceService)
 		}
 
 		// 注册系统配置路由

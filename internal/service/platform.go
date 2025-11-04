@@ -3,22 +3,23 @@ package service
 import (
 	"bytes"
 	"context"
+	"crypto/rc4"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/pkg/logger"
+	"recharge-go/pkg/redis"
 	"recharge-go/pkg/signature"
 	"strconv"
-	"time"
-	"crypto/rc4"
-	"encoding/base64"
 	"strings"
 	"sync"
-	"os"
-	"recharge-go/pkg/redis"
+	"time"
 )
 
 // PlatformService 平台服务
@@ -26,10 +27,10 @@ type PlatformService struct {
 	platformRepo       repository.PlatformRepository
 	orderRepo          repository.OrderRepository
 	externalAPIKeyRepo repository.ExternalAPIKeyRepository
-	// 新增：用于得众预上报的源配置与token缓存
-	pullSourceRepo     *repository.PullSourceRepositoryImpl
-	dzTokenCache       map[string]string
-	dzTokenMu          sync.RWMutex
+	// 新增：用于得众预上报的平台账号配置与token缓存
+	platformAccountRepo *repository.PlatformAccountRepository
+	dzTokenCache        map[string]string
+	dzTokenMu           sync.RWMutex
 }
 
 // NewPlatformService 创建平台服务
@@ -97,15 +98,16 @@ func (s *PlatformService) ListPlatformAccounts(req *model.PlatformAccountListReq
 // CreatePlatformAccount 创建平台账号
 func (s *PlatformService) CreatePlatformAccount(req *model.PlatformAccountCreateRequest) error {
 	account := &model.PlatformAccount{
-		PlatformID:   req.PlatformID,
-		AccountName:  req.AccountName,
-		Type:         req.Type,
-		AppKey:       req.AppKey,
-		AppSecret:    req.AppSecret,
-		Description:  req.Description,
-		DailyLimit:   req.DailyLimit,
-		MonthlyLimit: req.MonthlyLimit,
-		Priority:     req.Priority,
+		PlatformID:      req.PlatformID,
+		AccountName:     req.AccountName,
+		Type:            req.Type,
+		AppKey:          req.AppKey,
+		AppSecret:       req.AppSecret,
+		AccountPassword: req.AccountPassword,
+		Description:     req.Description,
+		DailyLimit:      req.DailyLimit,
+		MonthlyLimit:    req.MonthlyLimit,
+		Priority:        req.Priority,
 	}
 	if req.Status != nil {
 		account.Status = *req.Status
@@ -140,6 +142,10 @@ func (s *PlatformService) UpdatePlatformAccount(ctx context.Context, id int64, r
 	}
 	if req.AppSecret != nil {
 		updateMap["app_secret"] = *req.AppSecret
+	}
+	if req.AccountPassword != nil {
+		// 允许置空或更新密码（传入空字符串将清空密码）
+		updateMap["account_password"] = *req.AccountPassword
 	}
 	if req.Description != nil {
 		updateMap["description"] = *req.Description
@@ -379,16 +385,16 @@ func (s *PlatformService) GetPlatformAccountByAccountName(accountName string) (*
 }
 
 func (s *PlatformService) buildXianyinkeParams(order *model.Order, account *model.PlatformAccount) map[string]interface{} {
-    params := map[string]interface{}{
-        "app_key":        account.AppKey,
-        "id":             order.OutTradeNum,
-        "status":         s.getXianyinkeStatus(order.Status),
-        "error_msg":      s.getXianyinkeErrorMsg(order),
-        "voucher_text":   "",
-        "voucher_base64": "",
-        "timestamp":      time.Now().Format("2006-01-02 15:04:05"),
-    }
-    return params
+	params := map[string]interface{}{
+		"app_key":        account.AppKey,
+		"id":             order.OutTradeNum,
+		"status":         s.getXianyinkeStatus(order.Status),
+		"error_msg":      s.getXianyinkeErrorMsg(order),
+		"voucher_text":   "",
+		"voucher_base64": "",
+		"timestamp":      time.Now().Format("2006-01-02 15:04:05"),
+	}
+	return params
 }
 
 func (s *PlatformService) buildKekebangParams(order *model.Order, account *model.PlatformAccount) map[string]interface{} {
@@ -485,19 +491,19 @@ func (s *PlatformService) getXianyinkeStatus(orderStatus model.OrderStatus) int 
 
 // 新增：闲赢客 error_msg 生成逻辑
 func (s *PlatformService) getXianyinkeErrorMsg(order *model.Order) string {
-    switch order.Status {
-    case model.OrderStatusFailed:
-        if order.Remark != "" {
-            return order.Remark
-        }
-        return "充值失败"
-    case model.OrderStatusSuccess:
-        return "充值成功"
-    case model.OrderStatusProcessing:
-        return ""
-    default:
-        return ""
-    }
+	switch order.Status {
+	case model.OrderStatusFailed:
+		if order.Remark != "" {
+			return order.Remark
+		}
+		return "充值失败"
+	case model.OrderStatusSuccess:
+		return "充值成功"
+	case model.OrderStatusProcessing:
+		return ""
+	default:
+		return ""
+	}
 }
 func (s *PlatformService) getStatusText(orderStatus model.OrderStatus) string {
 	// 根据订单状态返回对应的文本信息
@@ -552,11 +558,11 @@ func (s *PlatformService) buildXianzhuanxiaParams(ctx context.Context, order *mo
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Auth_Token", authToken)
 	// req.Header.Set("Query-Time", queryTime)
-    logger.WithContextCategory(ctx, "platform").Info("闲赚侠请求对象预览", logger.StringV2("method", req.Method), logger.IntV2("header_count", len(req.Header)))
-    logger.WithContextCategory(ctx, "platform").Info("发送闲赚侠上报订单结果请求",
-        logger.StringV2("url", url),
-        logger.StringV2("content_type", req.Header.Get("Content-Type")),
-    )
+	logger.WithContextCategory(ctx, "platform").Info("闲赚侠请求对象预览", logger.StringV2("method", req.Method), logger.IntV2("header_count", len(req.Header)))
+	logger.WithContextCategory(ctx, "platform").Info("发送闲赚侠上报订单结果请求",
+		logger.StringV2("url", url),
+		logger.StringV2("content_type", req.Header.Get("Content-Type")),
+	)
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -603,9 +609,9 @@ func (s *PlatformService) getXianzhuanxiaStatus(orderStatus model.OrderStatus) i
 
 // sendExternalAPINotification 发送外部API通知
 func (s *PlatformService) sendExternalAPINotification(ctx context.Context, order *model.Order) error {
-    // 将订单号注入上下文，便于日志链路追踪
-    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
-    l := logger.WithContextCategory(ctx, "platform")
+	// 将订单号注入上下文，便于日志链路追踪
+	ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+	l := logger.WithContextCategory(ctx, "platform")
 	l.Info("开始处理外部API通知",
 		logger.Int64V2("order_id", order.ID),
 		logger.StringV2("order_number", order.OrderNumber),
@@ -713,7 +719,7 @@ func (s *PlatformService) buildExternalAPIParams(order *model.Order) map[string]
 
 // generateExternalAPISign 生成外部API签名
 func (s *PlatformService) generateExternalAPISign(params map[string]interface{}, order *model.Order) string {
-    l := logger.GetCategoryLogger("platform")
+	l := logger.GetCategoryLogger("platform")
 	l.Info("开始获取外部API密钥",
 		logger.Int64V2("customer_id", order.CustomerID),
 		logger.Int64V2("order_id", order.ID),
@@ -1000,31 +1006,32 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 // 新增：得众平台预上报实现
 func (s *PlatformService) sendDzPreReport(ctx context.Context, order *model.Order) error {
 	l := logger.WithContextCategory(ctx, "platform")
-	// 从订单 Param1 解析拉单源ID
-	if order.Param1 == "" {
-		l.Error("得众预上报缺少来源SourceID (Param1)", logger.Int64V2("order_id", order.ID))
-		return fmt.Errorf("缺少SourceID用于得众预上报")
+	// 使用订单的 PlatformAccountID 字段
+	if order.PlatformAccountID == 0 {
+		l.Error("得众预上报缺少平台账号ID", logger.Int64V2("order_id", order.ID))
+		return fmt.Errorf("缺少平台账号ID用于得众预上报")
 	}
-	sourceID, err := strconv.ParseInt(order.Param1, 10, 64)
-	if err != nil {
-		l.Error("解析SourceID失败", logger.StringV2("param1", order.Param1), logger.ErrorV2(err))
-		return fmt.Errorf("解析SourceID失败: %w", err)
-	}
-	if s.pullSourceRepo == nil {
+	if s.platformAccountRepo == nil {
 		// 惰性初始化：在首次使用时创建仓库实例（避免改动过多构造处）
-		s.pullSourceRepo = repository.NewPullSourceRepository(s.platformRepo.GetDB())
+		s.platformAccountRepo = repository.NewPlatformAccountRepository(s.platformRepo.GetDB())
 	}
-	source, err := s.pullSourceRepo.GetSourceByID(ctx, sourceID)
-	if err != nil || source == nil {
-		l.Error("获取拉单源失败", logger.Int64V2("source_id", sourceID), logger.ErrorV2(err))
-		return fmt.Errorf("获取拉单源失败: %w", err)
+	platformAccount, err := s.platformAccountRepo.GetByIDWithContext(ctx, order.PlatformAccountID)
+	if err != nil || platformAccount == nil {
+		l.Error("获取平台账号失败", logger.Int64V2("platform_account_id", order.PlatformAccountID), logger.ErrorV2(err))
+		return fmt.Errorf("获取平台账号失败: %w", err)
 	}
-	baseURL := strings.TrimSpace(source.BaseURL)
-	rc4Key := strings.TrimSpace(source.AppKey)
-	username := strings.TrimSpace(source.AccountName)
-	password := strings.TrimSpace(source.AccountPassword)
+	baseURL := strings.TrimSpace(platformAccount.Platform.ApiURL)
+	rc4Key := strings.TrimSpace(platformAccount.AppSecret) // 使用AppSecret作为RC4密钥
+	username := strings.TrimSpace(platformAccount.AccountName)
+	password := strings.TrimSpace(platformAccount.AccountPassword)
 	if baseURL == "" || rc4Key == "" || username == "" {
-		return fmt.Errorf("源配置不完整: base_url/app_key/account_name 不能为空")
+		l.Error("得众平台账号配置不完整",
+			logger.Int64V2("platform_account_id", order.PlatformAccountID),
+			logger.StringV2("base_url", baseURL),
+			logger.StringV2("rc4_key", rc4Key),
+			logger.StringV2("username", username),
+		)
+		return fmt.Errorf("得众平台账号配置不完整")
 	}
 	if password == "" {
 		// 允许从环境变量兜底
@@ -1034,7 +1041,7 @@ func (s *PlatformService) sendDzPreReport(ctx context.Context, order *model.Orde
 	}
 	// 仅从 Redis 读取 token（通知不负责登录/写入）
 	var token string
-	redisKey := fmt.Sprintf("dz:token:%d:%s", sourceID, username)
+	redisKey := fmt.Sprintf("dz:token:%d:%s", order.PlatformAccountID, username)
 	if rc := redis.GetClient(); rc != nil {
 		if v, err := rc.Get(ctx, redisKey).Result(); err == nil && strings.TrimSpace(v) != "" {
 			token = v
@@ -1048,34 +1055,34 @@ func (s *PlatformService) sendDzPreReport(ctx context.Context, order *model.Orde
 	// 构造预上报请求（使用正确的格式）
 	dzResult := s.getDzResult(order.Status)
 	reason := s.getDzReason(order.Status)
-	
+
 	// 构造remark字段（包含订单相关信息）
-	remark := fmt.Sprintf("运营商:%s;订单号:%s;手机号:%s;面额:%.2f;状态:%s;版本号:1.0.0.0", 
+	remark := fmt.Sprintf("运营商:%s;订单号:%s;手机号:%s;面额:%.2f;状态:%s;版本号:1.0.0.0",
 		s.getISPName(order.ISP), order.OrderNumber, order.Mobile, order.Denom, s.getStatusText(order.Status))
-	
-	// 构造context字段（可以包含一些上下文信息）
-	context := fmt.Sprintf("order_id=%d;platform=%s;timestamp=%d", order.ID, order.PlatformCode, time.Now().Unix())
-	
+
+	// 构造context字段（使用固定值）
+	context := "ptransId=INVITE_2023666888;cookie=invite_dxfs"
+
 	req := map[string]interface{}{
 		"action": "report",
 		"flag":   "invite_dxfs",
 		"ver":    "1.0.0.0",
 		"token":  token,
 		"data": map[string]interface{}{
-			"id":      order.OutTradeNum,  // 使用字符串格式的订单ID
+			"id":      order.OutTradeNum, // 使用字符串格式的订单ID
 			"mobile":  order.Mobile,
-			"target":  order.Mobile,       // target通常和mobile相同
+			"target":  order.Mobile, // target通常和mobile相同
 			"reason":  reason,
 			"remark":  remark,
 			"context": context,
 			"result":  dzResult,
 		},
 	}
-	
+
 	// 记录上报参数和地址
-	l.Info("得众预上报请求详情", 
+	l.Info("得众预上报请求详情",
 		logger.StringV2("base_url", baseURL),
-		logger.Int64V2("source_id", sourceID),
+		logger.Int64V2("platform_account_id", order.PlatformAccountID),
 		logger.Int64V2("order_id", order.ID),
 		logger.StringV2("out_trade_num", order.OutTradeNum),
 		logger.IntV2("dz_result", dzResult),
@@ -1084,40 +1091,48 @@ func (s *PlatformService) sendDzPreReport(ctx context.Context, order *model.Orde
 		logger.StringV2("rc4_key_length", fmt.Sprintf("%d", len(rc4Key))),
 	)
 	enc, encErr := s.rc4EncryptJSON(req, rc4Key)
-	if encErr != nil { 
+	if encErr != nil {
 		l.Error("得众请求加密失败", logger.ErrorV2(encErr))
-		return encErr 
+		return encErr
 	}
-	
+
 	// 记录加密后的请求数据（截取前100字符避免日志过长）
 	encPreview := enc
-	if len(enc) > 100 { encPreview = enc[:100] + "..." }
-	l.Info("得众加密请求数据", logger.StringV2("encrypted_data", encPreview))
-	
-	dec, postErr := s.dzPostAndDecrypt(baseURL, enc, rc4Key)
-	if postErr != nil { 
-		l.Error("得众HTTP请求失败", logger.ErrorV2(postErr))
-		return postErr 
+	if len(enc) > 100 {
+		encPreview = enc[:100] + "..."
 	}
-	
+	l.Info("得众加密请求数据", logger.StringV2("encrypted_data", encPreview))
+
+	// 构建包含devKey参数的完整URL（与登录保持一致）
+	apiEndpoint := s.buildDzEndpoint(baseURL, platformAccount.AppKey)
+	l.Info("得众预上报完整地址", logger.StringV2("api_endpoint", apiEndpoint))
+
+	dec, postErr := s.dzPostAndDecrypt(apiEndpoint, enc, rc4Key)
+	if postErr != nil {
+		l.Error("得众HTTP请求失败", logger.ErrorV2(postErr))
+		return postErr
+	}
+
 	// 记录原始响应数据
 	l.Info("得众原始响应", logger.StringV2("response", dec))
-	
+
 	var statusResp map[string]interface{}
 	if err := json.Unmarshal([]byte(dec), &statusResp); err != nil {
 		l.Error("解析得众响应失败", logger.ErrorV2(err), logger.StringV2("resp", dec))
 		return nil
 	}
-	
+
 	// 记录解析后的响应结构
 	respJSON, _ := json.Marshal(statusResp)
 	l.Info("得众解析后响应", logger.StringV2("parsed_response", string(respJSON)))
-	
+
 	if ret, ok := statusResp["ret"].(float64); ok && int(ret) != 0 {
 		msg := ""
-		if m, ok := statusResp["msg"].(string); ok { msg = m }
+		if m, ok := statusResp["msg"].(string); ok {
+			msg = m
+		}
 		// 不做重登重试：通知只读Redis token
-		l.Error("得众预上报返回失败", 
+		l.Error("得众预上报返回失败",
 			logger.IntV2("ret_code", int(ret)),
 			logger.StringV2("msg", msg),
 			logger.StringV2("full_response", string(respJSON)),
@@ -1131,9 +1146,13 @@ func (s *PlatformService) sendDzPreReport(ctx context.Context, order *model.Orde
 // RC4(JSON)->Base64 加密
 func (s *PlatformService) rc4EncryptJSON(data interface{}, key string) (string, error) {
 	b, err := json.Marshal(data)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	c, err := rc4.NewCipher([]byte(key))
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	out := make([]byte, len(b))
 	c.XORKeyStream(out, b)
 	return base64.StdEncoding.EncodeToString(out), nil
@@ -1142,28 +1161,74 @@ func (s *PlatformService) rc4EncryptJSON(data interface{}, key string) (string, 
 // 得众HTTP请求并解密
 func (s *PlatformService) dzPostAndDecrypt(url string, enc string, rc4Key string) (string, error) {
 	// 记录HTTP请求详情
-	logger.Info("得众HTTP请求详情", 
+	logger.Info("得众HTTP请求详情",
 		logger.StringV2("url", url),
 		logger.StringV2("method", "POST"),
 		logger.IntV2("data_length", len(enc)),
 	)
 	resp, err := http.Post(url, "application/x-www-form-urlencoded", strings.NewReader(enc))
-	if err != nil { return "", fmt.Errorf("发送请求失败: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("发送请求失败: %w", err)
+	}
 	defer resp.Body.Close()
+
+	// 记录HTTP响应状态
+	logger.Info("得众HTTP响应状态",
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.StringV2("status", resp.Status),
+		logger.StringV2("content_type", resp.Header.Get("Content-Type")),
+	)
+
 	body, err := io.ReadAll(resp.Body)
-	if err != nil { return "", fmt.Errorf("读取响应失败: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	// 记录原始响应内容（前200字符）
+	bodyPreview := string(body)
+	if len(bodyPreview) > 200 {
+		bodyPreview = bodyPreview[:200] + "..."
+	}
+	logger.Info("得众HTTP原始响应",
+		logger.IntV2("body_length", len(body)),
+		logger.StringV2("body_preview", bodyPreview),
+	)
+
 	var base64Data string
 	// 响应可能是JSON字符串或直接Base64
 	if len(body) > 0 && body[0] == '"' && body[len(body)-1] == '"' {
-		if err := json.Unmarshal(body, &base64Data); err != nil { return "", err }
+		if err := json.Unmarshal(body, &base64Data); err != nil {
+			logger.Error("解析JSON响应失败", logger.ErrorV2(err), logger.StringV2("raw_body", string(body)))
+			return "", err
+		}
+		previewLen := 100
+		if len(base64Data) < previewLen {
+			previewLen = len(base64Data)
+		}
+		logger.Info("得众响应为JSON格式", logger.StringV2("base64_data_preview", base64Data[:previewLen]))
 	} else {
 		base64Data = string(body)
+		previewLen := 100
+		if len(base64Data) < previewLen {
+			previewLen = len(base64Data)
+		}
+		logger.Info("得众响应为直接base64格式", logger.StringV2("base64_data_preview", base64Data[:previewLen]))
 	}
+
 	// 解密
 	data, err := base64.StdEncoding.DecodeString(base64Data)
-	if err != nil { return "", err }
+	if err != nil {
+		logger.Error("base64解码失败",
+			logger.ErrorV2(err),
+			logger.StringV2("base64_data", base64Data),
+			logger.IntV2("data_length", len(base64Data)),
+		)
+		return "", err
+	}
 	c, err := rc4.NewCipher([]byte(rc4Key))
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	out := make([]byte, len(data))
 	c.XORKeyStream(out, data)
 	return string(out), nil
@@ -1240,14 +1305,39 @@ func (s *PlatformService) getISPName(isp int) string {
 
 // 辅助：掩码token日志展示
 func maskToken(s string) string {
-	if len(s) <= 6 { return "***" }
+	if len(s) <= 6 {
+		return s
+	}
 	return s[:3] + "***" + s[len(s)-3:]
+}
+
+// buildDzEndpoint 构建得众平台请求地址：优先使用配置中的完整URL；否则拼接 /api/phrecharge?devKey=<AppKey>
+func (s *PlatformService) buildDzEndpoint(baseURL, appKey string) string {
+	u := strings.TrimSpace(baseURL)
+	if u == "" {
+		return ""
+	}
+	// 如果已经包含 devKey 参数，直接使用
+	if strings.Contains(u, "devKey=") {
+		return u
+	}
+	// 如果未包含标准路径，则补上
+	endpoint := strings.TrimRight(u, "/")
+	if !strings.Contains(endpoint, "/api/phrecharge") {
+		endpoint += "/api/phrecharge"
+	}
+	// 处理已有查询参数
+	sep := "?"
+	if strings.Contains(endpoint, "?") {
+		sep = "&"
+	}
+	return endpoint + sep + "devKey=" + url.QueryEscape(appKey)
 }
 
 // sendDzReport 根据订单状态发送DZ平台上报
 func (s *PlatformService) sendDzReport(ctx context.Context, order *model.Order) error {
 	l := logger.WithContextCategory(ctx, "platform")
-	
+
 	switch order.Status {
 	case model.OrderStatusProcessing:
 		// 处理中状态：发送预上报
@@ -1255,13 +1345,13 @@ func (s *PlatformService) sendDzReport(ctx context.Context, order *model.Order) 
 		return s.sendDzPreReport(ctx, order)
 	case model.OrderStatusSuccess, model.OrderStatusFailed:
 		// 成功或失败状态：发送真实状态上报
-		l.Info("订单已完成，发送DZ真实状态上报", 
+		l.Info("订单已完成，发送DZ真实状态上报",
 			logger.Int64V2("order_id", order.ID),
 			logger.IntV2("status", int(order.Status)))
 		return s.sendDzRealStatusReport(ctx, order)
 	default:
 		// 其他状态暂不处理
-		l.Info("订单状态无需上报", 
+		l.Info("订单状态无需上报",
 			logger.Int64V2("order_id", order.ID),
 			logger.IntV2("status", int(order.Status)))
 		return nil
@@ -1271,33 +1361,28 @@ func (s *PlatformService) sendDzReport(ctx context.Context, order *model.Order) 
 // sendDzRealStatusReport 发送DZ平台真实状态上报
 func (s *PlatformService) sendDzRealStatusReport(ctx context.Context, order *model.Order) error {
 	l := logger.WithContextCategory(ctx, "platform")
-	
-	// 从订单 Param1 解析拉单源ID
-	if order.Param1 == "" {
-		l.Error("得众真实状态上报缺少来源SourceID (Param1)", logger.Int64V2("order_id", order.ID))
-		return fmt.Errorf("缺少SourceID用于得众真实状态上报")
+
+	// 从订单 PlatformAccountID 获取平台账号ID
+	if order.PlatformAccountID == 0 {
+		l.Error("得众真实状态上报缺少平台账号ID", logger.Int64V2("order_id", order.ID))
+		return fmt.Errorf("缺少平台账号ID用于得众真实状态上报")
 	}
-	sourceID, err := strconv.ParseInt(order.Param1, 10, 64)
-	if err != nil {
-		l.Error("解析SourceID失败", logger.StringV2("param1", order.Param1), logger.ErrorV2(err))
-		return fmt.Errorf("解析SourceID失败: %w", err)
-	}
-	
-	if s.pullSourceRepo == nil {
+
+	if s.platformAccountRepo == nil {
 		// 惰性初始化：在首次使用时创建仓库实例
-		s.pullSourceRepo = repository.NewPullSourceRepository(s.platformRepo.GetDB())
+		s.platformAccountRepo = repository.NewPlatformAccountRepository(s.platformRepo.GetDB())
 	}
-	source, err := s.pullSourceRepo.GetSourceByID(ctx, sourceID)
-	if err != nil || source == nil {
-		l.Error("获取拉单源失败", logger.Int64V2("source_id", sourceID), logger.ErrorV2(err))
-		return fmt.Errorf("获取拉单源失败: %w", err)
+	platformAccount, err := s.platformAccountRepo.GetByIDWithContext(ctx, order.PlatformAccountID)
+	if err != nil || platformAccount == nil {
+		l.Error("获取平台账号失败", logger.Int64V2("platform_account_id", order.PlatformAccountID), logger.ErrorV2(err))
+		return fmt.Errorf("获取平台账号失败: %w", err)
 	}
-	
-	baseURL := strings.TrimSpace(source.BaseURL)
-	rc4Key := strings.TrimSpace(source.AppKey)
-	username := strings.TrimSpace(source.AccountName)
-	password := strings.TrimSpace(source.AccountPassword)
-	
+
+	baseURL := strings.TrimSpace(platformAccount.Platform.ApiURL)
+	rc4Key := strings.TrimSpace(platformAccount.AppSecret)
+	username := strings.TrimSpace(platformAccount.AccountName)
+	password := strings.TrimSpace(platformAccount.AccountPassword)
+
 	if baseURL == "" || rc4Key == "" || username == "" {
 		return fmt.Errorf("源配置不完整: base_url/app_key/account_name 不能为空")
 	}
@@ -1307,10 +1392,10 @@ func (s *PlatformService) sendDzRealStatusReport(ctx context.Context, order *mod
 			password = envPwd
 		}
 	}
-	
+
 	// 仅从 Redis 读取 token（通知不负责登录/写入）
 	var token string
-	redisKey := fmt.Sprintf("dz:token:%d:%s", sourceID, username)
+	redisKey := fmt.Sprintf("dz:token:%d:%s", order.PlatformAccountID, username)
 	if rc := redis.GetClient(); rc != nil {
 		if v, err := rc.Get(ctx, redisKey).Result(); err == nil && strings.TrimSpace(v) != "" {
 			token = v
@@ -1321,11 +1406,11 @@ func (s *PlatformService) sendDzRealStatusReport(ctx context.Context, order *mod
 		l.Error("得众Redis未找到token", logger.StringV2("redis_key", redisKey))
 		return fmt.Errorf("缺少得众token，请确保拉单模块已登录并写入Redis(key=%s)", redisKey)
 	}
-	
+
 	// 构建真实状态上报请求
 	dzResult := s.getDzResult(order.Status)
 	dzReason := s.getDzReason(order.Status)
-	
+
 	// 根据订单状态确定action参数
 	// 成功状态：action=status, result=1
 	// 失败状态：action=report, result=2
@@ -1335,35 +1420,35 @@ func (s *PlatformService) sendDzRealStatusReport(ctx context.Context, order *mod
 	} else {
 		action = "report"
 	}
-	
+
 	// 构造remark字段（包含订单相关信息）
-	remark := fmt.Sprintf("运营商:%s;订单号:%s;手机号:%s;面额:%.2f;状态:%s;版本号:1.0.0.0", 
+	remark := fmt.Sprintf("运营商:%s;订单号:%s;手机号:%s;面额:%.2f;状态:%s;版本号:1.0.0.0",
 		s.getISPName(order.ISP), order.OrderNumber, order.Mobile, order.Denom, s.getStatusText(order.Status))
-	
-	// 构造context字段（可以包含一些上下文信息）
-	context := fmt.Sprintf("order_id=%d;platform=%s;timestamp=%d", order.ID, order.PlatformCode, time.Now().Unix())
-	
+
+	// 构造context字段（使用固定值）
+	context := "ptransId=INVITE_2023666888;cookie=invite_dxfs"
+
 	req := map[string]interface{}{
 		"action": action,
 		"flag":   "invite_dxfs",
 		"ver":    "1.0.0.0",
 		"token":  token,
 		"data": map[string]interface{}{
-			"id":      order.OutTradeNum,  // 使用字符串格式的订单ID
+			"id":      order.OutTradeNum, // 使用字符串格式的订单ID
 			"mobile":  order.Mobile,
-			"target":  order.Mobile,       // target通常和mobile相同
+			"target":  order.Mobile, // target通常和mobile相同
 			"reason":  dzReason,
 			"remark":  remark,
 			"context": context,
 			"result":  dzResult,
 		},
 	}
-	
+
 	// 记录完整的请求参数以便调试
 	reqJSON, _ := json.Marshal(req)
-	l.Info("得众真实状态上报请求详情", 
+	l.Info("得众真实状态上报请求详情",
 		logger.StringV2("base_url", baseURL),
-		logger.Int64V2("source_id", sourceID),
+		logger.Int64V2("platform_account_id", order.PlatformAccountID),
 		logger.Int64V2("order_id", order.ID),
 		logger.StringV2("out_trade_num", order.OutTradeNum),
 		logger.StringV2("action", action),
@@ -1376,40 +1461,48 @@ func (s *PlatformService) sendDzRealStatusReport(ctx context.Context, order *mod
 		logger.StringV2("full_request", string(reqJSON)),
 	)
 	enc, encErr := s.rc4EncryptJSON(req, rc4Key)
-	if encErr != nil { 
+	if encErr != nil {
 		l.Error("得众请求加密失败", logger.ErrorV2(encErr))
-		return encErr 
+		return encErr
 	}
-	
+
 	// 记录加密后的请求数据（截取前100字符避免日志过长）
 	encPreview := enc
-	if len(enc) > 100 { encPreview = enc[:100] + "..." }
-	l.Info("得众加密请求数据", logger.StringV2("encrypted_data", encPreview))
-	
-	dec, postErr := s.dzPostAndDecrypt(baseURL, enc, rc4Key)
-	if postErr != nil { 
-		l.Error("得众HTTP请求失败", logger.ErrorV2(postErr))
-		return postErr 
+	if len(enc) > 100 {
+		encPreview = enc[:100] + "..."
 	}
-	
+	l.Info("得众加密请求数据", logger.StringV2("encrypted_data", encPreview))
+
+	// 构建包含devKey参数的完整URL
+	fullURL := s.buildDzEndpoint(baseURL, platformAccount.AppKey)
+	l.Info("得众实时状态上报URL", logger.StringV2("url", fullURL))
+
+	dec, postErr := s.dzPostAndDecrypt(fullURL, enc, rc4Key)
+	if postErr != nil {
+		l.Error("得众HTTP请求失败", logger.ErrorV2(postErr))
+		return postErr
+	}
+
 	// 记录原始响应数据
 	l.Info("得众原始响应", logger.StringV2("response", dec))
-	
+
 	var statusResp map[string]interface{}
 	if err := json.Unmarshal([]byte(dec), &statusResp); err != nil {
 		l.Error("解析得众响应失败", logger.ErrorV2(err), logger.StringV2("resp", dec))
 		return nil
 	}
-	
+
 	// 记录解析后的响应结构
 	respJSON, _ := json.Marshal(statusResp)
 	l.Info("得众解析后响应", logger.StringV2("parsed_response", string(respJSON)))
-	
+
 	if ret, ok := statusResp["ret"].(float64); ok && int(ret) != 0 {
 		msg := ""
-		if m, ok := statusResp["msg"].(string); ok { msg = m }
+		if m, ok := statusResp["msg"].(string); ok {
+			msg = m
+		}
 		// 不做重登重试：通知只读Redis token
-		l.Error("得众真实状态上报返回失败", 
+		l.Error("得众真实状态上报返回失败",
 			logger.IntV2("ret_code", int(ret)),
 			logger.StringV2("msg", msg),
 			logger.StringV2("full_response", string(respJSON)),

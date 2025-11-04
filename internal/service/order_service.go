@@ -25,6 +25,8 @@ type OrderService interface {
 	CreateOrder(ctx context.Context, order *model.Order) error
 	// CreateExternalOrder 创建外部订单（事务性处理：先扣款再创建订单）
 	CreateExternalOrder(ctx context.Context, order *model.Order, platformAccountID int64) error
+	// CreateExternalOrderWithoutDeduction 创建外部订单（仅落库，不扣款）- 用于拉单场景
+	CreateExternalOrderWithoutDeduction(ctx context.Context, order *model.Order, userID int64) error
 	// GetOrderByID 根据ID获取订单
 	GetOrderByID(ctx context.Context, id int64) (*model.Order, error)
 	// GetOrderByOrderNumber 根据订单号获取订单
@@ -1086,6 +1088,128 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 		logger.Int64V2("order_id", order.ID),
 		logger.StringV2("order_number", order.OrderNumber),
 		logger.IntV2("status", int(order.Status)))
+
+	// 6. 处理得众平台预通知（仅针对自动取单订单）
+	if order.Client == 3 && order.PlatformCode == "dz" {
+		if notifyErr := s.notificationHelper.SendOrderStatusNotification(ctx, order, model.OrderStatusProcessing); notifyErr != nil {
+			logger.WithContextCategory(ctx, "order").Error("【得众预上报通知创建失败】",
+				logger.ErrorV2(notifyErr),
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("platform_code", order.PlatformCode))
+		} else {
+			logger.WithContextCategory(ctx, "order").Info("【已创建得众预上报通知】",
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("platform_code", order.PlatformCode))
+		}
+	}
+
+	return nil
+}
+
+// CreateExternalOrderWithoutDeduction 创建外部订单（仅落库，不扣款）- 用于拉单场景
+func (s *orderService) CreateExternalOrderWithoutDeduction(ctx context.Context, order *model.Order, userID int64) error {
+	logger.WithContextCategory(ctx, "order").Info("开始创建外部订单（仅落库）",
+		logger.StringV2("out_trade_num", order.OutTradeNum),
+		logger.Int64V2("user_id", userID),
+		logger.Int64V2("product_id", order.ProductID))
+
+	// 1. 验证商品是否存在
+	product, err := s.productRepo.GetByID(ctx, order.ProductID)
+	if err != nil {
+		logger.WithContextCategory(ctx, "order").Error("获取商品信息失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("product_id", order.ProductID))
+		return fmt.Errorf("商品不存在: %v", err)
+	}
+
+	// 检查商品状态
+	if product.Status != 1 {
+		logger.WithContextCategory(ctx, "order").Error("商品已下架",
+			logger.Int64V2("product_id", order.ProductID),
+			logger.IntV2("status", product.Status))
+		return fmt.Errorf("商品已下架")
+	}
+
+	// 使用商品表的价格
+	actualPrice := product.Price
+	logger.WithContextCategory(ctx, "order").Info("使用商品表价格",
+		logger.Int64V2("product_id", order.ProductID),
+		logger.StringV2("product_name", product.Name),
+		logger.Float64V2("actual_price", actualPrice))
+
+	// 开启事务
+	tx := s.orderRepo.(*repository.OrderRepositoryImpl).DB().Begin()
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			logger.WithContextCategory(ctx, "order").Error("创建外部订单发生panic，事务回滚",
+				logger.AnyV2("panic", r))
+		}
+	}()
+
+	if tx.Error != nil {
+		logger.WithContextCategory(ctx, "order").Error("开启事务失败",
+			logger.ErrorV2(tx.Error))
+		return fmt.Errorf("开启事务失败: %v", tx.Error)
+	}
+
+	// 2. 创建订单（直接设置为待充值状态，使用商品表价格，不进行扣款）
+	order.OrderNumber = generateOrderNumber()
+	order.CreateTime = time.Now()
+	order.UpdatedAt = time.Now()
+	order.Status = model.OrderStatusPendingRecharge // 直接设置为待充值状态
+	order.CustomerID = userID
+	order.IsDel = 0
+	order.Price = actualPrice // 使用商品表的价格
+
+	if err := s.orderRepo.Create(ctx, order); err != nil {
+		tx.Rollback()
+		logger.WithContextCategory(ctx, "order").Error("创建订单失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("user_id", userID))
+		return fmt.Errorf("创建订单失败: %v", err)
+	}
+
+	logger.WithContextCategory(ctx, "order").Info("订单创建成功（仅落库）",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.IntV2("status", int(order.Status)),
+		logger.Float64V2("actual_price", actualPrice))
+
+	// 3. 推送到充值队列
+	if err := s.rechargeService.PushToRechargeQueue(ctx, order.ID); err != nil {
+		logger.WithContextCategory(ctx, "order").Error("推送到充值队列失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("order_id", order.ID))
+		// 这个错误不影响主流程，只记录日志
+	}
+
+	// 提交事务
+	if err := tx.Commit().Error; err != nil {
+		logger.WithContextCategory(ctx, "order").Error("提交事务失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("order_id", order.ID))
+		return fmt.Errorf("提交事务失败: %v", err)
+	}
+
+	logger.WithContextCategory(ctx, "order").Info("外部订单创建完成（仅落库）",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.IntV2("status", int(order.Status)))
+
+	// 4. 处理得众平台预通知（仅针对自动取单订单）
+	if order.Client == 3 && order.PlatformCode == "dz" {
+		if notifyErr := s.notificationHelper.SendOrderStatusNotification(ctx, order, model.OrderStatusProcessing); notifyErr != nil {
+			logger.WithContextCategory(ctx, "order").Error("【得众预上报通知创建失败】",
+				logger.ErrorV2(notifyErr),
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("platform_code", order.PlatformCode))
+		} else {
+			logger.WithContextCategory(ctx, "order").Info("【已创建得众预上报通知】",
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("platform_code", order.PlatformCode))
+		}
+	}
 
 	return nil
 }

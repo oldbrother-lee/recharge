@@ -12,11 +12,12 @@ import (
 // PullOrderApp 常驻拉单应用
 // 使用框架 Application 接口，支持优雅启动/停止
 type PullOrderApp struct {
-    container *Container
-    scheduler *pullorder.PullOrderScheduler
-    repo      *repository.PullSourceRepositoryImpl
-    mgr       *pullorder.PullOrderManager
-    ticker    *time.Ticker
+    container           *Container
+    scheduler           *pullorder.PullOrderScheduler
+    platformAccountRepo *repository.PlatformAccountRepository
+    variantRepo         repository.PlatformAccountVariantRepository
+    mgr                 *pullorder.PullOrderManager
+    ticker              *time.Ticker
 }
 
 // NewPullOrderApp 创建拉单应用实例
@@ -29,10 +30,11 @@ func (p *PullOrderApp) Start(ctx context.Context) error {
     log.Println("正在启动拉单常驻应用...")
 
     // 依赖初始化
-    p.repo = repository.NewPullSourceRepository(p.container.GetDB())
+    p.platformAccountRepo = repository.NewPlatformAccountRepository(p.container.GetDB())
+    p.variantRepo = repository.NewPlatformAccountVariantRepository(p.container.GetDB())
     orderSvc := p.container.GetServices().Order
-    p.mgr = pullorder.NewPullOrderManager(p.repo, orderSvc)
-    p.scheduler = pullorder.NewPullOrderScheduler(p.mgr, p.repo)
+    p.mgr = pullorder.NewPullOrderManager(orderSvc, p.platformAccountRepo, p.variantRepo)
+    p.scheduler = pullorder.NewPullOrderScheduler(p.mgr, p.platformAccountRepo, p.variantRepo)
 
     // 使用配置中的任务间隔（与 Task.Interval 保持一致），默认为 30s
     interval := time.Duration(p.container.GetConfig().Task.Interval) * time.Second

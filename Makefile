@@ -1,4 +1,4 @@
-.PHONY: build-server build-notification build-recharge build-worker build-task build-migrate run-server run-notification run-recharge run-worker run-task run-migrate
+.PHONY: build-server build-notification build-recharge build-task build-migrate build-pullorder run-server run-notification run-recharge run-task run-migrate run-pullorder
 
 # 本地构建目标
 build-server:
@@ -10,14 +10,14 @@ build-notification:
 build-recharge:
 	go build -o bin/recharge cmd/recharge/main.go
 
-build-worker:
-	go build -o bin/worker cmd/recharge/worker/main.go
-
 build-task:
 	go build -o bin/task cmd/task/main.go
 
 build-migrate:
 	go build -o bin/migrate cmd/migrate/main.go
+
+build-pullorder:
+	go build -o bin/pullorder cmd/pullorder/main.go
 
 # Linux 构建目标
 build-server-linux:
@@ -29,14 +29,14 @@ build-notification-linux:
 build-recharge-linux:
 	GOOS=linux GOARCH=amd64 go build -o bin/recharge cmd/recharge/main.go
 
-build-worker-linux:
-	GOOS=linux GOARCH=amd64 go build -o bin/worker cmd/recharge/worker/main.go
-
 build-task-linux:
 	GOOS=linux GOARCH=amd64 go build -o bin/task cmd/task/main.go
 
 build-migrate-linux:
 	GOOS=linux GOARCH=amd64 go build -o bin/migrate cmd/migrate/main.go
+
+build-pullorder-linux:
+	GOOS=linux GOARCH=amd64 go build -o bin/pullorder cmd/pullorder/main.go
 
 # Windows 构建目标
 build-server-windows:
@@ -48,14 +48,14 @@ build-notification-windows:
 build-recharge-windows:
 	GOOS=windows GOARCH=amd64 go build -o bin/recharge.exe cmd/recharge/main.go
 
-build-worker-windows:
-	GOOS=windows GOARCH=amd64 go build -o bin/worker.exe cmd/recharge/worker/main.go
-
 build-task-windows:
 	GOOS=windows GOARCH=amd64 go build -o bin/task.exe cmd/task/main.go
 
 build-migrate-windows:
 	GOOS=windows GOARCH=amd64 go build -o bin/migrate.exe cmd/migrate/main.go
+
+build-pullorder-windows:
+	GOOS=windows GOARCH=amd64 go build -o bin/pullorder.exe cmd/pullorder/main.go
 
 # macOS ARM64 构建目标
 build-server-mac-arm64:
@@ -67,14 +67,14 @@ build-notification-mac-arm64:
 build-recharge-mac-arm64:
 	GOOS=darwin GOARCH=arm64 go build -o bin/recharge-mac-arm64 cmd/recharge/main.go
 
-build-worker-mac-arm64:
-	GOOS=darwin GOARCH=arm64 go build -o bin/worker-mac-arm64 cmd/recharge/worker/main.go
-
 build-task-mac-arm64:
 	GOOS=darwin GOARCH=arm64 go build -o bin/task-mac-arm64 cmd/task/main.go
 
 build-migrate-mac-arm64:
 	GOOS=darwin GOARCH=arm64 go build -o bin/migrate-mac-arm64 cmd/migrate/main.go
+
+build-pullorder-mac-arm64:
+	GOOS=darwin GOARCH=arm64 go build -o bin/pullorder-mac-arm64 cmd/pullorder/main.go
 
 # 运行目标
 run-server:
@@ -86,45 +86,47 @@ run-notification:
 run-recharge:
 	go run cmd/recharge/main.go
 
-run-worker:
-	go run cmd/recharge/worker/main.go
-
 run-task:
 	go run cmd/task/main.go
 
 run-migrate:
 	go run cmd/migrate/main.go
 
+run-pullorder:
+	go run cmd/pullorder/main.go
+
 # 批量构建目标
 build-all:
 	make build-server
 	make build-notification
 	make build-recharge
-	make build-worker
 	make build-task
 	make build-migrate
+	make build-pullorder
 
 build-all-linux:
 	make build-server-linux
 	make build-notification-linux
 	make build-recharge-linux
 	make build-task-linux
+	make build-migrate-linux
+	make build-pullorder-linux
 
 build-all-windows:
 	make build-server-windows
 	make build-notification-windows
 	make build-recharge-windows
-	make build-worker-windows
 	make build-task-windows
 	make build-migrate-windows
+	make build-pullorder-windows
 
 build-all-mac-arm64:
 	make build-server-mac-arm64
 	make build-notification-mac-arm64
 	make build-recharge-mac-arm64
-	make build-worker-mac-arm64
 	make build-task-mac-arm64
 	make build-migrate-mac-arm64
+	make build-pullorder-mac-arm64
 
 # 清理构建文件
 clean:

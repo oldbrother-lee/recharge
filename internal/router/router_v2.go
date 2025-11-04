@@ -125,8 +125,7 @@ func SetupRouterV2(
 			}
 		}
 
-		// 平台账号相关接口
-		RegisterPlatformAccountRoutes(v1)
+		// 平台账号相关接口已在下方的认证路由组中定义
 
 		// 公共系统配置接口 - 不需要认证
 		if scc := assertSystemConfigController(systemConfigController); scc != nil {
@@ -243,6 +242,9 @@ func SetupRouterV2(
 			platformRepo := repository.NewPlatformRepository(database.DB)
 			platformSvc := platform.NewService(platformTokenRepo, platformRepo)
 			RegisterTaskRoutes(auth, platformSvc)
+			
+			// 注册得众平台任务配置路由
+			RegisterDzTaskRoutes(auth)
 
 			// System config routes
 			if scc := assertSystemConfigController(systemConfigController); scc != nil {
@@ -262,10 +264,38 @@ func SetupRouterV2(
 			// Order Exception routes
 			RegisterOrderExceptionRoutes(auth, userSvc)
 
-			// 拉单配置管理路由
-			pullSourceRepo := repository.NewPullSourceRepository(db)
-			pullSourceService := service.NewPullSourceService(pullSourceRepo, userSvc)
-			RegisterPullSourceRoutes(auth, pullSourceService)
+			// 平台账号拉单功能路由
+			platformAccountRepo := repository.NewPlatformAccountRepository(db)
+			platformAccountSvc := service.NewPlatformAccountService(platformAccountRepo)
+			platformAccountCtrl := controller.NewPlatformAccountController(platformAccountSvc)
+
+			// 平台账号变体相关
+			variantRepo := repository.NewPlatformAccountVariantRepository(db)
+			variantSvc := service.NewPlatformAccountVariantService(variantRepo, platformAccountRepo)
+			variantCtrl := controller.NewPlatformAccountVariantController(variantSvc)
+
+			// 拉单相关接口
+			pullOrder := auth.Group("/platform/account/pull-order")
+			{
+				pullOrder.GET("/accounts", platformAccountCtrl.GetPullOrderAccounts)
+				pullOrder.GET("/accounts/:id", platformAccountCtrl.GetPullOrderAccount)
+				pullOrder.PUT("/accounts/:id/config", platformAccountCtrl.UpdatePullOrderConfig)
+			}
+
+			// 平台账号基本接口
+			auth.POST("/platform/account/bind_user", platformAccountCtrl.BindUser)
+			auth.GET("/platform/account/list", platformAccountCtrl.List)
+
+			// 平台账号变体接口
+			variants := auth.Group("/platform/account/variants")
+			{
+				variants.POST("", variantCtrl.Create)
+				variants.PUT("/:id", variantCtrl.Update)
+				variants.DELETE("/:id", variantCtrl.Delete)
+				variants.GET("/:id", variantCtrl.GetByID)
+				variants.GET("", variantCtrl.List)
+				variants.GET("/platform-account/:platform_account_id", variantCtrl.GetByPlatformAccount)
+			}
 
 			// TODO: 以下路由对应的控制器暂未初始化，需要对应的服务支持
 			// 只允许管理员访问
@@ -492,8 +522,18 @@ func assertPhoneQueryController(ctrl interface{}) *controller.PhoneQueryControll
 	if ctrl == nil {
 		return nil
 	}
-	if pqc, ok := ctrl.(*controller.PhoneQueryController); ok {
-		return pqc
+	if c, ok := ctrl.(*controller.PhoneQueryController); ok {
+		return c
+	}
+	return nil
+}
+
+func assertUserService(svc interface{}) *service.UserService {
+	if svc == nil {
+		return nil
+	}
+	if s, ok := svc.(*service.UserService); ok {
+		return s
 	}
 	return nil
 }

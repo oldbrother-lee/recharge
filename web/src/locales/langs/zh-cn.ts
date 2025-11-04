@@ -244,7 +244,6 @@ const local: App.I18n.Schema = {
     'order_xianyingke':"闲赢客订单",
     'user':"用户中心",
     'system_phone-query':"缴费查询",
-    'pullsource':"拉单源管理",
   },
   page: {
     login: {

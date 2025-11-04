@@ -8,18 +8,16 @@ import (
 // PullOrderManager 管理平台实现及上下文依赖
  type PullOrderManager struct {
 	platforms    map[string]PullOrderPlatform
-	repo         *repository.PullSourceRepositoryImpl
 	orderService service.OrderService
 }
 
-func NewPullOrderManager(repo *repository.PullSourceRepositoryImpl, orderSvc service.OrderService) *PullOrderManager {
+func NewPullOrderManager(orderSvc service.OrderService, platformAccountRepo *repository.PlatformAccountRepository, variantRepo repository.PlatformAccountVariantRepository) *PullOrderManager {
 	m := &PullOrderManager{
 		platforms:    make(map[string]PullOrderPlatform),
-		repo:         repo,
 		orderService: orderSvc,
 	}
-	// 默认注册“得众”平台
-	m.RegisterPlatform(NewDzPullPlatform(repo))
+	dzPlatform := NewDzPullPlatform(platformAccountRepo, variantRepo)
+	m.RegisterPlatform(dzPlatform)
 	return m
 }
 

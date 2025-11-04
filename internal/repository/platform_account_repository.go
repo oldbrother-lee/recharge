@@ -115,3 +115,75 @@ func (r *PlatformAccountRepository) List(ctx context.Context, offset, limit int)
 func (r *PlatformAccountRepository) GetDB() *gorm.DB {
 	return r.db
 }
+
+// 拉单相关方法
+
+// GetPullOrderAccounts 获取启用拉单的平台账号列表
+func (r *PlatformAccountRepository) GetPullOrderAccounts(ctx context.Context) ([]model.PlatformAccount, error) {
+	var accounts []model.PlatformAccount
+	err := r.db.WithContext(ctx).
+		Preload("Platform").
+		Preload("Variants", "enabled = ?", true).
+		Where("enable_pull_order = ? AND status = ?", true, 1).
+		Find(&accounts).Error
+	return accounts, err
+}
+
+// GetPullOrderAccountByID 获取拉单账号详情（包含变体）
+func (r *PlatformAccountRepository) GetPullOrderAccountByID(ctx context.Context, id int64) (*model.PlatformAccount, error) {
+	var account model.PlatformAccount
+	err := r.db.WithContext(ctx).
+		Preload("Platform").
+		Preload("Variants").
+		Where("id = ? AND enable_pull_order = ?", id, true).
+		First(&account).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &account, nil
+}
+
+// UpdatePullOrderConfig 更新拉单配置
+func (r *PlatformAccountRepository) UpdatePullOrderConfig(ctx context.Context, id int64, config *model.PlatformAccountUpdateRequest) error {
+	updates := map[string]interface{}{}
+	
+	if config.EnablePullOrder != nil {
+		updates["enable_pull_order"] = *config.EnablePullOrder
+	}
+	if config.MaxConcurrency != nil {
+		updates["max_concurrency"] = *config.MaxConcurrency
+	}
+	if config.PollIntervalSec != nil {
+		updates["poll_interval_sec"] = *config.PollIntervalSec
+	}
+	if config.PullAction != nil {
+		updates["pull_action"] = *config.PullAction
+	}
+	if config.BindUserID != nil {
+		updates["bind_user_id"] = *config.BindUserID
+	}
+	if config.BindUserName != nil {
+		updates["bind_user_name"] = *config.BindUserName
+	}
+	
+	if len(updates) == 0 {
+		return nil
+	}
+	
+	return r.db.WithContext(ctx).Model(&model.PlatformAccount{}).
+		Where("id = ?", id).
+		Updates(updates).Error
+}
+
+// GetAccountsByBindUser 根据绑定用户获取平台账号
+func (r *PlatformAccountRepository) GetAccountsByBindUser(ctx context.Context, userID int64) ([]model.PlatformAccount, error) {
+	var accounts []model.PlatformAccount
+	err := r.db.WithContext(ctx).
+		Preload("Platform").
+		Where("bind_user_id = ?", userID).
+		Find(&accounts).Error
+	return accounts, err
+}

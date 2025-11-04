@@ -148,8 +148,8 @@ func SetupRouter(
 			// 只允许管理员访问
 			RegisterDaichongOrderRoutes(auth)
 
-			// 平台账号相关接口
-			RegisterPlatformAccountRoutes(api)
+			// 平台账号相关接口（包含拉单功能）
+			RegisterPlatformAccountRoutes(api, userService)
 			//通知路由
 
 			// 推单状态相关接口
@@ -174,11 +174,6 @@ func SetupRouter(
 			apiKeyRepo := repository.NewExternalAPIKeyRepository(database.DB)
 			apiKeyController := controller.NewExternalAPIKeyController(apiKeyRepo, userRepo)
 			RegisterExternalAPIKeyRoutes(auth, apiKeyController, userService)
-
-			// 拉单配置管理路由
-			pullSourceRepo := repository.NewPullSourceRepository(database.DB)
-			pullSourceService := service.NewPullSourceService(pullSourceRepo, userService)
-			RegisterPullSourceRoutes(auth, pullSourceService)
 		}
 
 		// 注册系统配置路由
@@ -189,14 +184,39 @@ func SetupRouter(
 }
 
 // 注册平台账号相关接口
-func RegisterPlatformAccountRoutes(r *gin.RouterGroup) {
+func RegisterPlatformAccountRoutes(r *gin.RouterGroup, userService *service.UserService) {
 	// 这里直接初始化 repository/service/controller，实际项目可根据依赖注入优化
 	platformAccountRepo := repository.NewPlatformAccountRepository(database.DB)
 	platformAccountSvc := service.NewPlatformAccountService(platformAccountRepo)
 	platformAccountCtrl := controller.NewPlatformAccountController(platformAccountSvc)
 
+	// 平台账号变体相关
+	variantRepo := repository.NewPlatformAccountVariantRepository(database.DB)
+	variantSvc := service.NewPlatformAccountVariantService(variantRepo, platformAccountRepo)
+	variantCtrl := controller.NewPlatformAccountVariantController(variantSvc)
+
+	// 基础平台账号接口
 	r.POST("/platform/account/bind_user", platformAccountCtrl.BindUser)
 	r.GET("/platform/account/list", platformAccountCtrl.List)
+
+	// 拉单相关接口
+	pullOrder := r.Group("/platform/account/pull-order")
+	{
+		pullOrder.GET("/accounts", platformAccountCtrl.GetPullOrderAccounts)
+		pullOrder.GET("/accounts/:id", platformAccountCtrl.GetPullOrderAccount)
+		pullOrder.PUT("/accounts/:id/config", platformAccountCtrl.UpdatePullOrderConfig)
+	}
+
+	// 平台账号变体接口
+	variants := r.Group("/platform/account/variants")
+	{
+		variants.POST("", variantCtrl.Create)
+		variants.PUT("/:id", variantCtrl.Update)
+		variants.DELETE("/:id", variantCtrl.Delete)
+		variants.GET("/:id", variantCtrl.GetByID)
+		variants.GET("", variantCtrl.List)
+		variants.GET("/platform-account/:platform_account_id", variantCtrl.GetByPlatformAccount)
+	}
 }
 
 // 注册推单状态相关接口

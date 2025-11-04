@@ -40,6 +40,9 @@
         <NFormItem label="AppSecret" path="app_secret">
           <NInput v-model:value="formModel.app_secret" placeholder="请输入AppSecret" />
         </NFormItem>
+        <NFormItem label="登录密码" path="account_password">
+          <NInput v-model:value="formModel.account_password" type="password" show-password-on="click" placeholder="请输入登录密码" />
+        </NFormItem>
         <NFormItem label="描述" path="description">
           <NInput v-model:value="formModel.description" type="textarea" placeholder="请输入描述" />
         </NFormItem>
@@ -82,9 +85,12 @@
     type: number;
     app_key: string;
     app_secret: string;
+    account_password: string;
     description: string;
     status: number;
     push_status: number;
+    max_concurrency?: number;
+    poll_interval_sec?: number;
   }
   
   interface Platform {
@@ -124,7 +130,6 @@
   // 提交表单
   const handleFormSubmit = async () => {
     try {
-      await handleSubmit();
       if (formModel.value.id) {
         await request({
           url: `/platform/account/${formModel.value.id}`,
@@ -156,9 +161,12 @@
       type: 1,
       app_key: '',
       app_secret: '',
+      account_password: '',
       description: '',
       status: 1,
-      push_status: 1
+      push_status: 1,
+      max_concurrency: 1,
+      poll_interval_sec: 10
     };
   };
   

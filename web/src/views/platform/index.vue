@@ -86,6 +86,7 @@ interface PlatformAccount {
   created_at: string;
   bind_user_id?: number;
   bind_user_name?: string;
+  enable_pull_order?: boolean;
   push_status: number;
   max_concurrency?: number;
   poll_interval_sec?: number;
@@ -459,12 +460,12 @@ const accountColumns: DataTableColumns<PlatformAccount> = [
     title: '推单状态',
     align: 'center' as const,
     width: 100,
-    render(row: PlatformAccount) {
-      if (row.push_status === 1) return '开启';
-      if (row.push_status === 2) return '关闭';
-      return '-';
-    }
-  },
+      render(row: PlatformAccount) {
+        if (row.push_status === 1) return '推单模式';
+        if (row.enable_pull_order === true || row.push_status === 0) return '拉单模式';
+        return '-';
+      }
+    },
   {
     key: 'bind_user_name',
     title: '绑定账号',

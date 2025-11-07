@@ -373,16 +373,16 @@ func (c *ExternalOrderController) GetOrder(ctx *gin.Context) {
 
 // respondError 统一错误响应
 func (c *ExternalOrderController) respondError(ctx *gin.Context, statusCode int, message string, logData *model.ExternalOrderLog, startTime time.Time) {
-	logData.Status = 0
-	if logData.ErrorMsg == "" {
-		logData.ErrorMsg = message
-	}
+    logData.Status = 0
+    if logData.ErrorMsg == "" {
+        logData.ErrorMsg = message
+    }
 
-	response := &ExternalOrderCreateResponse{
-		Code:      statusCode,
-		Message:   message,
-		Timestamp: time.Now().Unix(),
-	}
+    response := &ExternalOrderCreateResponse{
+        Code:      statusCode,
+        Message:   message,
+        Timestamp: time.Now().Unix(),
+    }
 
 	// 记录错误日志到数据库，但只有当order_id不为空时才插入
 	if logData.OrderID != "" {
@@ -391,7 +391,19 @@ func (c *ExternalOrderController) respondError(ctx *gin.Context, statusCode int,
 		}
 	}
 
-	ctx.JSON(statusCode, response)
+    // 将错误附加到 gin 上下文，便于统一日志中间件输出 errors 字段
+    // 使用私有错误类型，避免污染对外响应结构
+    ctx.Error(fmt.Errorf("external_order_error: %s", logData.ErrorMsg))
+
+    // 结构化错误日志，便于定位问题
+    logger.WithContextCategory(ctx.Request.Context(), "external_order").Error("外部订单接口错误",
+        logger.IntV2("status_code", statusCode),
+        logger.StringV2("message", message),
+        logger.StringV2("order_id", logData.OrderID),
+        logger.StringV2("raw_data", logData.RawData),
+    )
+
+    ctx.JSON(statusCode, response)
 }
 
 // getStatusDesc 获取状态描述

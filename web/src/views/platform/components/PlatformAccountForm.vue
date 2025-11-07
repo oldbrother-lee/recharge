@@ -49,15 +49,14 @@
         <NFormItem label="状态" path="status">
           <NSwitch v-model:value="formModel.status" :checked-value="1" :unchecked-value="0" />
         </NFormItem>
-        <NFormItem label="推单状态" path="push_status">
-          <NSelect
+        <NFormItem label="模式" path="push_status">
+          <NRadioGroup
             v-model:value="formModel.push_status"
-            :options="[
-              { label: '开启', value: 1 },
-              { label: '关闭', value: 2 }
-            ]"
-            placeholder="请选择推单状态"
-          />
+            @update:value="(v:number) => { formModel.enable_pull_order = v === 1 ? false : true }"
+          >
+            <NRadio :value="1">推单模式</NRadio>
+            <NRadio :value="0">拉单模式</NRadio>
+          </NRadioGroup>
         </NFormItem>
       </NForm>
       <template #action>
@@ -70,12 +69,12 @@
   </template>
   
   <script setup lang="ts">
-  import { ref, onMounted, computed } from 'vue';
+  import { ref, onMounted, computed, watch } from 'vue';
   import { useModal } from '@/hooks/useModal';
   import { useForm } from '@/hooks/useForm';
   import { useMessage } from 'naive-ui';
   import { request } from '@/service/request';
-  import { NForm, NFormItem, NInput, NSelect, NSwitch, NButton, NSpace } from 'naive-ui';
+  import { NForm, NFormItem, NInput, NSelect, NSwitch, NButton, NSpace, NRadioGroup, NRadio } from 'naive-ui';
   import type { FormRules } from 'naive-ui';
   
   interface PlatformAccount {
@@ -89,6 +88,7 @@
     description: string;
     status: number;
     push_status: number;
+    enable_pull_order?: boolean;
     max_concurrency?: number;
     poll_interval_sec?: number;
   }
@@ -165,6 +165,7 @@
       description: '',
       status: 1,
       push_status: 1,
+      enable_pull_order: false,
       max_concurrency: 1,
       poll_interval_sec: 10
     };
@@ -173,6 +174,14 @@
   // 编辑账号
   const edit = (row: PlatformAccount) => {
     formModel.value = { ...row };
+    // 同步模式映射：enable_pull_order=true 则显示拉单模式（push_status=0）
+    if (formModel.value.enable_pull_order === true) {
+      formModel.value.push_status = 0;
+    } else if (formModel.value.push_status !== 1) {
+      // 默认推单模式
+      formModel.value.push_status = 1;
+      formModel.value.enable_pull_order = false;
+    }
     showModal();
   };
   

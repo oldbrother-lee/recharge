@@ -97,6 +97,8 @@ func InitDB() error {
 		&model.Platform{},
 		&model.PlatformAccount{},
 		&model.PlatformAccountVariant{},
+		// 统一拉单配置表（章鱼/得众等平台共用）
+		&model.PullTaskConfig{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate tables: %v", err)
 	}

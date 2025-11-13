@@ -152,7 +152,37 @@ func (r *PlatformRepositoryImpl) UpdateAccount(ctx context.Context, account *mod
 
 // DeleteAccount 删除平台账号
 func (r *PlatformRepositoryImpl) DeleteAccount(ctx context.Context, id int64) error {
-	return r.db.Delete(&model.PlatformAccount{}, id).Error
+    // 为兼容生产库可能缺少 ON DELETE CASCADE 的外键配置，手动删除子表后再删主表
+    tx := r.db.WithContext(ctx).Begin()
+    if err := tx.Error; err != nil {
+        return err
+    }
+
+    // 删除平台账号的变体配置（存在该表时）
+    if tx.Migrator().HasTable(&model.PlatformAccountVariant{}) {
+        if err := tx.Where("platform_account_id = ?", id).
+            Delete(&model.PlatformAccountVariant{}).Error; err != nil {
+            tx.Rollback()
+            return err
+        }
+    }
+
+    // 删除平台账号的商品映射（存在该表时）
+    if tx.Migrator().HasTable(&model.PlatformAccountProductMap{}) {
+        if err := tx.Where("platform_account_id = ?", id).
+            Delete(&model.PlatformAccountProductMap{}).Error; err != nil {
+            tx.Rollback()
+            return err
+        }
+    }
+
+    // 删除平台账号本身
+    if err := tx.Delete(&model.PlatformAccount{}, id).Error; err != nil {
+        tx.Rollback()
+        return err
+    }
+
+    return tx.Commit().Error
 }
 
 // CreatePlatform 创建平台

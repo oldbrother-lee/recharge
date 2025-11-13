@@ -124,7 +124,7 @@ func (r *PlatformAccountRepository) GetPullOrderAccounts(ctx context.Context) ([
 	err := r.db.WithContext(ctx).
 		Preload("Platform").
 		Preload("Variants", "enabled = ?", true).
-		Where("enable_pull_order = ? AND status = ?", true, 1).
+		Where("order_mode = ? AND enable_pull_order = ? AND status = ?", 2, true, 1).
 		Find(&accounts).Error
 	return accounts, err
 }
@@ -135,7 +135,7 @@ func (r *PlatformAccountRepository) GetPullOrderAccountByID(ctx context.Context,
 	err := r.db.WithContext(ctx).
 		Preload("Platform").
 		Preload("Variants").
-		Where("id = ? AND enable_pull_order = ?", id, true).
+		Where("id = ? AND order_mode = ? AND enable_pull_order = ?", id, 2, true).
 		First(&account).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -149,7 +149,7 @@ func (r *PlatformAccountRepository) GetPullOrderAccountByID(ctx context.Context,
 // UpdatePullOrderConfig 更新拉单配置
 func (r *PlatformAccountRepository) UpdatePullOrderConfig(ctx context.Context, id int64, config *model.PlatformAccountUpdateRequest) error {
 	updates := map[string]interface{}{}
-	
+
 	if config.EnablePullOrder != nil {
 		updates["enable_pull_order"] = *config.EnablePullOrder
 	}
@@ -168,11 +168,11 @@ func (r *PlatformAccountRepository) UpdatePullOrderConfig(ctx context.Context, i
 	if config.BindUserName != nil {
 		updates["bind_user_name"] = *config.BindUserName
 	}
-	
+
 	if len(updates) == 0 {
 		return nil
 	}
-	
+
 	return r.db.WithContext(ctx).Model(&model.PlatformAccount{}).
 		Where("id = ?", id).
 		Updates(updates).Error

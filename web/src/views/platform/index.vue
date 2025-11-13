@@ -62,6 +62,7 @@ function updateXianzhuanxiaTaskConfig(data: any) {
   return request({ url: '/task-config', method: 'PUT', data });
 }
 
+
 interface Platform {
   id: number;
   name: string;
@@ -69,6 +70,7 @@ interface Platform {
   api_url: string;
   description: string;
   status: number;
+  order_mode?: number;
   created_at: string;
 }
 
@@ -86,6 +88,7 @@ interface PlatformAccount {
   created_at: string;
   bind_user_id?: number;
   bind_user_name?: string;
+  order_mode?: number;
   enable_pull_order?: boolean;
   push_status: number;
   max_concurrency?: number;
@@ -124,7 +127,21 @@ const message = useMessage();
 const { loading, data, pagination, handlePageChange, handlePageSizeChange, handleSearch } = useTable<Platform>();
 const { visible, showModal, hideModal } = useModal();
 const { formRef, formModel, rules, handleSubmit, resetForm } = useForm();
+
+// 新增平台：设置默认表单值（包含模式）
+const handleCreatePlatform = () => {
+  formModel.value = {
+    name: '',
+    code: '',
+    api_url: '',
+    description: '',
+    status: 1,
+    order_mode: 1
+  } as any;
+  showModal();
+};
 const currentPlatformCode = ref('');
+const currentPlatformOrderMode = ref<number>(1);
 const beeProductManagementRef = ref();
 
 // 添加 computed 属性
@@ -135,6 +152,10 @@ const beeProductManagementRef = ref();
 
   const isMf178 = computed(() => {
     return currentPlatformCode.value === 'mifeng';
+  });
+
+  const isZhangyu = computed(() => {
+    return currentPlatformCode.value === 'zhangyu';
   });
 
   // 弹窗标题：闲赚侠使用原有文案，其它平台独立显示
@@ -217,6 +238,17 @@ const columns: DataTableColumns<Platform> = [
     width: 80,
     render(row: Platform) {
       return row.status === 1 ? '启用' : '禁用';
+    }
+  },
+  {
+    key: 'mode',
+    title: '模式',
+    align: 'center',
+    width: 100,
+    render(row: Platform) {
+      if (row.order_mode === 2) return '拉单';
+      if (row.order_mode === 1) return '推单';
+      return '推单';
     }
   },
   {
@@ -411,6 +443,7 @@ const showAccountDialog = (platform: Platform) => {
   console.log('Current platform code before set:', currentPlatformCode.value);
   currentPlatformCode.value = platform.code;
   console.log('Current platform code after set:', currentPlatformCode.value);
+  currentPlatformOrderMode.value = platform.order_mode || 1;
   accountVisible.value = true;
   // 重置分页
   accountPagination.value.page = 1;
@@ -457,15 +490,44 @@ const accountColumns: DataTableColumns<PlatformAccount> = [
   },
   {
     key: 'push_status',
-    title: '推单状态',
+    title: '推/拉状态',
     align: 'center' as const,
     width: 100,
-      render(row: PlatformAccount) {
-        if (row.push_status === 1) return '推单模式';
-        if (row.enable_pull_order === true || row.push_status === 0) return '拉单模式';
+    render(row: PlatformAccount) {
+      // 根据平台模式显示对应状态：推单模式显示推单状态，拉单模式显示拉单开关
+      if (currentPlatformOrderMode.value === 2) {
+        // 拉单模式：展示拉单开关状态
+        if (row.enable_pull_order === true) return '开启';
+        if (row.enable_pull_order === false) return '关闭';
         return '-';
       }
-    },
+      if (currentPlatformOrderMode.value === 1) {
+        // 推单模式：展示推单状态（1=开启，2=关闭）
+        if (row.push_status === 1) return '开启';
+        if (row.push_status === 2) return '关闭';
+        return '-';
+      }
+      // 兼容旧数据：order_mode 缺失时，若 enable_pull_order 有值则以其作为拉单状态，否则显示推单状态
+      if (row.enable_pull_order === true) return '开启';
+      if (row.enable_pull_order === false) return '关闭';
+      if (row.push_status === 1) return '开启';
+      if (row.push_status === 2) return '关闭';
+      return '-';
+    }
+  },
+  {
+    key: 'mode',
+    title: '模式',
+    align: 'center' as const,
+    width: 100,
+    render(row: PlatformAccount) {
+      // 根据当前平台的模式展示
+      if (currentPlatformOrderMode.value === 2) return '拉单';
+      if (currentPlatformOrderMode.value === 1) return '推单';
+      // 兜底：根据账号enable_pull_order判断
+      return row.enable_pull_order === true ? '拉单' : '推单';
+    }
+  },
   {
     key: 'bind_user_name',
     title: '绑定账号',
@@ -485,7 +547,7 @@ const accountColumns: DataTableColumns<PlatformAccount> = [
       const dropdownOptions = [];
 
       // 添加条件性按钮到下拉菜单
-      if (isXianzhuanxia.value || isDz.value) {
+      if (isXianzhuanxia.value || isDz.value || isZhangyu.value) {
         dropdownOptions.push({
           label: '拉单配置',
           key: 'taskConfig',
@@ -494,6 +556,7 @@ const accountColumns: DataTableColumns<PlatformAccount> = [
               console.log('Platform code:', currentPlatformCode.value);
               console.log('Is equal to xianzhuanxia:', isXianzhuanxia.value);
               console.log('Is equal to dz:', isDz.value);
+              console.log('Is equal to zhangyu:', isZhangyu.value);
               handleTaskConfig(row);
             }
           }
@@ -632,6 +695,30 @@ async function batchUpdatePushStatus(status: number) {
   }
 }
 
+// 批量开启/关闭拉单
+async function batchUpdatePullOrder(enable: boolean) {
+  if (!selectedAccountIds.value.length) {
+    message.warning('请先选择账号');
+    return;
+  }
+  const results = await Promise.allSettled(
+    selectedAccountIds.value.map(id =>
+      request({
+        url: `/platform/account/pull-order/accounts/${id}/config`,
+        method: 'PUT',
+        data: { enable_pull_order: enable }
+      })
+    )
+  );
+  const successCount = results.filter(r => r.status === 'fulfilled').length;
+  const failCount = results.length - successCount;
+  message.success(`操作完成，成功${successCount}个，失败${failCount}个`);
+  // 重新拉取账号列表
+  if (accountData.value.length > 0) {
+    fetchPlatformAccounts(accountData.value[0].platform_id, currentPlatformCode.value);
+  }
+}
+
 // 打开绑定账号弹窗并拉取用户列表
 const handleBindUser = async (row: PlatformAccount) => {
   currentPlatformAccount.value = row;
@@ -710,6 +797,9 @@ const fetchTaskConfigList = async () => {
     if (isDz.value) {
       // 得众平台使用平台账号变体接口
       res = await getTaskConfigList(params);
+    } else if (isZhangyu.value) {
+      // 章鱼平台复用得众变体接口
+      res = await getTaskConfigList(params);
     } else {
       // 闲赚侠等其他平台使用原有的任务配置接口
       res = await getXianzhuanxiaTaskConfigList(params);
@@ -742,12 +832,14 @@ const taskConfigColumns = computed(() => {
         key: 'isp',
         width: 100,
         render(row: any) {
-          const ispMap: { [key: number]: string } = { 1: '移动', 2: '电信', 3: '联通', 0: '未知' };
+          const ispMap: { [key: number]: string } = { 1: '移动', 3: '电信', 2: '联通', 0: '未知' };
           return ispMap[row.isp] || '未知';
         }
       },
       { title: '面值', key: 'face_value', width: 80 },
       { title: '产品ID', key: 'product_id', width: 100 },
+      { title: '轮询间隔(秒)', key: 'poll_interval_sec', width: 120 },
+      { title: '并发度', key: 'concurrency', width: 100 },
       {
         title: '状态',
         key: 'enabled',
@@ -766,6 +858,7 @@ const taskConfigColumns = computed(() => {
       {
         title: '创建时间',
         key: 'created_at',
+        width: 160,
         render(row: any) {
           return formatDateTime(row.created_at);
         }
@@ -789,6 +882,49 @@ const taskConfigColumns = computed(() => {
                 default: () => '确认删除该配置吗？',
                 trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' })
               }
+            )
+          ]);
+        }
+      }
+    ] as any;
+  }
+  if (isZhangyu.value) {
+    // 章鱼平台的列（复用得众列 + 渠道编码）
+    return [
+      ...baseColumns,
+      { title: '渠道编码', key: 'flag', width: 120 },
+      {
+        title: '运营商',
+        key: 'isp',
+        width: 100,
+        render(row: any) {
+          const ispMap: { [key: number]: string } = { 1: '移动', 3: '电信', 2: '联通', 0: '未知' };
+          return ispMap[row.isp] || '未知';
+        }
+      },
+      { title: '面值', key: 'face_value', width: 80 },
+      { title: '产品ID', key: 'product_id', width: 100 },
+      { title: '轮询间隔(秒)', key: 'poll_interval_sec', width: 120 },
+      { title: '并发度', key: 'concurrency', width: 100 },
+      {
+        title: '状态',
+        key: 'enabled',
+        width: 80,
+        render(row: any) {
+          return h(NTag, { type: row.enabled ? 'success' : 'error', bordered: false }, { default: () => (row.enabled ? '启用' : '禁用') });
+        }
+      },
+      { title: '创建时间', key: 'created_at', width: 160, render: (row: any) => formatDateTime(row.created_at) },
+      {
+        title: '操作',
+        key: 'actions',
+        render(row: any) {
+          return h(NSpace, {}, [
+            h(NButton, { size: 'small', type: 'primary', onClick: () => handleEditTaskConfig(row) }, { default: () => '编辑' }),
+            h(
+              NPopconfirm,
+              { onPositiveClick: () => handleDeleteTaskConfig(row) },
+              { default: () => '确认删除该配置吗？', trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' }) }
             )
           ]);
         }
@@ -891,6 +1027,26 @@ function handleEditTaskConfig(row: any) {
       min_settle_amounts: '',
       status: 1
     };
+  } else if (isZhangyu.value) {
+    // 章鱼平台复用得众字段，并额外支持 flag
+    editTaskConfigForm.value = {
+      id: row.id,
+      platform_id: row.platform_id,
+      platform_account_id: row.platform_account_id,
+      isp: row.isp || 1,
+      face_value: row.face_value || 0,
+      product_id: row.product_id || '',
+      poll_interval_sec: row.poll_interval_sec || 30,
+      concurrency: row.concurrency || 1,
+      enabled: row.enabled !== undefined ? (row.enabled ? 1 : 0) : 1,
+      // 章鱼额外字段
+      flag: row.flag || '',
+      // 闲赚侠字段设为默认值
+      channel_id: 0,
+      face_values: '',
+      min_settle_amounts: '',
+      status: 1
+    } as any;
   } else {
     // 闲赚侠平台的字段映射
     editTaskConfigForm.value = {
@@ -934,6 +1090,17 @@ async function handleSaveTaskConfig() {
         concurrency: editTaskConfigForm.value.concurrency,
         enabled: Boolean(editTaskConfigForm.value.enabled)
       };
+    } else if (isZhangyu.value) {
+      // 章鱼平台复用得众变体结构，并加 flag
+      submitData = {
+        ...submitData,
+        isp: editTaskConfigForm.value.isp,
+        face_value: editTaskConfigForm.value.face_value,
+        poll_interval_sec: editTaskConfigForm.value.poll_interval_sec,
+        concurrency: editTaskConfigForm.value.concurrency,
+        enabled: Boolean(editTaskConfigForm.value.enabled),
+        flag: (editTaskConfigForm.value as any).flag
+      };
     } else {
       // 闲赚侠等其他平台的数据结构
       submitData = {
@@ -963,6 +1130,25 @@ async function handleSaveTaskConfig() {
         payload.product_id = pidNum;
       }
       await updateTaskConfig(payload);
+    } else if (isZhangyu.value) {
+      // 复用得众变体接口
+      const accountId = currentPlatformAccount.value?.id ?? editTaskConfigForm.value.platform_account_id ?? 0;
+      const payload: any = {
+        id: editTaskConfigForm.value.id,
+        platform_account_id: accountId,
+        isp: editTaskConfigForm.value.isp,
+        face_value: editTaskConfigForm.value.face_value,
+        poll_interval_sec: editTaskConfigForm.value.poll_interval_sec,
+        concurrency: editTaskConfigForm.value.concurrency,
+        enabled: Boolean(editTaskConfigForm.value.enabled),
+        flag: (editTaskConfigForm.value as any).flag
+      };
+      // 章鱼：product_id 为字符串时转换为数字，避免后端 int64 解码失败
+      const _pidNumZ = Number(editTaskConfigForm.value.product_id);
+      if (!Number.isNaN(_pidNumZ) && _pidNumZ > 0) {
+        payload.product_id = _pidNumZ;
+      }
+      await updateTaskConfig(payload);
     } else {
       // 闲赚侠等其他平台使用原有的任务配置接口
       await updateXianzhuanxiaTaskConfig(submitData);
@@ -981,6 +1167,8 @@ async function handleDeleteTaskConfig(row: any) {
     // 根据平台类型调用不同的删除API
     if (isDz.value) {
       // 得众平台使用变体接口
+      await deleteTaskConfig(row.id);
+    } else if (isZhangyu.value) {
       await deleteTaskConfig(row.id);
     } else {
       // 闲赚侠等其他平台使用原有的任务配置接口
@@ -1017,6 +1205,26 @@ async function batchSetTaskConfigStatus(status: number) {
           payload.product_id = pidNum;
         }
         await updateTaskConfig(payload);
+      } else if (isZhangyu.value) {
+        // 章鱼平台批量设置状态，复用得众变体接口，并补充 flag
+        const row = taskConfigList.value.find((r: any) => r.id === id);
+        if (!row) continue;
+        const accountId = row.platform_account_id ?? currentPlatformAccount.value?.id ?? 0;
+        const payload: any = {
+          id: row.id,
+          platform_account_id: accountId,
+          isp: row.isp,
+          face_value: row.face_value,
+          poll_interval_sec: row.poll_interval_sec,
+          concurrency: row.concurrency,
+          enabled: Boolean(status),
+          flag: row.flag
+        };
+        const _pidNumZB = Number(row.product_id);
+        if (!Number.isNaN(_pidNumZB) && _pidNumZB > 0) {
+          payload.product_id = _pidNumZB;
+        }
+        await updateTaskConfig(payload);
       } else {
         // 闲赚侠等其他平台使用原有的任务配置接口
         await updateXianzhuanxiaTaskConfig({ id, status });
@@ -1045,6 +1253,8 @@ const addTaskConfigForm = ref({
   poll_interval_sec: 30,
   concurrency: 1,
   enabled: 1,
+  // 章鱼平台字段（仅在章鱼时显示并提交）
+  flag: 'dxfs',
   // 通用字段
   product_id: ''
 });
@@ -1068,6 +1278,8 @@ function handleAddTaskConfig() {
     poll_interval_sec: 30,
     concurrency: 1,
     enabled: 1,
+    // 章鱼平台字段
+    flag: '',
     // 通用字段
     product_id: ''
   };
@@ -1093,6 +1305,17 @@ async function handleSaveAddTaskConfig() {
         poll_interval_sec: addTaskConfigForm.value.poll_interval_sec,
         concurrency: addTaskConfigForm.value.concurrency,
         enabled: Boolean(addTaskConfigForm.value.enabled)
+      };
+    } else if (isZhangyu.value) {
+      // 章鱼平台复用得众变体结构，并加 flag
+      submitData = {
+        ...submitData,
+        isp: addTaskConfigForm.value.isp,
+        face_value: addTaskConfigForm.value.face_value,
+        poll_interval_sec: addTaskConfigForm.value.poll_interval_sec,
+        concurrency: addTaskConfigForm.value.concurrency,
+        enabled: Boolean(addTaskConfigForm.value.enabled),
+        flag: addTaskConfigForm.value.flag
       };
     } else {
       // 闲赚侠等其他平台的数据结构
@@ -1121,6 +1344,15 @@ async function handleSaveAddTaskConfig() {
         payload.product_id = pidNum;
       }
       await createTaskConfig(payload);
+    } else if (isZhangyu.value) {
+      // 章鱼：product_id 为字符串时转换为数字，避免后端 int64 解码失败
+      const _pidNumZA = Number(addTaskConfigForm.value.product_id);
+      if (!Number.isNaN(_pidNumZA) && _pidNumZA > 0) {
+        submitData.product_id = _pidNumZA;
+      } else {
+        delete submitData.product_id;
+      }
+      await createTaskConfig(submitData);
     } else {
       // 闲赚侠等其他平台使用原有的任务配置接口
       await createXianzhuanxiaTaskConfig([submitData]);
@@ -1134,10 +1366,20 @@ async function handleSaveAddTaskConfig() {
 }
 
 // 格式化日期时间
-function formatDateTime(val: string) {
-  if (!val) return '';
-  const date = new Date(val);
-  if (isNaN(date.getTime())) return val;
+function formatDateTime(val: string | number) {
+  if (val === null || val === undefined) return '';
+  let ms: number;
+  if (typeof val === 'number') {
+    // 将秒/毫秒级时间戳统一为毫秒
+    ms = val > 1e12 ? val : val * 1000;
+  } else {
+    // 字符串情况直接解析
+    const parsed = Date.parse(val);
+    if (!Number.isFinite(parsed)) return String(val);
+    ms = parsed;
+  }
+  const date = new Date(ms);
+  if (isNaN(date.getTime())) return String(val);
   const pad = (n: number) => n.toString().padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
@@ -1390,15 +1632,12 @@ onMounted(() => {
     <NCard title="平台管理" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton
-            type="primary"
-            @click="
-              handleReset();
-              showModal();
-            "
-          >
-            新增平台
-          </NButton>
+  <NButton
+    type="primary"
+    @click="handleCreatePlatform"
+  >
+    新增平台
+  </NButton>
         </NSpace>
       </template>
       <NDataTable
@@ -1444,6 +1683,12 @@ onMounted(() => {
           <NFormItemGi label="描述" path="description">
             <NInput v-model:value="formModel.description" type="textarea" placeholder="请输入描述" />
           </NFormItemGi>
+          <NFormItemGi label="模式" path="order_mode">
+            <NRadioGroup v-model:value="(formModel as any).order_mode">
+              <NRadio :value="1">推单模式</NRadio>
+              <NRadio :value="2">拉单模式</NRadio>
+            </NRadioGroup>
+          </NFormItemGi>
           <NFormItemGi label="状态" path="status">
             <NSwitch v-model:value="formModel.status" :checked-value="1" :unchecked-value="0" />
           </NFormItemGi>
@@ -1463,8 +1708,14 @@ onMounted(() => {
         <!-- 工具栏 -->
         <div class="flex justify-end gap-16px">
           <NButton type="primary" @click="accountFormRef?.add(accountData[0]?.platform_id)">新增账号</NButton>
-          <NButton type="primary" @click="() => batchUpdatePushStatus(1)">批量开启推单</NButton>
-          <NButton type="primary" @click="() => batchUpdatePushStatus(2)">批量关闭推单</NButton>
+          <template v-if="currentPlatformOrderMode === 1">
+            <NButton type="primary" @click="() => batchUpdatePushStatus(1)">批量开启推单</NButton>
+            <NButton type="primary" @click="() => batchUpdatePushStatus(2)">批量关闭推单</NButton>
+          </template>
+          <template v-else-if="currentPlatformOrderMode === 2">
+            <NButton type="primary" @click="() => batchUpdatePullOrder(true)">批量开启拉单</NButton>
+            <NButton type="primary" @click="() => batchUpdatePullOrder(false)">批量关闭拉单</NButton>
+          </template>
         </div>
         <!-- 账号列表 -->
         <NDataTable
@@ -1563,17 +1814,20 @@ onMounted(() => {
         label-width="auto"
         require-mark-placement="right-hanging"
       >
-        <!-- 得众平台的字段 -->
-        <template v-if="isDz">
+        <!-- 得众/章鱼平台的字段 -->
+        <template v-if="isDz || isZhangyu">
           <NFormItem label="运营商" path="isp">
             <NSelect
               v-model:value="editTaskConfigForm.isp"
               :options="[
                 { label: '移动', value: 1 },
-                { label: '电信', value: 2 },
-                { label: '联通', value: 3 }
+                { label: '电信', value: 3 },
+                { label: '联通', value: 2 }
               ]"
             />
+          </NFormItem>
+          <NFormItem v-if="isZhangyu" label="渠道编码" path="flag">
+            <NInput v-model:value="(editTaskConfigForm as any).flag" placeholder="请输入渠道编码" />
           </NFormItem>
           <NFormItem label="面值" path="face_value">
             <NInputNumber v-model:value="editTaskConfigForm.face_value" :min="1" />
@@ -1638,8 +1892,8 @@ onMounted(() => {
         label-width="auto"
         require-mark-placement="right-hanging"
       >
-        <!-- 得众平台的字段 -->
-        <template v-if="isDz">
+        <!-- 得众/章鱼平台的字段 -->
+        <template v-if="isDz || isZhangyu">
           <NFormItem label="运营商" path="isp">
             <NSelect
               v-model:value="addTaskConfigForm.isp"
@@ -1649,6 +1903,9 @@ onMounted(() => {
                 { label: '联通', value: 3 }
               ]"
             />
+          </NFormItem>
+          <NFormItem v-if="isZhangyu" label="渠道编码" path="flag">
+            <NInput v-model:value="addTaskConfigForm.flag" placeholder="请输入渠道编码" />
           </NFormItem>
           <NFormItem label="面值" path="face_value">
             <NInputNumber v-model:value="addTaskConfigForm.face_value" :min="1" />

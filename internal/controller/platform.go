@@ -174,19 +174,19 @@ func (c *PlatformController) UpdatePlatformAccount(ctx *gin.Context) {
 
 // DeletePlatformAccount 删除平台账号
 func (c *PlatformController) DeletePlatformAccount(ctx *gin.Context) {
-	idStr := ctx.Param("id")
-	id, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
-		return
-	}
+    idStr := ctx.Param("id")
+    id, err := strconv.ParseInt(idStr, 10, 64)
+    if err != nil {
+        utils.Error(ctx, http.StatusBadRequest, "invalid account id")
+        return
+    }
 
-	if err := c.service.DeletePlatformAccount(ctx.Request.Context(), id); err != nil {
-		ctx.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
+    if err := c.service.DeletePlatformAccount(ctx.Request.Context(), id); err != nil {
+        utils.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "deleted"})
+    utils.Success(ctx, nil)
 }
 
 // GetPlatformAccount 获取平台账号详情

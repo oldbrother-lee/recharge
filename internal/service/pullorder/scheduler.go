@@ -13,17 +13,17 @@ import (
 
 // PullOrderScheduler 拉单任务调度器（骨架）
 type PullOrderScheduler struct {
-	mgr                 *PullOrderManager
-	platformAccountRepo *repository.PlatformAccountRepository
-	variantRepo         repository.PlatformAccountVariantRepository
+    mgr                 *PullOrderManager
+    platformAccountRepo *repository.PlatformAccountRepository
+    variantRepo         repository.PlatformAccountVariantRepository
 }
 
-func NewPullOrderScheduler(mgr *PullOrderManager, platformAccountRepo *repository.PlatformAccountRepository, variantRepo repository.PlatformAccountVariantRepository) *PullOrderScheduler {
-	return &PullOrderScheduler{
-		mgr:                 mgr,
-		platformAccountRepo: platformAccountRepo,
-		variantRepo:         variantRepo,
-	}
+func NewPullOrderScheduler(mgr *PullOrderManager, platformAccountRepo *repository.PlatformAccountRepository, variantRepo repository.PlatformAccountVariantRepository, _ repository.PullTaskConfigRepository) *PullOrderScheduler {
+    return &PullOrderScheduler{
+        mgr:                 mgr,
+        platformAccountRepo: platformAccountRepo,
+        variantRepo:         variantRepo,
+    }
 }
 
 // ProcessOnce 执行一次拉单处理（按所有已启用的平台账号与变体）
@@ -50,15 +50,15 @@ func (s *PullOrderScheduler) ProcessOnce(ctx context.Context) error {
 		}
 		fmt.Printf("[DEBUG] 找到平台: code=%s, platform=%T\n", account.Platform.Code, plat)
 
-		// 获取该平台账号的启用变体
-		variants, err := s.variantRepo.GetEnabledVariants(ctx, account.ID)
-		if err != nil {
-			return err
-		}
-		logger.InfoV2("变体数量", logger.IntV2("variant_count", len(variants)))
+        // 获取该平台账号的启用变体
+        variants, err := s.variantRepo.GetEnabledVariants(ctx, account.ID)
+        if err != nil {
+            return err
+        }
+        logger.InfoV2("变体数量", logger.IntV2("variant_count", len(variants)))
 
-		for _, v := range variants {
-			logger.InfoV2("处理变体", logger.Int64V2("variant_id", v.ID), logger.IntV2("isp", v.ISP), logger.Float64V2("face_value", v.FaceValue), logger.StringV2("cursor", v.CursorToken))
+        for _, v := range variants {
+            logger.InfoV2("处理变体", logger.Int64V2("variant_id", v.ID), logger.IntV2("isp", v.ISP), logger.Float64V2("face_value", v.FaceValue), logger.StringV2("cursor", v.CursorToken))
 
 			start := time.Now()
 			orders, err := plat.Pull(ctx, v.ID)
@@ -67,7 +67,9 @@ func (s *PullOrderScheduler) ProcessOnce(ctx context.Context) error {
 				// 增加失败计数
 				if updateErr := s.variantRepo.IncrementFailCount(ctx, v.ID); updateErr != nil {
 					logger.WithContext(ctx).Error("更新失败计数失败", logger.ErrorV2(updateErr))
-				}
+        }
+
+        // 章鱼与得众同样按变体拉单，逻辑保持一致
 				continue
 			}
 			elapsed := time.Since(start)
@@ -103,40 +105,50 @@ func (s *PullOrderScheduler) ProcessOnce(ctx context.Context) error {
 
 				// 3) 构造订单模型（复用平台映射逻辑）
 				var localOrder *model.Order
-				if dzPlat, ok := plat.(*DzPullPlatform); ok {
-					mapped, merr := dzPlat.MapToOrder(ctx, order, productID, customerID)
-					if merr != nil {
-						logger.WithContext(ctx).Error("外部订单映射失败", logger.ErrorV2(merr))
-						continue
-					}
-					localOrder = mapped
-					// 兜底：确保基础字段正确设置
-					if localOrder.PlatformName == "" {
-						localOrder.PlatformName = "得众"
-					}
-					if localOrder.PlatformCode == "" {
-						localOrder.PlatformCode = "dz"
-					}
-					// 设置平台账号ID，用于预通知
-					localOrder.PlatformAccountID = account.ID
-				} else {
-					// 兜底：直接构造必要字段
-					ispCode := utils.DzOperatorIDToCode(order.OperatorID)
-					localOrder = &model.Order{
-						CustomerID:       customerID,
-						Mobile:           order.Mobile,
-						ProductID:        productID,
-						Denom:            order.Amount,
-						UserQuotePayment: order.Discount,
-						ISP:              ispCode,
-						AccountLocation:  order.ProvinceName,
-						OutTradeNum:      order.ID,
-						Client:           3,
-						PlatformName:     account.Platform.Name,
-						PlatformCode:     account.Platform.Code,
-						Remark:           "得众拉单",
-					}
-				}
+                if dzPlat, ok := plat.(*DzPullPlatform); ok {
+                    mapped, merr := dzPlat.MapToOrder(ctx, order, productID, customerID)
+                    if merr != nil {
+                        logger.WithContext(ctx).Error("外部订单映射失败", logger.ErrorV2(merr))
+                        continue
+                    }
+                    localOrder = mapped
+                    // 兜底：确保基础字段正确设置
+                    if localOrder.PlatformName == "" {
+                        localOrder.PlatformName = "得众"
+                    }
+                    if localOrder.PlatformCode == "" {
+                        localOrder.PlatformCode = "dz"
+                    }
+                    // 设置平台账号ID，用于预通知
+                    localOrder.PlatformAccountID = account.ID
+                    // 将外部渠道编码(flag)保存到订单自定义字段 param1
+                    localOrder.Param1 = order.ExternalCode
+                } else {
+                    // 兜底：直接构造必要字段（按平台区分运营商ID映射）
+                    var ispCode int
+                    if _, isZy := plat.(*ZhangyuPullPlatform); isZy {
+                        ispCode = utils.ZhangyuOperatorIDToCode(order.OperatorID)
+                    } else {
+                        ispCode = utils.DzOperatorIDToCode(order.OperatorID)
+                    }
+                    localOrder = &model.Order{
+                        CustomerID:        customerID,
+                        Mobile:            order.Mobile,
+                        ProductID:         productID,
+                        Denom:             order.Amount,
+                        UserQuotePayment:  order.Discount,
+                        ISP:               ispCode,
+                        AccountLocation:   order.ProvinceName,
+                        OutTradeNum:       order.ID,
+                        Client:            3,
+                        PlatformName:      account.Platform.Name,
+                        PlatformCode:      account.Platform.Code,
+                        PlatformAccountID: account.ID,
+                        Remark:            account.Platform.Name + "拉单",
+                        // 保存外部渠道编码(flag)到订单自定义字段 param1
+                        Param1:            order.ExternalCode,
+                    }
+                }
 
 				// 4) 创建外部订单（仅落库，不扣款）
 				if cerr := s.mgr.orderService.CreateExternalOrderWithoutDeduction(ctx, localOrder, customerID); cerr != nil {

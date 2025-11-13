@@ -137,11 +137,11 @@ func SetupRouterV2(
 		}
 
 		// Protected routes
-	// 创建新的认证中间件实例
-	authMiddleware := middleware.NewAuthMiddleware(db)
-	auth := v1.Group("")
-	auth.Use(authMiddleware.Auth())
-	{
+		// 创建新的认证中间件实例
+		authMiddleware := middleware.NewAuthMiddleware(db)
+		auth := v1.Group("")
+		auth.Use(authMiddleware.Auth())
+		{
 			// Protected user routes
 			if uc := assertUserController(userController); uc != nil {
 				RegisterProtectedUserRoutes(auth, uc, userSvc, userLogCtrl)
@@ -220,6 +220,9 @@ func SetupRouterV2(
 				RegisterBalanceRoutes(auth, database.DB, userRepo, us)
 			}
 
+			// 统一拉单配置路由（仅管理员）
+			RegisterPullTaskConfigRoutes(auth)
+
 			// 平台余额查询接口（仅管理员可访问）
 			RegisterPlatformBalanceRoutes(auth, userSvc)
 
@@ -242,7 +245,7 @@ func SetupRouterV2(
 			platformRepo := repository.NewPlatformRepository(database.DB)
 			platformSvc := platform.NewService(platformTokenRepo, platformRepo)
 			RegisterTaskRoutes(auth, platformSvc)
-			
+
 			// 注册得众平台任务配置路由
 			RegisterDzTaskRoutes(auth)
 

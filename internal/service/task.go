@@ -889,6 +889,7 @@ func (s *TaskService) processTaskConfig(cfg *model.TaskConfig) {
 			logger.ErrorLogV2("获取账号信息失败，稍后重试",
 				logger.Int64V2("retry_seconds", int64(queryInterval)),
 				logger.Int64V2("task_id", taskID),
+				logger.Int64V2("platform_account_id", cfg.PlatformAccountID),
 				logger.ErrorV2(err))
 			select {
 			case <-taskCtx.Done():

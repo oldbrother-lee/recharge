@@ -1,14 +1,15 @@
 package recharge
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strconv"
-	"time"
+    "bytes"
+    "context"
+    "encoding/json"
+    "fmt"
+    "io"
+    "net/http"
+    "strings"
+    "strconv"
+    "time"
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
@@ -286,11 +287,21 @@ func (p *KekebangPlatform) ParseCallbackData(data []byte) (*model.CallbackData, 
 
 // sendRequest 发送请求
 func (p *KekebangPlatform) sendRequest(ctx context.Context, url string, params map[string]interface{}) (*KekebangResponse, error) {
-	// 将参数转换为 JSON
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("marshal params failed: %v", err)
-	}
+    // 将参数转换为 JSON
+    jsonData, err := json.Marshal(params)
+    if err != nil {
+        return nil, fmt.Errorf("marshal params failed: %v", err)
+    }
+
+    stage := "submit"
+    if strings.Contains(strings.ToLower(url), "query") {
+        stage = "query"
+    }
+    logger.WithContextCategory(ctx, "recharge").Info("kekebang 请求体",
+        logger.StringV2("stage", stage),
+        logger.StringV2("url", url),
+        logger.StringV2("body", string(jsonData)),
+    )
 
 	// 创建请求
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -314,24 +325,12 @@ func (p *KekebangPlatform) sendRequest(ctx context.Context, url string, params m
 	if err != nil {
 		return nil, fmt.Errorf("read response failed: %v", err)
 	}
-	// 安全打印响应预览
-    preview := func(b []byte) string { if len(b) > 200 { return string(b[:200]) + "..." } else { return string(b) } }(body)
-    if ctx != nil {
-        l := logger.WithContextCategory(ctx, "recharge")
-        if l != nil {
-            l.Info("kekebang 响应",
-                logger.StringV2("url", url),
-                logger.IntV2("status_code", resp.StatusCode),
-                logger.StringV2("body_preview", preview),
-            )
-        }
-    } else {
-        logger.GetCategoryLogger("recharge").Info("kekebang 响应",
-            logger.StringV2("url", url),
-            logger.IntV2("status_code", resp.StatusCode),
-            logger.StringV2("body_preview", preview),
-        )
-    }
+    logger.WithContextCategory(ctx, "recharge").Info("kekebang 响应",
+        logger.StringV2("stage", "response"),
+        logger.StringV2("url", url),
+        logger.IntV2("status_code", resp.StatusCode),
+        logger.StringV2("body", string(body)),
+    )
 
 	// 解析响应
 	var response KekebangResponse

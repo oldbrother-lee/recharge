@@ -412,6 +412,7 @@ func (s *PlatformService) sendRequest(ctx context.Context, url string, params ma
 	}
 
 	l.Info("平台通知请求体",
+		logger.StringV2("stage", "notify_send"),
 		logger.StringV2("body", string(jsonData)),
 	)
 
@@ -429,6 +430,7 @@ func (s *PlatformService) sendRequest(ctx context.Context, url string, params ma
 		Timeout: 10 * time.Second,
 	}
 	l.Info("请求已构建，开始发送",
+		logger.StringV2("stage", "notify_send"),
 		logger.StringV2("method", "POST"),
 		logger.StringV2("url", url),
 		logger.IntV2("timeout_seconds", 10),
@@ -450,9 +452,9 @@ func (s *PlatformService) sendRequest(ctx context.Context, url string, params ma
 		previewLen = len(body)
 	}
 	l.Info("收到平台通知响应",
+		logger.StringV2("stage", "notify_result"),
 		logger.IntV2("status_code", resp.StatusCode),
-		logger.IntV2("body_size", len(body)),
-		logger.StringV2("body_preview", string(body[:previewLen])),
+		logger.StringV2("body", string(body)),
 	)
 	// 6. 解析响应
 	var result struct {

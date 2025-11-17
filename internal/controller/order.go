@@ -1,12 +1,14 @@
 package controller
 
 import (
-	"net/http"
-	"recharge-go/internal/model"
-	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
-	"recharge-go/pkg/logger"
-	"strconv"
+    "net/http"
+    "recharge-go/internal/model"
+    "recharge-go/internal/service"
+    "recharge-go/internal/utils"
+    "recharge-go/pkg/logger"
+    "strconv"
+    "bytes"
+    "io"
 
 	"github.com/gin-gonic/gin"
 )
@@ -22,18 +24,35 @@ func NewOrderController(orderService service.OrderService) *OrderController {
 
 // CreateOrder 创建订单
 func (c *OrderController) CreateOrder(ctx *gin.Context) {
-	var order model.Order
-	if err := ctx.ShouldBindJSON(&order); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
-		return
-	}
+    var order model.Order
+    if b, err := ctx.GetRawData(); err == nil {
+        logger.WithContextCategory(ctx, "server").Info("创建订单请求",
+            logger.StringV2("stage", "intake"),
+            logger.StringV2("raw_body", string(b)),
+            logger.StringV2("content_type", ctx.ContentType()),
+            logger.StringV2("user_agent", ctx.Request.UserAgent()),
+        )
+        ctx.Request.Body = io.NopCloser(bytes.NewBuffer(b))
+    }
+    if err := ctx.ShouldBindJSON(&order); err != nil {
+        utils.Error(ctx, http.StatusBadRequest, err.Error())
+        return
+    }
 
 	if err := c.orderService.CreateOrder(ctx, &order); err != nil {
 		utils.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, order)
+    logger.WithContextCategory(ctx, "server").Info("创建订单落库",
+        logger.StringV2("stage", "persist"),
+        logger.Int64V2("order_id", order.ID),
+        logger.StringV2("order_number", order.OrderNumber),
+        logger.Int64V2("customer_id", order.CustomerID),
+        logger.StringV2("mobile", order.Mobile),
+        logger.IntV2("status", int(order.Status)),
+    )
+    utils.Success(ctx, order)
 }
 
 // GetOrderByID 根据ID获取订单

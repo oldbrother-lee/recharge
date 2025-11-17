@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"path/filepath"
 	"recharge-go/configs"
 	"recharge-go/internal/middleware"
 	"recharge-go/internal/pkg/db"
@@ -41,7 +42,8 @@ type Container struct {
 	loggerV2           *loggerV2.LoggerV2
 	metricsManager     *metrics.MetricsManager
 	securityMiddleware *pkgMiddleware.SecurityMiddleware
-	databaseManager    *database.DatabaseManager
+    databaseManager    *database.DatabaseManager
+    serviceName        string
 }
 
 // Repositories 仓储集合
@@ -125,7 +127,7 @@ func NewContainerWithConfig(configPath string) (*Container, error) {
 
 // NewContainerWithConfigAndService 使用指定配置文件和服务名创建容器实例
 func NewContainerWithConfigAndService(configPath, serviceName string) (*Container, error) {
-	c := &Container{}
+    c := &Container{serviceName: serviceName}
 
 	// 加载指定的配置文件
 	var err error
@@ -553,11 +555,14 @@ func (c *Container) GetDatabaseManager() *database.DatabaseManager {
 
 // initOptimizedComponents 初始化优化组件
 func (c *Container) initOptimizedComponents() error {
-    // 初始化优化后的日志器
+    outputFile := "logs/app.log"
+    if c.serviceName != "" {
+        outputFile = filepath.Join("logs", c.serviceName+".log")
+    }
     loggerConfig := &loggerV2.LoggerConfigV2{
         Level:      "info",
         Format:     "json",
-        Output:     "logs/app.log",
+        Output:     outputFile,
         MaxSize:    100,
         MaxBackups: 5,
         MaxAge:     30,

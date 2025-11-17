@@ -93,10 +93,10 @@ func (p *ShangtengPlatform) SubmitOrder(ctx context.Context, order *model.Order,
 	// 将公共参数放到 Header
 	headers := map[string]string{
 		"Content-Type": "application/json; charset=utf-8",
-		"ApiKey":       apiKey,
-		"Sign":         sign,
-		"Timestamp":    timestamp,
-		"Userid":       userId,
+		// "ApiKey":       apiKey,
+		"Sign":      sign,
+		"Timestamp": timestamp,
+		"Userid":    userId,
 	}
 
 	// 发送请求（URL 以文档为准，假定 /api/Order/create）

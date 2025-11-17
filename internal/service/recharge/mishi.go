@@ -345,8 +345,13 @@ func getFormValue(form url.Values, key string) string {
 
 // sendRequest 发送请求
 func (p *MishiPlatform) sendRequest(ctx context.Context, url string, params url.Values) (string, error) {
-	// 创建请求
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBufferString(params.Encode()))
+    logger.WithContextCategory(ctx, "recharge").Info("mishi 请求体",
+        logger.StringV2("stage", func() string { if strings.Contains(strings.ToLower(url), "query") { return "query" } ; return "submit" }()),
+        logger.StringV2("url", url),
+        logger.StringV2("body", params.Encode()),
+    )
+    // 创建请求
+    req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBufferString(params.Encode()))
 	if err != nil {
 		return "", fmt.Errorf("创建请求失败: %v", err)
 	}
@@ -367,23 +372,12 @@ func (p *MishiPlatform) sendRequest(ctx context.Context, url string, params url.
 	if err != nil {
 		return "", fmt.Errorf("读取响应失败: %v", err)
 	}
-    preview := func(b []byte) string { if len(b) > 300 { return string(b[:300]) + "..." }; return string(b) }(body)
-    if ctx != nil {
-        l := logger.WithContextCategory(ctx, "recharge")
-        if l != nil {
-            l.Info("mishi 响应",
-                logger.StringV2("url", url),
-                logger.IntV2("status_code", resp.StatusCode),
-                logger.StringV2("body_preview", preview),
-            )
-        }
-    } else {
-        logger.GetCategoryLogger("recharge").Info("mishi 响应",
-            logger.StringV2("url", url),
-            logger.IntV2("status_code", resp.StatusCode),
-            logger.StringV2("body_preview", preview),
-        )
-    }
+    logger.WithContextCategory(ctx, "recharge").Info("mishi 响应",
+        logger.StringV2("stage", "response"),
+        logger.StringV2("url", url),
+        logger.IntV2("status_code", resp.StatusCode),
+        logger.StringV2("body", string(body)),
+    )
     return string(body), nil
 
 }

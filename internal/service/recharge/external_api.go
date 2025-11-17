@@ -1,14 +1,15 @@
 package recharge
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strconv"
-	"time"
+    "bytes"
+    "context"
+    "encoding/json"
+    "fmt"
+    "io"
+    "net/http"
+    "strings"
+    "strconv"
+    "time"
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
@@ -344,11 +345,22 @@ type APIResponse struct {
 
 // sendRequest 发送HTTP请求
 func (p *ExternalAPIPlatform) sendRequest(ctx context.Context, app_key, url string, params map[string]interface{}) (*APIResponse, error) {
-	// 序列化请求参数（不打印敏感字段）
-	jsonData, err := json.Marshal(params)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request params failed: %v", err)
-	}
+    // 序列化请求参数（不打印敏感字段）
+    jsonData, err := json.Marshal(params)
+    if err != nil {
+        return nil, fmt.Errorf("marshal request params failed: %v", err)
+    }
+
+    stage := "submit"
+    ul := strings.ToLower(url)
+    if strings.Contains(ul, "/query") || strings.Contains(ul, "balance") {
+        stage = "query"
+    }
+    logger.WithContextCategory(ctx, "recharge").Info("外部API请求体",
+        logger.StringV2("stage", stage),
+        logger.StringV2("url", url),
+        logger.StringV2("body", string(jsonData)),
+    )
 
 	// 创建HTTP请求
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -384,22 +396,18 @@ func (p *ExternalAPIPlatform) sendRequest(ctx context.Context, app_key, url stri
 		return nil, fmt.Errorf("read response failed: %v", err)
 	}
 
-	// 调试输出响应内容（截断避免过长）
-	bodyStr := string(body)
-	if len(bodyStr) > 1000 {
-		bodyStr = bodyStr[:1000] + "..."
-	}
     logger.WithContextCategory(ctx, "recharge").Info("【外部API响应】",
+        logger.StringV2("stage", "response"),
         logger.StringV2("url", url),
         logger.IntV2("status_code", resp.StatusCode),
-        logger.StringV2("body_preview", bodyStr),
+        logger.StringV2("body", string(body)),
     )
 
 	// 解析响应
 	var apiResp APIResponse
-	if err := json.Unmarshal(body, &apiResp); err != nil {
-		return nil, fmt.Errorf("unmarshal response failed: %v, response body: %s", err, bodyStr)
-	}
+    if err := json.Unmarshal(body, &apiResp); err != nil {
+        return nil, fmt.Errorf("unmarshal response failed: %v, response body: %s", err, string(body))
+    }
 
 	return &apiResp, nil
 }

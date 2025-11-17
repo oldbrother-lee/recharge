@@ -1,16 +1,16 @@
 package logger
 
 import (
-    "context"
-    "fmt"
-    "os"
-    "path/filepath"
-    "sync"
-    "runtime"
-    "time"
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sync"
+	"time"
 
-    "go.uber.org/zap"
-    "go.uber.org/zap/zapcore"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -137,31 +137,31 @@ func getEncoderConfig(format string) zapcore.EncoderConfig {
 
 // getWriteSyncer 获取写入器
 func getWriteSyncer(config *LoggerConfigV2) zapcore.WriteSyncer {
-    if config.Output == "stdout" || config.Output == "" {
-        return zapcore.AddSync(os.Stdout)
-    }
+	if config.Output == "stdout" || config.Output == "" {
+		return zapcore.AddSync(os.Stdout)
+	}
 
-    // 确保日志目录存在
-    logDir := filepath.Dir(config.Output)
-    if err := os.MkdirAll(logDir, 0755); err != nil {
-        // 如果创建目录失败，回退到stdout
-        return zapcore.AddSync(os.Stdout)
-    }
+	// 确保日志目录存在
+	logDir := filepath.Dir(config.Output)
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		// 如果创建目录失败，回退到stdout
+		return zapcore.AddSync(os.Stdout)
+	}
 
-    // 使用lumberjack进行日志轮转
-    lumberjackLogger := &lumberjack.Logger{
-        Filename:   config.Output,
-        MaxSize:    config.MaxSize,
-        MaxBackups: config.MaxBackups,
-        MaxAge:     config.MaxAge,
-        Compress:   config.Compress,
-    }
+	// 使用lumberjack进行日志轮转
+	lumberjackLogger := &lumberjack.Logger{
+		Filename:   config.Output,
+		MaxSize:    config.MaxSize,
+		MaxBackups: config.MaxBackups,
+		MaxAge:     config.MaxAge,
+		Compress:   config.Compress,
+	}
 
-    // 同时写入文件与终端，便于在终端查看详细日志
-    return zapcore.NewMultiWriteSyncer(
-        zapcore.AddSync(os.Stdout),
-        zapcore.AddSync(lumberjackLogger),
-    )
+	// 同时写入文件与终端，便于在终端查看详细日志
+	return zapcore.NewMultiWriteSyncer(
+		zapcore.AddSync(os.Stdout),
+		zapcore.AddSync(lumberjackLogger),
+	)
 }
 
 // InitGlobalLoggerV2 初始化全局日志器
@@ -191,18 +191,18 @@ func InitGlobalLogger(config *LoggerConfigV2) error {
 
 // GetGlobalLogger 获取全局日志器
 func GetGlobalLogger() *LoggerV2 {
-    if globalLogger == nil {
-        // 如果全局日志器未初始化，创建一个默认的
-        config := &LoggerConfigV2{
-            Level:  "info",
-            Format: "console",
-            Output: "stdout",
-            Caller: true,
-        }
-        logger, _ := NewLoggerV2(config)
-        globalLogger = logger
-    }
-    return globalLogger
+	if globalLogger == nil {
+		// 如果全局日志器未初始化，创建一个默认的
+		config := &LoggerConfigV2{
+			Level:  "info",
+			Format: "console",
+			Output: "stdout",
+			Caller: true,
+		}
+		logger, _ := NewLoggerV2(config)
+		globalLogger = logger
+	}
+	return globalLogger
 }
 
 // WithContext 添加上下文信息
@@ -259,91 +259,90 @@ func (l *LoggerV2) WithContext(ctx context.Context) *LoggerV2 {
 
 // InjectOrderNumber 将订单号注入到上下文，便于全链路日志携带
 func InjectOrderNumber(ctx context.Context, orderNumber string) context.Context {
-    if ctx == nil {
-        ctx = context.Background()
-    }
-    return context.WithValue(ctx, "order_number", orderNumber)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, "order_number", orderNumber)
 }
 
 // ========= 分类日志支持 =========
 // 允许按功能将日志写入不同文件，例如 "recharge"、"notification" 等
 
 type loggerRegistry struct {
-    mu        sync.RWMutex
-    loggers   map[string]*LoggerV2
-    baseConf  *LoggerConfigV2
+	mu       sync.RWMutex
+	loggers  map[string]*LoggerV2
+	baseConf *LoggerConfigV2
 }
 
 var categoryRegistry *loggerRegistry
 
 // InitLoggerRegistry 初始化分类日志注册表（可选），传入基础配置用于克隆
 func InitLoggerRegistry(config LoggerConfigV2) {
-    categoryRegistry = &loggerRegistry{
-        loggers:  make(map[string]*LoggerV2),
-        baseConf: &config,
-    }
+	categoryRegistry = &loggerRegistry{
+		loggers:  make(map[string]*LoggerV2),
+		baseConf: &config,
+	}
 }
 
 // getBaseConfig 获取用于创建分类日志器的基础配置
 func getBaseConfig() *LoggerConfigV2 {
-    if categoryRegistry != nil && categoryRegistry.baseConf != nil {
-        return categoryRegistry.baseConf
-    }
-    if globalLogger != nil && globalLogger.config != nil {
-        return globalLogger.config
-    }
-    // 默认配置（写到 stdout，避免因未初始化而崩溃）
-    return &LoggerConfigV2{
-        Level:  "info",
-        Format: "json",
-        Output: "stdout",
-        MaxSize:    100,
-        MaxBackups: 5,
-        MaxAge:     30,
-        Compress:   true,
-        Caller:     true,
-        Stacktrace: true,
-    }
+	if categoryRegistry != nil && categoryRegistry.baseConf != nil {
+		return categoryRegistry.baseConf
+	}
+	if globalLogger != nil && globalLogger.config != nil {
+		return globalLogger.config
+	}
+	// 默认配置（写到 stdout，避免因未初始化而崩溃）
+	return &LoggerConfigV2{
+		Level:      "info",
+		Format:     "json",
+		Output:     "stdout",
+		MaxSize:    100,
+		MaxBackups: 5,
+		MaxAge:     30,
+		Compress:   true,
+		Caller:     true,
+		Stacktrace: true,
+	}
 }
 
 // GetCategoryLogger 获取或创建指定类别的日志器，输出到 logs/<name>.log
 func GetCategoryLogger(name string) *LoggerV2 {
-    if name == "" {
-        return GetGlobalLogger()
-    }
-    if categoryRegistry == nil {
-        // 懒初始化注册表
-        InitLoggerRegistry(*getBaseConfig())
-    }
-    categoryRegistry.mu.RLock()
-    l := categoryRegistry.loggers[name]
-    categoryRegistry.mu.RUnlock()
-    if l != nil {
-        return l
-    }
-    // 创建新日志器（克隆基础配置并设置独立输出文件）
-    base := getBaseConfig()
-    cfg := *base
-    // 始终写到 logs/<name>.log，确保分类隔离
-    cfg.Output = filepath.Join("logs", name+".log")
-    newLogger, err := NewLoggerV2(&cfg)
-    if err != nil {
-        // 退回到全局日志器避免中断
-        return GetGlobalLogger()
-    }
-    categoryRegistry.mu.Lock()
-    categoryRegistry.loggers[name] = newLogger
-    categoryRegistry.mu.Unlock()
-    return newLogger
+	if name == "" {
+		return GetGlobalLogger()
+	}
+	if categoryRegistry == nil {
+		// 懒初始化注册表
+		InitLoggerRegistry(*getBaseConfig())
+	}
+	categoryRegistry.mu.RLock()
+	l := categoryRegistry.loggers[name]
+	categoryRegistry.mu.RUnlock()
+	if l != nil {
+		return l
+	}
+	// 创建新日志器（克隆基础配置并设置独立输出文件）
+	base := getBaseConfig()
+	cfg := *base
+	// 使用基础输出配置，不变更输出文件，按服务统一到单文件
+	newLogger, err := NewLoggerV2(&cfg)
+	if err != nil {
+		// 退回到全局日志器避免中断
+		return GetGlobalLogger()
+	}
+	categoryRegistry.mu.Lock()
+	categoryRegistry.loggers[name] = newLogger
+	categoryRegistry.mu.Unlock()
+	return newLogger
 }
 
 // WithContextCategory 创建带上下文的分类日志器
 func WithContextCategory(ctx context.Context, name string) *LoggerV2 {
-    l := GetCategoryLogger(name)
-    if l == nil {
-        return nil
-    }
-    return l.WithContext(ctx)
+	l := GetCategoryLogger(name)
+	if l == nil {
+		return nil
+	}
+	return l.WithContext(ctx)
 }
 
 // WithFields 添加字段

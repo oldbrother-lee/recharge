@@ -163,7 +163,7 @@ func (s *orderService) CreateOrder(ctx context.Context, order *model.Order) erro
 
 	// 自动取单订单创建后，发送“接单/处理中”预上报通知
 	if order.Client == 3 {
-		if notifyErr := s.notificationHelper.SendOrderStatusNotification(ctx, order, model.OrderStatusProcessing); notifyErr != nil {
+		if notifyErr := s.notificationHelper.SendOrderPreReport(ctx, order); notifyErr != nil {
 			logger.WithContextCategory(ctx, "order").Error("【预上报通知创建失败】", logger.ErrorV2(notifyErr))
 		} else {
 			logger.WithContextCategory(ctx, "order").Info("【已创建预上报通知】", logger.Int64V2("order_id", order.ID))
@@ -267,6 +267,14 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 			logger.Int64V2("order_id", id),
 			logger.IntV2("status", int(status)),
 		)
+
+		if status != model.OrderStatusSuccess && status != model.OrderStatusFailed {
+			logger.WithContextCategory(ctx, "order").Info("非成功/失败状态不发送通知",
+				logger.Int64V2("order_id", id),
+				logger.IntV2("status", int(status)),
+			)
+			return nil
+		}
 
 		// 幂等性检查：是否已存在相同(order_id, type, target_status)的通知记录
 		existing, _, listErr := s.notificationRepo.List(ctx, map[string]interface{}{
@@ -421,6 +429,14 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 			logger.ErrorV2(getErr),
 		)
 		return nil // 订单状态已更新成功，通知推送失败不影响主流程
+	}
+
+	if status != model.OrderStatusSuccess && status != model.OrderStatusFailed {
+		logger.WithContextCategory(ctx, "order").Info("非成功/失败状态不发送通知",
+			logger.Int64V2("order_id", id),
+			logger.IntV2("new_status", int(status)),
+		)
+		return nil
 	}
 
 	// 幂等性检查：是否已存在相同(order_id, type, target_status)的通知记录
@@ -1091,7 +1107,7 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 
 	// 6. 处理得众平台预通知（仅针对自动取单订单）
 	if order.Client == 3 && order.PlatformCode == "dz" {
-		if notifyErr := s.notificationHelper.SendOrderStatusNotification(ctx, order, model.OrderStatusProcessing); notifyErr != nil {
+		if notifyErr := s.notificationHelper.SendOrderPreReport(ctx, order); notifyErr != nil {
 			logger.WithContextCategory(ctx, "order").Error("【得众预上报通知创建失败】",
 				logger.ErrorV2(notifyErr),
 				logger.Int64V2("order_id", order.ID),
@@ -1199,7 +1215,7 @@ func (s *orderService) CreateExternalOrderWithoutDeduction(ctx context.Context, 
 
 	// 4. 处理得众平台预通知（仅针对自动取单订单）
 	if order.Client == 3 && order.PlatformCode == "dz" {
-		if notifyErr := s.notificationHelper.SendOrderStatusNotification(ctx, order, model.OrderStatusProcessing); notifyErr != nil {
+		if notifyErr := s.notificationHelper.SendOrderPreReport(ctx, order); notifyErr != nil {
 			logger.WithContextCategory(ctx, "order").Error("【得众预上报通知创建失败】",
 				logger.ErrorV2(notifyErr),
 				logger.Int64V2("order_id", order.ID),

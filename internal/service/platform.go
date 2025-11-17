@@ -6,6 +6,7 @@ import (
 	"crypto/rc4"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,6 +35,8 @@ type PlatformService struct {
 	dzTokenMu           sync.RWMutex
 }
 
+var ErrSkipNonTerminal = errors.New("skip non-terminal notification")
+
 // NewPlatformService 创建平台服务
 func NewPlatformService(platformRepo repository.PlatformRepository, orderRepo repository.OrderRepository, externalAPIKeyRepo repository.ExternalAPIKeyRepository) *PlatformService {
 	return &PlatformService{
@@ -51,19 +54,19 @@ func (s *PlatformService) ListPlatforms(req *model.PlatformListRequest) ([]model
 
 // CreatePlatform 创建平台
 func (s *PlatformService) CreatePlatform(req *model.PlatformCreateRequest) error {
-    platform := &model.Platform{
-        Name:        req.Name,
-        Code:        req.Code,
-        ApiURL:      req.ApiURL,
-        Description: req.Description,
-        Status:      1, // 默认启用
-        OrderMode:   1,
-    }
-    // 若请求中携带了平台模式，则使用请求值
-    if req.OrderMode != 0 {
-        platform.OrderMode = req.OrderMode
-    }
-    return s.platformRepo.CreatePlatform(platform)
+	platform := &model.Platform{
+		Name:        req.Name,
+		Code:        req.Code,
+		ApiURL:      req.ApiURL,
+		Description: req.Description,
+		Status:      1, // 默认启用
+		OrderMode:   1,
+	}
+	// 若请求中携带了平台模式，则使用请求值
+	if req.OrderMode != 0 {
+		platform.OrderMode = req.OrderMode
+	}
+	return s.platformRepo.CreatePlatform(platform)
 }
 
 // GetPlatformByID 根据ID获取平台
@@ -73,20 +76,20 @@ func (s *PlatformService) GetPlatformByID(id int64) (*model.Platform, error) {
 
 // UpdatePlatform 更新平台
 func (s *PlatformService) UpdatePlatform(id int64, req *model.PlatformUpdateRequest) error {
-    platform := &model.Platform{
-        ID:          id,
-        Name:        req.Name,
-        Code:        req.Code,
-        ApiURL:      req.ApiURL,
-        Description: req.Description,
-    }
-    if req.Status != nil {
-        platform.Status = *req.Status
-    }
-    if req.OrderMode != nil {
-        platform.OrderMode = *req.OrderMode
-    }
-    return s.platformRepo.UpdatePlatform(platform)
+	platform := &model.Platform{
+		ID:          id,
+		Name:        req.Name,
+		Code:        req.Code,
+		ApiURL:      req.ApiURL,
+		Description: req.Description,
+	}
+	if req.Status != nil {
+		platform.Status = *req.Status
+	}
+	if req.OrderMode != nil {
+		platform.OrderMode = *req.OrderMode
+	}
+	return s.platformRepo.UpdatePlatform(platform)
 }
 
 // DeletePlatform 删除平台
@@ -106,55 +109,55 @@ func (s *PlatformService) ListPlatformAccounts(req *model.PlatformAccountListReq
 
 // CreatePlatformAccount 创建平台账号
 func (s *PlatformService) CreatePlatformAccount(req *model.PlatformAccountCreateRequest) error {
-    // 计算账号模式：未传或非法值时继承平台模式，否则使用传入值
-    orderMode := req.OrderMode
-    if orderMode != 1 && orderMode != 2 {
-        plat, err := s.GetPlatformByID(req.PlatformID)
-        if err == nil && plat != nil && (plat.OrderMode == 1 || plat.OrderMode == 2) {
-            orderMode = plat.OrderMode
-        } else {
-            orderMode = 1 // 默认推单
-        }
-    }
+	// 计算账号模式：未传或非法值时继承平台模式，否则使用传入值
+	orderMode := req.OrderMode
+	if orderMode != 1 && orderMode != 2 {
+		plat, err := s.GetPlatformByID(req.PlatformID)
+		if err == nil && plat != nil && (plat.OrderMode == 1 || plat.OrderMode == 2) {
+			orderMode = plat.OrderMode
+		} else {
+			orderMode = 1 // 默认推单
+		}
+	}
 
-    // 拉单开关与模式保持一致：推单模式强制关闭拉单；拉单模式默认开启
-    enablePull := req.EnablePullOrder
-    if orderMode == 1 {
-        enablePull = false
-    } else {
-        enablePull = true
-    }
+	// 拉单开关与模式保持一致：推单模式强制关闭拉单；拉单模式默认开启
+	enablePull := req.EnablePullOrder
+	if orderMode == 1 {
+		enablePull = false
+	} else {
+		enablePull = true
+	}
 
-    // 推单状态默认值：推单模式默认开启；拉单模式默认关闭
-    pushStatus := 2
-    if orderMode == 1 {
-        pushStatus = 1
-    }
+	// 推单状态默认值：推单模式默认开启；拉单模式默认关闭
+	pushStatus := 2
+	if orderMode == 1 {
+		pushStatus = 1
+	}
 
-    account := &model.PlatformAccount{
-        PlatformID:      req.PlatformID,
-        AccountName:     req.AccountName,
-        Type:            req.Type,
-        AppKey:          req.AppKey,
-        AppSecret:       req.AppSecret,
-        AccountPassword: req.AccountPassword,
-        Description:     req.Description,
-        DailyLimit:      req.DailyLimit,
-        MonthlyLimit:    req.MonthlyLimit,
-        Priority:        req.Priority,
-        OrderMode:       orderMode,
-        PushStatus:      pushStatus,
-        EnablePullOrder: enablePull,
-        MaxConcurrency:  req.MaxConcurrency,
-        PollIntervalSec: req.PollIntervalSec,
-        PullAction:      req.PullAction,
-    }
-    if req.Status != nil {
-        account.Status = *req.Status
-    } else {
-        account.Status = 1 // 默认启用
-    }
-    return s.platformRepo.CreatePlatformAccount(account)
+	account := &model.PlatformAccount{
+		PlatformID:      req.PlatformID,
+		AccountName:     req.AccountName,
+		Type:            req.Type,
+		AppKey:          req.AppKey,
+		AppSecret:       req.AppSecret,
+		AccountPassword: req.AccountPassword,
+		Description:     req.Description,
+		DailyLimit:      req.DailyLimit,
+		MonthlyLimit:    req.MonthlyLimit,
+		Priority:        req.Priority,
+		OrderMode:       orderMode,
+		PushStatus:      pushStatus,
+		EnablePullOrder: enablePull,
+		MaxConcurrency:  req.MaxConcurrency,
+		PollIntervalSec: req.PollIntervalSec,
+		PullAction:      req.PullAction,
+	}
+	if req.Status != nil {
+		account.Status = *req.Status
+	} else {
+		account.Status = 1 // 默认启用
+	}
+	return s.platformRepo.CreatePlatformAccount(account)
 }
 
 // GetPlatformAccount 获取平台账号
@@ -169,74 +172,74 @@ func (s *PlatformService) GetPlatformAccountByID(id int64) (*model.PlatformAccou
 
 // UpdatePlatformAccount 更新平台账号
 func (s *PlatformService) UpdatePlatformAccount(ctx context.Context, id int64, req *model.PlatformAccountUpdateRequest) error {
-    updateMap := map[string]interface{}{}
+	updateMap := map[string]interface{}{}
 
-    if req.AccountName != nil {
-        updateMap["account_name"] = *req.AccountName
-    }
-    if req.Type != nil {
-        updateMap["type"] = *req.Type
-    }
-    if req.AppKey != nil {
-        updateMap["app_key"] = *req.AppKey
-    }
-    if req.AppSecret != nil {
-        updateMap["app_secret"] = *req.AppSecret
-    }
-    if req.AccountPassword != nil {
-        // 允许置空或更新密码（传入空字符串将清空密码）
-        updateMap["account_password"] = *req.AccountPassword
-    }
-    if req.Description != nil {
-        updateMap["description"] = *req.Description
-    }
-    if req.DailyLimit != nil {
-        updateMap["daily_limit"] = *req.DailyLimit
-    }
-    if req.MonthlyLimit != nil {
-        updateMap["monthly_limit"] = *req.MonthlyLimit
-    }
-    if req.Balance != nil {
-        updateMap["balance"] = *req.Balance
-    }
-    if req.Priority != nil {
-        updateMap["priority"] = *req.Priority
-    }
-    if req.Status != nil {
-        updateMap["status"] = *req.Status
+	if req.AccountName != nil {
+		updateMap["account_name"] = *req.AccountName
+	}
+	if req.Type != nil {
+		updateMap["type"] = *req.Type
+	}
+	if req.AppKey != nil {
+		updateMap["app_key"] = *req.AppKey
+	}
+	if req.AppSecret != nil {
+		updateMap["app_secret"] = *req.AppSecret
+	}
+	if req.AccountPassword != nil {
+		// 允许置空或更新密码（传入空字符串将清空密码）
+		updateMap["account_password"] = *req.AccountPassword
+	}
+	if req.Description != nil {
+		updateMap["description"] = *req.Description
+	}
+	if req.DailyLimit != nil {
+		updateMap["daily_limit"] = *req.DailyLimit
+	}
+	if req.MonthlyLimit != nil {
+		updateMap["monthly_limit"] = *req.MonthlyLimit
+	}
+	if req.Balance != nil {
+		updateMap["balance"] = *req.Balance
+	}
+	if req.Priority != nil {
+		updateMap["priority"] = *req.Priority
+	}
+	if req.Status != nil {
+		updateMap["status"] = *req.Status
 
-    }
-    if req.PushStatus != nil {
-        updateMap["push_status"] = *req.PushStatus
-    }
-    if req.OrderMode != nil {
-        updateMap["order_mode"] = *req.OrderMode
-    }
-    // 补充：账号更新接口同时支持拉单配置相关字段
-    if req.EnablePullOrder != nil {
-        updateMap["enable_pull_order"] = *req.EnablePullOrder
-    }
-    if req.MaxConcurrency != nil {
-        updateMap["max_concurrency"] = *req.MaxConcurrency
-    }
-    if req.PollIntervalSec != nil {
-        updateMap["poll_interval_sec"] = *req.PollIntervalSec
-    }
-    if req.PullAction != nil {
-        updateMap["pull_action"] = *req.PullAction
-    }
-    if req.BindUserID != nil {
-        updateMap["bind_user_id"] = *req.BindUserID
-    }
-    if req.BindUserName != nil {
-        updateMap["bind_user_name"] = *req.BindUserName
-    }
+	}
+	if req.PushStatus != nil {
+		updateMap["push_status"] = *req.PushStatus
+	}
+	if req.OrderMode != nil {
+		updateMap["order_mode"] = *req.OrderMode
+	}
+	// 补充：账号更新接口同时支持拉单配置相关字段
+	if req.EnablePullOrder != nil {
+		updateMap["enable_pull_order"] = *req.EnablePullOrder
+	}
+	if req.MaxConcurrency != nil {
+		updateMap["max_concurrency"] = *req.MaxConcurrency
+	}
+	if req.PollIntervalSec != nil {
+		updateMap["poll_interval_sec"] = *req.PollIntervalSec
+	}
+	if req.PullAction != nil {
+		updateMap["pull_action"] = *req.PullAction
+	}
+	if req.BindUserID != nil {
+		updateMap["bind_user_id"] = *req.BindUserID
+	}
+	if req.BindUserName != nil {
+		updateMap["bind_user_name"] = *req.BindUserName
+	}
 
-    if len(updateMap) == 0 {
-        return nil // 没有任何字段需要更新
-    }
+	if len(updateMap) == 0 {
+		return nil // 没有任何字段需要更新
+	}
 
-    return s.platformRepo.UpdatePlatformAccountFields(ctx, id, updateMap)
+	return s.platformRepo.UpdatePlatformAccountFields(ctx, id, updateMap)
 }
 
 // DeletePlatformAccount 删除平台账号
@@ -264,6 +267,18 @@ func (s *PlatformService) SendNotification(ctx context.Context, order *model.Ord
 	platform, err := s.platformRepo.GetPlatformByID(account.PlatformID)
 	if err != nil {
 		return fmt.Errorf("获取平台配置失败: %w", err)
+	}
+
+	if order.Status != model.OrderStatusSuccess && order.Status != model.OrderStatusFailed {
+		if !strings.EqualFold(platform.Code, "dz") {
+			logger.WithContextCategory(ctx, "platform").Info("跳过非终态上报",
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.StringV2("platform_code", platform.Code),
+				logger.IntV2("order_status", int(order.Status)),
+			)
+			return ErrSkipNonTerminal
+		}
 	}
 
 	// 3. 构建通知参数或进行平台特定处理
@@ -395,6 +410,10 @@ func (s *PlatformService) sendRequest(ctx context.Context, url string, params ma
 	if err != nil {
 		return nil, fmt.Errorf("参数序列化失败: %w", err)
 	}
+
+	l.Info("平台通知请求体",
+		logger.StringV2("body", string(jsonData)),
+	)
 
 	// 2. 创建请求
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -620,6 +639,10 @@ func (s *PlatformService) buildXianzhuanxiaParams(ctx context.Context, order *mo
 	if err != nil {
 		return err
 	}
+
+	logger.WithContextCategory(ctx, "platform").Info("闲赚侠通知参数",
+		logger.StringV2("body", string(jsonData)),
+	)
 
 	url := fmt.Sprintf("%s/api/task/recharge/reported", apiURL)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -912,14 +935,9 @@ func (s *PlatformService) sendExternalAPIHTTPNotification(ctx context.Context, c
 		return fmt.Errorf("序列化参数失败: %v", err)
 	}
 
-	previewLen := 256
-	if len(jsonData) < previewLen {
-		previewLen = len(jsonData)
-	}
-	l.Info("HTTP请求体构建完成",
+	l.Info("HTTP请求体",
 		logger.StringV2("callback_url", callbackURL),
-		logger.IntV2("request_body_size", len(jsonData)),
-		logger.StringV2("request_body_preview", string(jsonData[:previewLen])),
+		logger.StringV2("request_body", string(jsonData)),
 	)
 
 	// 创建HTTP请求

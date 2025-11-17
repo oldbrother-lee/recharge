@@ -3,6 +3,7 @@ package task
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -238,6 +239,21 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 	}
 	// 发送通知
 	if err := t.platformService.SendNotification(ctx, order); err != nil {
+		if errors.Is(err, service.ErrSkipNonTerminal) {
+			logger.WithContextCategory(ctx, "notification_task").Info("跳过非终态通知，不标记成功也不重试",
+				logger.Int64V2("notification_id", dbRecord.ID),
+				logger.Int64V2("order_id", dbRecord.OrderID),
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.StringV2("platform_code", dbRecord.PlatformCode),
+				logger.StringV2("notification_type", dbRecord.NotificationType),
+				logger.IntV2("retry_count", dbRecord.RetryCount),
+			)
+			// 保持为待处理状态，避免被认为已上报
+			if err2 := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 1); err2 != nil {
+				logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态为待处理失败", logger.ErrorV2(err2), logger.Int64V2("notification_id", dbRecord.ID))
+			}
+			return nil
+		}
 		// 记录通知发送失败的详细错误信息
 		logger.WithContextCategory(ctx, "notification_task").Error("通知发送失败",
 			logger.ErrorV2(err),
@@ -367,6 +383,19 @@ func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, 
 
 	// 发送通知
 	if err := t.platformService.SendNotification(ctx, order); err != nil {
+		if errors.Is(err, service.ErrSkipNonTerminal) {
+			logger.WithContextCategory(ctx, "notification_task").Info("跳过非终态通知，不标记成功也不重试",
+				logger.Int64V2("notification_id", record.ID),
+				logger.Int64V2("order_id", record.OrderID),
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.StringV2("platform_code", record.PlatformCode),
+				logger.IntV2("retry_count", record.RetryCount),
+			)
+			if err2 := t.notificationService.UpdateNotificationStatus(ctx, record.ID, 1); err2 != nil {
+				logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态为待处理失败", logger.ErrorV2(err2), logger.Int64V2("notification_id", record.ID))
+			}
+			return nil
+		}
 		// 记录失败
 		logger.WithContextCategory(ctx, "notification_task").Error("通知发送失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID), logger.Int64V2("order_id", record.OrderID), logger.StringV2("order_number", order.OrderNumber), logger.IntV2("retry_count", record.RetryCount), logger.StringV2("platform_code", record.PlatformCode))
 		// 重试策略

@@ -12,6 +12,7 @@ import (
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/pkg/logger"
 	"recharge-go/pkg/queue"
+
 	"gorm.io/gorm"
 )
 
@@ -37,6 +38,13 @@ func NewNotificationHelper(
 
 // SendOrderStatusNotification 发送订单状态变更通知（带幂等性保护）
 func (h *NotificationHelper) SendOrderStatusNotification(ctx context.Context, order *model.Order, newStatus model.OrderStatus) error {
+	if newStatus != model.OrderStatusSuccess && newStatus != model.OrderStatusFailed {
+		logger.WithContext(ctx).Info("跳过非成功/失败状态通知",
+			logger.Int64V2("order_id", order.ID),
+			logger.IntV2("target_status", int(newStatus)),
+		)
+		return nil
+	}
 	// 幂等校验：按 (order_id, notification_type, target_status) 查找最近一条通知
 	var existing notificationModel.NotificationRecord
 	err := h.db.WithContext(ctx).
@@ -102,10 +110,10 @@ func (h *NotificationHelper) SendOrderStatusNotification(ctx context.Context, or
 	} else if err != gorm.ErrRecordNotFound {
 		// 查询错误，记录日志但不中断创建流程
 		logger.WithContext(ctx).Error("查询现有通知记录失败，继续走创建流程",
-		logger.Int64V2("order_id", order.ID),
-		logger.IntV2("target_status", int(newStatus)),
-		logger.ErrorV2(err),
-	)
+			logger.Int64V2("order_id", order.ID),
+			logger.IntV2("target_status", int(newStatus)),
+			logger.ErrorV2(err),
+		)
 	}
 
 	// 序列化订单快照
@@ -132,10 +140,10 @@ func (h *NotificationHelper) SendOrderStatusNotification(ctx context.Context, or
 			// 避免唯一约束冲突导致报错，这里做一次容错处理
 			if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "duplicate") {
 				logger.WithContext(ctx).Warn("检测到通知记录唯一键冲突，复用已有记录",
-				logger.Int64V2("order_id", order.ID),
-				logger.IntV2("target_status", int(newStatus)),
-				logger.ErrorV2(err),
-			)
+					logger.Int64V2("order_id", order.ID),
+					logger.IntV2("target_status", int(newStatus)),
+					logger.ErrorV2(err),
+				)
 				var exist2 notificationModel.NotificationRecord
 				if qErr := tx.
 					Where("order_id = ? AND notification_type = ? AND target_status = ?", order.ID, "order_status_changed", int(newStatus)).
@@ -164,24 +172,129 @@ func (h *NotificationHelper) SendOrderStatusNotification(ctx context.Context, or
 
 		// 推送通知到队列
 		logger.WithContext(ctx).Info("准备推送通知到队列",
-		logger.Int64V2("order_id", order.ID),
-		logger.IntV2("new_status", int(newStatus)),
-		logger.Int64V2("notification_id", notification.ID),
-	)
+			logger.Int64V2("order_id", order.ID),
+			logger.IntV2("new_status", int(newStatus)),
+			logger.Int64V2("notification_id", notification.ID),
+		)
 
-	if err := h.queue.Push(ctx, "notification_queue", notification); err != nil {
-		logger.WithContext(ctx).Error("推送通知到队列失败",
+		if err := h.queue.Push(ctx, "notification_queue", notification); err != nil {
+			logger.WithContext(ctx).Error("推送通知到队列失败",
+				logger.Int64V2("order_id", order.ID),
+				logger.Int64V2("notification_id", notification.ID),
+				logger.ErrorV2(err),
+			)
+			return err
+		}
+
+		logger.WithContext(ctx).Info("推送通知到队列成功",
 			logger.Int64V2("order_id", order.ID),
 			logger.Int64V2("notification_id", notification.ID),
+		)
+		return nil
+	})
+}
+
+func (h *NotificationHelper) SendOrderPreReport(ctx context.Context, order *model.Order) error {
+	var existing notificationModel.NotificationRecord
+	err := h.db.WithContext(ctx).
+		Where("order_id = ? AND notification_type = ? AND target_status = ?", order.ID, "order_pre_report", int(model.OrderStatusProcessing)).
+		Order("id DESC").
+		First(&existing).Error
+	if err == nil {
+		switch existing.Status {
+		case 3:
+			logger.WithContext(ctx).Info("已存在成功的预上报通知，跳过重复创建",
+				logger.Int64V2("order_id", order.ID),
+				logger.Int64V2("notification_id", existing.ID),
+			)
+			return nil
+		case 1, 2:
+			logger.WithContext(ctx).Info("已存在待处理/处理中预上报通知，复用并重推到队列",
+				logger.Int64V2("order_id", order.ID),
+				logger.Int64V2("notification_id", existing.ID),
+			)
+			if pushErr := h.queue.Push(ctx, "notification_queue", &existing); pushErr != nil {
+				logger.WithContext(ctx).Error("重推预上报通知到队列失败",
+					logger.Int64V2("order_id", order.ID),
+					logger.Int64V2("notification_id", existing.ID),
+					logger.ErrorV2(pushErr),
+				)
+				return pushErr
+			}
+			logger.WithContext(ctx).Info("重推预上报通知到队列成功",
+				logger.Int64V2("order_id", order.ID),
+				logger.Int64V2("notification_id", existing.ID),
+			)
+			return nil
+		case 4:
+			logger.WithContext(ctx).Info("存在失败的预上报通知，重置为待处理并重推",
+				logger.Int64V2("order_id", order.ID),
+				logger.Int64V2("notification_id", existing.ID),
+			)
+			if updErr := h.notificationRepo.UpdateStatus(ctx, existing.ID, 1); updErr != nil {
+				logger.WithContext(ctx).Error("重置失败的预上报通知状态失败",
+					logger.Int64V2("order_id", order.ID),
+					logger.Int64V2("notification_id", existing.ID),
+					logger.ErrorV2(updErr),
+				)
+			}
+			if pushErr := h.queue.Push(ctx, "notification_queue", &existing); pushErr != nil {
+				logger.WithContext(ctx).Error("重推失败预上报通知到队列失败",
+					logger.Int64V2("order_id", order.ID),
+					logger.Int64V2("notification_id", existing.ID),
+					logger.ErrorV2(pushErr),
+				)
+				return pushErr
+			}
+			logger.WithContext(ctx).Info("失败预上报通知重推成功",
+				logger.Int64V2("order_id", order.ID),
+				logger.Int64V2("notification_id", existing.ID),
+			)
+			return nil
+		}
+	} else if err != gorm.ErrRecordNotFound {
+		logger.WithContext(ctx).Error("查询现有预上报通知记录失败，继续创建",
+			logger.Int64V2("order_id", order.ID),
 			logger.ErrorV2(err),
 		)
-		return err
 	}
 
-	logger.WithContext(ctx).Info("推送通知到队列成功",
-		logger.Int64V2("order_id", order.ID),
-		logger.Int64V2("notification_id", notification.ID),
-	)
+	orderData, mErr := json.Marshal(order)
+	if mErr != nil {
+		logger.WithContext(ctx).Error("序列化订单快照失败", logger.Int64V2("order_id", order.ID), logger.ErrorV2(mErr))
+		return mErr
+	}
+
+	notification := &notificationModel.NotificationRecord{
+		OrderID:          order.ID,
+		PlatformCode:     order.PlatformCode,
+		NotificationType: "order_pre_report",
+		Content:          fmt.Sprintf("订单预上报: %d", model.OrderStatusProcessing),
+		OrderSnapshot:    string(orderData),
+		TargetStatus:     int(model.OrderStatusProcessing),
+		Status:           1,
+	}
+
+	return h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(notification).Error; err != nil {
+			if strings.Contains(err.Error(), "Duplicate") || strings.Contains(err.Error(), "UNIQUE") || strings.Contains(err.Error(), "duplicate") {
+				var exist2 notificationModel.NotificationRecord
+				if qErr := tx.
+					Where("order_id = ? AND notification_type = ? AND target_status = ?", order.ID, "order_pre_report", int(model.OrderStatusProcessing)).
+					Order("id DESC").
+					First(&exist2).Error; qErr == nil {
+					if pushErr := h.queue.Push(ctx, "notification_queue", &exist2); pushErr != nil {
+						return pushErr
+					}
+					return nil
+				}
+				return err
+			}
+			return err
+		}
+		if err := h.queue.Push(ctx, "notification_queue", notification); err != nil {
+			return err
+		}
 		return nil
 	})
 }

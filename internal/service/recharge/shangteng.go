@@ -116,13 +116,14 @@ func (p *ShangtengPlatform) SubmitOrder(ctx context.Context, order *model.Order,
 			logger.StringV2("order_number", order.OrderNumber),
 			logger.IntV2("status", resp.Status),
 			logger.StringV2("message", resp.Msg),
+			logger.AnyV2("response", resp),
 		)
 		return fmt.Errorf("submit order failed: %s", resp.Msg)
 	}
 
 	logger.WithContextCategory(ctx, "recharge").Info("【商腾科技提交订单成功】",
 		logger.StringV2("order_number", order.OrderNumber),
-		logger.StringV2("platform_order_id", resp.Data.OrderNo),
+		logger.AnyV2("response", resp),
 	)
 	return nil
 }

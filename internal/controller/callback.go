@@ -566,7 +566,7 @@ func (c *CallbackController) HandleShangtengCallback(ctx *gin.Context) {
 		return
 	}
 
-	// 5. 返回成功（纯文本 ok）
+	// 5. 返回成功（统一响应）
 	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理商腾科技平台回调 返回：200 成功")
-	ctx.String(200, "ok")
+	utils.Success(ctx, "ok")
 }

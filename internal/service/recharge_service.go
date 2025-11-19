@@ -154,25 +154,25 @@ func (s *rechargeService) Recharge(ctx context.Context, orderID int64) error {
 		logger.WithContextCategory(ctx, "recharge").Error("【获取平台API信息失败】", logger.Int64V2("order_id", orderID), logger.ErrorV2(err))
 		return fmt.Errorf("get platform api failed: %v", err)
 	}
-    logger.WithContextCategory(ctx, "recharge").Info("【获取平台API信息成功】",
-        logger.StringV2("stage", "route"),
-        logger.Int64V2("order_id", orderID),
-        logger.Int64V2("api_id", api.ID),
-        logger.Int64V2("platform_id", api.PlatformID))
-    logger.WithContextCategory(ctx, "recharge").Info("平台API参数获取成功",
-        logger.StringV2("stage", "route"),
-        logger.Int64V2("order_id", orderID),
-        logger.Int64V2("param_id", apiParam.ID))
+	logger.WithContextCategory(ctx, "recharge").Info("【获取平台API信息成功】",
+		logger.StringV2("stage", "route"),
+		logger.Int64V2("order_id", orderID),
+		logger.Int64V2("api_id", api.ID),
+		logger.Int64V2("platform_id", api.PlatformID))
+	logger.WithContextCategory(ctx, "recharge").Info("平台API参数获取成功",
+		logger.StringV2("stage", "route"),
+		logger.Int64V2("order_id", orderID),
+		logger.Int64V2("param_id", apiParam.ID))
 	// 3. 提交订单到平台
-    logger.WithContextCategory(ctx, "recharge").Info("【开始提交订单到平台】",
-        logger.StringV2("stage", "submit"),
-        logger.Int64V2("order_id", orderID),
-        logger.Int64V2("platform_id", api.PlatformID))
+	logger.WithContextCategory(ctx, "recharge").Info("【开始提交订单到平台】",
+		logger.StringV2("stage", "submit"),
+		logger.Int64V2("order_id", orderID),
+		logger.Int64V2("platform_id", api.PlatformID))
 	if err := s.manager.SubmitOrder(ctx, order, api, apiParam); err != nil {
-        logger.WithContextCategory(ctx, "recharge").Error("【提交订单到平台失败】",
-            logger.StringV2("stage", "submit"),
-            logger.Int64V2("order_id", orderID),
-            logger.ErrorV2(err))
+		logger.WithContextCategory(ctx, "recharge").Error("【提交订单到平台失败】",
+			logger.StringV2("stage", "submit"),
+			logger.Int64V2("order_id", orderID),
+			logger.ErrorV2(err))
 
 		// 创建重试记录
 		retryParams := map[string]interface{}{
@@ -397,7 +397,6 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 					logger.StringV2("callback_type", callbackData.CallbackType),
 					logger.StringV2("platform_id", callbackData.TransactionID),
 				)
-				return nil
 			}
 		} else {
 			// 如果没有平台交易ID，使用原有的检查方式
@@ -411,7 +410,6 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 					logger.StringV2("order_number", callbackData.OrderNumber),
 					logger.StringV2("callback_type", callbackData.CallbackType),
 				)
-				return nil
 			}
 		}
 	} else {
@@ -427,25 +425,25 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 	}()
 
 	// 4. 处理回调
-    logger.WithContextCategory(ctx, "recharge").Info("开始处理平台回调",
-        logger.StringV2("platform", platformName),
-        logger.StringV2("raw_body", string(data)),
-    )
-    if err := s.manager.HandleCallback(ctx, platformName, data); err != nil {
-        tx.Rollback()
-        logger.WithContextCategory(ctx, "recharge").Error("处理回调失败", logger.ErrorV2(err))
-        return fmt.Errorf("handle callback failed: %v", err)
-    }
+	logger.WithContextCategory(ctx, "recharge").Info("开始处理平台回调",
+		logger.StringV2("platform", platformName),
+		logger.StringV2("raw_body", string(data)),
+	)
+	if err := s.manager.HandleCallback(ctx, platformName, data); err != nil {
+		tx.Rollback()
+		logger.WithContextCategory(ctx, "recharge").Error("处理回调失败", logger.ErrorV2(err))
+		return fmt.Errorf("handle callback failed: %v", err)
+	}
 
 	// 4.1 更新订单状态
 	var orderState model.OrderStatus
-    logger.WithContextCategory(ctx, "recharge").Info("回调数据解析结果",
-        logger.StringV2("order_number", callbackData.OrderNumber),
-        logger.StringV2("order_id", callbackData.OrderID),
-        logger.StringV2("transaction_id", callbackData.TransactionID),
-        logger.StringV2("status_raw", callbackData.Status),
-    )
-    switch callbackData.Status {
+	logger.WithContextCategory(ctx, "recharge").Info("回调数据解析结果",
+		logger.StringV2("order_number", callbackData.OrderNumber),
+		logger.StringV2("order_id", callbackData.OrderID),
+		logger.StringV2("transaction_id", callbackData.TransactionID),
+		logger.StringV2("status_raw", callbackData.Status),
+	)
+	switch callbackData.Status {
 	case "success":
 		orderState = model.OrderStatusSuccess
 	case "4":
@@ -470,8 +468,8 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 
 	// 获取订单信息
 	logger.WithContextCategory(ctx, "recharge").Info("查询订单", logger.StringV2("callback_order_number", callbackData.OrderNumber))
-    order, err := s.orderRepo.GetByOrderID(ctx, callbackData.OrderNumber)
-    if err != nil {
+	order, err := s.orderRepo.GetByOrderID(ctx, callbackData.OrderNumber)
+	if err != nil {
 		// 如果按订单号找不到，尝试通过ActiveOutTradeNum反向查找原始订单
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			logger.WithContextCategory(ctx, "recharge").Info("按订单号未找到，尝试通过ActiveOutTradeNum查找重试记录",
@@ -496,25 +494,85 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 
 			// 覆盖注入原始订单号
 			ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
-            logger.WithContextCategory(ctx, "recharge").Info("通过ActiveOutTradeNum成功找到原始订单",
-                logger.StringV2("callback_order_number", callbackData.OrderNumber),
-                logger.StringV2("original_order_number", order.OrderNumber),
-                logger.Int64V2("order_id", order.ID),
-                logger.Int64V2("retry_record_id", retryRecord.ID),
-            )
-        } else {
+			logger.WithContextCategory(ctx, "recharge").Info("通过ActiveOutTradeNum成功找到原始订单",
+				logger.StringV2("callback_order_number", callbackData.OrderNumber),
+				logger.StringV2("original_order_number", order.OrderNumber),
+				logger.Int64V2("order_id", order.ID),
+				logger.Int64V2("retry_record_id", retryRecord.ID),
+			)
+		} else {
 			tx.Rollback()
 			logger.WithContextCategory(ctx, "recharge").Error("获取订单信息失败", logger.ErrorV2(err))
 			return fmt.Errorf("get order failed: %v", err)
 		}
 	}
-    logger.WithContextCategory(ctx, "recharge").Info("查询订单结果",
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("status", fmt.Sprintf("%v", order.Status)),
-        logger.StringV2("mapped_state", fmt.Sprintf("%v", orderState)),
-        logger.Int64V2("product_id", order.ProductID),
-    )
+	logger.WithContextCategory(ctx, "recharge").Info("查询订单结果",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("status", fmt.Sprintf("%v", order.Status)),
+		logger.StringV2("mapped_state", fmt.Sprintf("%v", orderState)),
+		logger.Int64V2("product_id", order.ProductID),
+	)
+
+	// 4.2 终态门槛：订单已终态(成功/失败)则忽略本次回调，不修改订单状态
+	if order.Status == model.OrderStatusSuccess || order.Status == model.OrderStatusFailed {
+		platformID := callbackData.TransactionID
+		if platformID == "" {
+			platformID = callbackData.OrderID
+		}
+		log := &model.CallbackLog{
+			OrderID:      callbackData.OrderNumber,
+			PlatformID:   platformID,
+			CallbackType: callbackData.CallbackType,
+			Status:       2,
+			RequestData:  string(data),
+			ResponseData: "ignored_terminal",
+			CreateTime:   time.Now(),
+			UpdateTime:   time.Now(),
+		}
+		if err := s.callbackLogRepo.Create(ctx, log); err != nil {
+			logger.WithContextCategory(ctx, "recharge").Error("记录终态忽略回调失败", logger.ErrorV2(err))
+		}
+		if err := tx.Commit().Error; err != nil {
+			logger.WithContextCategory(ctx, "recharge").Error("提交事务失败(终态忽略)", logger.ErrorV2(err))
+		}
+		logger.WithContextCategory(ctx, "recharge").Info("订单已终态，忽略回调",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+		)
+		return nil
+	}
+
+	// 4.3 非终态回调：仅记录，不修改订单状态（如 processing/取消 等）
+	if orderState != model.OrderStatusSuccess && orderState != model.OrderStatusFailed {
+		platformID := callbackData.TransactionID
+		if platformID == "" {
+			platformID = callbackData.OrderID
+		}
+		log := &model.CallbackLog{
+			OrderID:      callbackData.OrderNumber,
+			PlatformID:   platformID,
+			CallbackType: callbackData.CallbackType,
+			Status:       2,
+			RequestData:  string(data),
+			ResponseData: "accepted_non_terminal",
+			CreateTime:   time.Now(),
+			UpdateTime:   time.Now(),
+		}
+		if err := s.callbackLogRepo.Create(ctx, log); err != nil {
+			logger.WithContextCategory(ctx, "recharge").Error("记录非终态回调失败", logger.ErrorV2(err))
+		}
+		if err := tx.Commit().Error; err != nil {
+			logger.WithContextCategory(ctx, "recharge").Error("提交事务失败(非终态)", logger.ErrorV2(err))
+			return fmt.Errorf("commit transaction failed: %v", err)
+		}
+		logger.WithContextCategory(ctx, "recharge").Info("已接受非终态回调，不修改订单",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("mapped_state", fmt.Sprintf("%v", orderState)),
+		)
+		return nil
+	}
 
 	// 检查订单当前状态，如果已经是最终状态，忽略后续回调
 	// if order.Status == model.OrderStatusSuccess || order.Status == model.OrderStatusFailed {
@@ -530,7 +588,7 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		// 失败订单处理逻辑
 		return s.handleFailedOrderCallback(ctx, tx, order, callbackData, data, platformName)
 	} else {
-		// 成功订单处理逻辑
+		// 成功订单处理逻辑（仅终态更新）
 		return s.handleSuccessOrderCallback(ctx, tx, order, callbackData, data, platformName, model.OrderStatus(orderState))
 	}
 
@@ -541,40 +599,7 @@ func (s *rechargeService) handleFailedOrderCallback(ctx context.Context, tx *gor
 	// 处理失败订单回调日志
 
 	// 检查是否还有其他通道可以重试
-	if s.unifiedOrderService != nil {
-		hasAvailableChannel, err := s.unifiedOrderService.CheckAndHandleFailedOrderRetry(ctx, order)
-		if err != nil {
-			logger.WithContextCategory(ctx, "recharge").Error("检查可用通道失败", logger.Int64V2("order_id", order.ID), logger.ErrorV2(err))
-			// 继续处理，不因为检查失败而中断
-		} else if hasAvailableChannel {
-			// 有可用通道，记录回调但不更新订单状态，等待重试完成
-			tx.Rollback()
-			logger.WithContextCategory(ctx, "recharge").Info("发现可用通道，已推送重试任务，暂不更新订单状态",
-				logger.Int64V2("order_id", order.ID),
-				logger.StringV2("order_number", order.OrderNumber),
-				logger.StringV2("platform", platformName))
-
-			// 记录回调日志但不触发状态更新
-			platformID := callbackData.TransactionID
-			if platformID == "" {
-				platformID = callbackData.OrderID
-			}
-			log := &model.CallbackLog{
-				OrderID:      callbackData.OrderNumber,
-				PlatformID:   platformID,
-				CallbackType: callbackData.CallbackType,
-				Status:       2, // 标记为中间状态，等待重试
-				RequestData:  string(data),
-				ResponseData: "retry_pending",
-				CreateTime:   time.Now(),
-				UpdateTime:   time.Now(),
-			}
-			if err := s.callbackLogRepo.Create(ctx, log); err != nil {
-				logger.WithContextCategory(ctx, "recharge").Error("记录回调日志失败", logger.ErrorV2(err))
-			}
-			return nil
-		}
-	}
+	// 失败回调不走重试，直接进行最终失败处理
 
 	// 没有可用通道或检查失败，进行最终失败处理
 	logger.WithContextCategory(ctx, "recharge").Info("没有可用通道，进行最终失败处理",
@@ -1302,10 +1327,10 @@ func (s *rechargeService) CreateRechargeTask(ctx context.Context, orderID int64)
 // getPlatformAPIByOrder 直接使用订单对象获取平台API信息
 func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *model.Order) (*model.PlatformAPI, *model.PlatformAPIParam, error) {
 
-    logger.WithContextCategory(ctx, "recharge").Info("【获取平台API信息】",
-        logger.StringV2("stage", "route"),
-        logger.Int64V2("order_id", order.ID),
-        logger.Int64V2("product_id", order.ProductID))
+	logger.WithContextCategory(ctx, "recharge").Info("【获取平台API信息】",
+		logger.StringV2("stage", "route"),
+		logger.Int64V2("order_id", order.ID),
+		logger.Int64V2("product_id", order.ProductID))
 
 	//product_api_relations
 	r, err := s.productAPIRelationRepo.GetByProductID(ctx, order.ProductID)
@@ -1389,14 +1414,14 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 		return nil, nil, fmt.Errorf("平台API已禁用: api_id=%d, status=%d", api.ID, api.Status)
 	}
 
-    logger.WithContextCategory(ctx, "recharge").Info("【通道路由成功】",
-        logger.StringV2("stage", "route"),
-        logger.Int64V2("order_id", order.ID),
-        logger.Int64V2("api_id", api.ID),
-        logger.Int64V2("param_id", apiParam.ID),
-        logger.StringV2("platform_code", api.Code),
-    )
-    return api, apiParam, nil
+	logger.WithContextCategory(ctx, "recharge").Info("【通道路由成功】",
+		logger.StringV2("stage", "route"),
+		logger.Int64V2("order_id", order.ID),
+		logger.Int64V2("api_id", api.ID),
+		logger.Int64V2("param_id", apiParam.ID),
+		logger.StringV2("platform_code", api.Code),
+	)
+	return api, apiParam, nil
 }
 
 func (s *rechargeService) GetPlatformAPIByOrderID(ctx context.Context, orderID string) (*model.PlatformAPI, *model.PlatformAPIParam, error) {
@@ -1411,9 +1436,9 @@ func (s *rechargeService) GetPlatformAPIByOrderID(ctx context.Context, orderID s
 
 // PushToRechargeQueue 将订单推送到充值队列
 func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64) error {
-    logger.WithContextCategory(ctx, "recharge").Info("【准备推送订单到充值队列】",
-        logger.StringV2("stage", "enqueue"),
-        logger.Int64V2("order_id", orderID))
+	logger.WithContextCategory(ctx, "recharge").Info("【准备推送订单到充值队列】",
+		logger.StringV2("stage", "enqueue"),
+		logger.Int64V2("order_id", orderID))
 
 	if s.redisClient == nil {
 		logger.WithContextCategory(ctx, "recharge").Error("【Redis客户端为空】",
@@ -1446,16 +1471,16 @@ func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64
 		return err
 	}
 
-    logger.WithContextCategory(ctx, "recharge").Info("【推送订单到充值队列成功】",
-        logger.StringV2("stage", "enqueue"),
-        logger.Int64V2("order_id", orderID))
+	logger.WithContextCategory(ctx, "recharge").Info("【推送订单到充值队列成功】",
+		logger.StringV2("stage", "enqueue"),
+		logger.Int64V2("order_id", orderID))
 	return nil
 }
 
 // PopFromRechargeQueue 从充值队列获取订单
 func (s *rechargeService) PopFromRechargeQueue(ctx context.Context) (int64, error) {
-    logger.WithContextCategory(ctx, "recharge").Debug("【准备从充值队列获取订单】",
-        logger.StringV2("stage", "dequeue"))
+	logger.WithContextCategory(ctx, "recharge").Debug("【准备从充值队列获取订单】",
+		logger.StringV2("stage", "dequeue"))
 
 	if s.redisClient == nil {
 		logger.WithContextCategory(ctx, "recharge").Error("【Redis客户端为空】")
@@ -1466,8 +1491,8 @@ func (s *rechargeService) PopFromRechargeQueue(ctx context.Context) (int64, erro
 	result, err := s.redisClient.BRPopLPush(ctx, "recharge_queue", "recharge_processing", 0).Result()
 	if err != nil {
 		if err == redisV8.Nil {
-            logger.WithContextCategory(ctx, "recharge").Debug("【充值队列为空】",
-                logger.StringV2("stage", "dequeue"))
+			logger.WithContextCategory(ctx, "recharge").Debug("【充值队列为空】",
+				logger.StringV2("stage", "dequeue"))
 			return 0, nil
 		}
 		logger.WithContextCategory(ctx, "recharge").Error("【从充值队列获取订单失败】", logger.ErrorV2(err))
@@ -1480,9 +1505,9 @@ func (s *rechargeService) PopFromRechargeQueue(ctx context.Context) (int64, erro
 		return 0, fmt.Errorf("parse order id failed: %v", err)
 	}
 
-    logger.WithContextCategory(ctx, "recharge").Info("【从充值队列获取订单成功】",
-        logger.StringV2("stage", "dequeue"),
-        logger.Int64V2("order_id", orderID))
+	logger.WithContextCategory(ctx, "recharge").Info("【从充值队列获取订单成功】",
+		logger.StringV2("stage", "dequeue"),
+		logger.Int64V2("order_id", orderID))
 	return orderID, nil
 }
 

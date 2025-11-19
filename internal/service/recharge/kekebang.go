@@ -1,15 +1,15 @@
 package recharge
 
 import (
-    "bytes"
-    "context"
-    "encoding/json"
-    "fmt"
-    "io"
-    "net/http"
-    "strings"
-    "strconv"
-    "time"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
@@ -49,17 +49,17 @@ func (p *KekebangPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int
 
 // SubmitOrder 提交订单
 func (p *KekebangPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-    l := logger.WithContextCategory(ctx, "recharge")
-    if l != nil {
-        l.Info("【开始提交可客帮订单】",
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.Int64V2("api_id", api.ID),
-            logger.Int64V2("platform_id", api.PlatformID),
-            logger.Int64V2("account_id", api.AccountID),
-            logger.Int64V2("param_id", apiParam.ID),
-            logger.StringV2("product_id", apiParam.ProductID),
-        )
-    }
+	l := logger.WithContextCategory(ctx, "recharge")
+	if l != nil {
+		l.Info("【开始提交可客帮订单】",
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.Int64V2("api_id", api.ID),
+			logger.Int64V2("platform_id", api.PlatformID),
+			logger.Int64V2("account_id", api.AccountID),
+			logger.Int64V2("param_id", apiParam.ID),
+			logger.StringV2("product_id", apiParam.ProductID),
+		)
+	}
 	//通过account_id 获取到 api_key 和 api_secret
 	apiKey, apiSecret, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
 	if err != nil {
@@ -67,11 +67,11 @@ func (p *KekebangPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 	}
 
 	// 构建请求参数
-    if l != nil {
-        l.Info("【kekebang 构建请求参数】",
-            logger.StringV2("url", api.URL),
-        )
-    }
+	if l != nil {
+		l.Info("【kekebang 构建请求参数】",
+			logger.StringV2("url", api.URL),
+		)
+	}
 	params := map[string]interface{}{
 		"app_key":    apiKey,
 		"timestamp":  strconv.FormatInt(time.Now().Unix(), 10),
@@ -89,35 +89,35 @@ func (p *KekebangPlatform) SubmitOrder(ctx context.Context, order *model.Order, 
 	params["sign"] = sign
 
 	// 发送请求
-    resp, err := p.sendRequest(ctx, api.URL, params)
-    if err != nil {
-        if l != nil {
-            l.Error("【提交订单失败】",
-                logger.StringV2("order_number", order.OrderNumber),
-                logger.ErrorV2(err),
-            )
-        }
-        return fmt.Errorf("submit order failed: %v", err)
-    }
+	resp, err := p.sendRequest(ctx, api.URL, params)
+	if err != nil {
+		if l != nil {
+			l.Error("【提交订单失败】",
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.ErrorV2(err),
+			)
+		}
+		return fmt.Errorf("submit order failed: %v", err)
+	}
 
 	// 确保 Code 是字符串类型
 	code := fmt.Sprintf("%v", resp.Code)
-    if code != "00000" {
-        if l != nil {
-            l.Error("【提交订单失败】",
-                logger.StringV2("order_number", order.OrderNumber),
-                logger.StringV2("code", code),
-                logger.StringV2("message", resp.Message),
-            )
-        }
-        return fmt.Errorf("submit order failed: %s", resp.Message)
-    }
+	if code != "00000" {
+		if l != nil {
+			l.Error("【提交订单失败】",
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.StringV2("code", code),
+				logger.StringV2("message", resp.Message),
+			)
+		}
+		return fmt.Errorf("submit order failed: %s", resp.Message)
+	}
 
-    if l != nil {
-        l.Info("【kekebang提交订单成功】",
-            logger.StringV2("order_number", order.OrderNumber),
-        )
-    }
+	if l != nil {
+		l.Info("【kekebang提交订单成功】",
+			logger.StringV2("order_number", order.OrderNumber),
+		)
+	}
 	return nil
 }
 
@@ -135,39 +135,39 @@ func (p *KekebangPlatform) mapOrderState(orderState int, orderID int64, orderNum
 	case 1:
 		status = int(model.OrderStatusRecharging) // 充值中
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("【订单状态】充值中",
-            logger.Int64V2("order_id", orderID),
-            logger.StringV2("order_number", orderNumber),
-        )
+		logger.GetCategoryLogger("recharge").Info("【订单状态】充值中",
+			logger.Int64V2("order_id", orderID),
+			logger.StringV2("order_number", orderNumber),
+		)
 	case 2:
 		status = int(model.OrderStatusSuccess) // 成功
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("【订单状态】充值成功",
-            logger.Int64V2("order_id", orderID),
-            logger.StringV2("order_number", orderNumber),
-        )
+		logger.GetCategoryLogger("recharge").Info("【订单状态】充值成功",
+			logger.Int64V2("order_id", orderID),
+			logger.StringV2("order_number", orderNumber),
+		)
 	case 3:
 		status = int(model.OrderStatusFailed) // 失败
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("【订单状态】充值失败",
-            logger.Int64V2("order_id", orderID),
-            logger.StringV2("order_number", orderNumber),
-        )
+		logger.GetCategoryLogger("recharge").Info("【订单状态】充值失败",
+			logger.Int64V2("order_id", orderID),
+			logger.StringV2("order_number", orderNumber),
+		)
 	case 4:
 		status = int(model.OrderStatusProcessing) // 处理中（异常状态）
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("【订单状态】处理中",
-            logger.Int64V2("order_id", orderID),
-            logger.StringV2("order_number", orderNumber),
-        )
+		logger.GetCategoryLogger("recharge").Info("【订单状态】处理中",
+			logger.Int64V2("order_id", orderID),
+			logger.StringV2("order_number", orderNumber),
+		)
 	default:
 		status = int(model.OrderStatusFailed) // 默认失败
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Error("【订单状态】未知状态",
-            logger.Int64V2("order_id", orderID),
-            logger.StringV2("order_number", orderNumber),
-            logger.IntV2("order_state", orderState),
-        )
+		logger.GetCategoryLogger("recharge").Error("【订单状态】未知状态",
+			logger.Int64V2("order_id", orderID),
+			logger.StringV2("order_number", orderNumber),
+			logger.IntV2("order_state", orderState),
+		)
 	}
 
 	return status, statusStr
@@ -175,13 +175,13 @@ func (p *KekebangPlatform) mapOrderState(orderState int, orderID int64, orderNum
 
 // QueryOrderStatus 查询订单状态
 func (p *KekebangPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-    l := logger.WithContextCategory(ctx, "recharge")
-    if l != nil {
-        l.Info("【开始查询可客帮订单状态】",
-            logger.Int64V2("order_id", order.ID),
-            logger.StringV2("order_number", order.OrderNumber),
-        )
-    }
+	l := logger.WithContextCategory(ctx, "recharge")
+	if l != nil {
+		l.Info("【开始查询可客帮订单状态】",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+		)
+	}
 
 	// 构建请求参数
 	params := map[string]interface{}{
@@ -196,31 +196,31 @@ func (p *KekebangPlatform) QueryOrderStatus(ctx context.Context, order *model.Or
 	params["sign"] = sign
 
 	// 发送请求
-    resp, err := p.sendRequest(ctx, order.PlatformURL+"/query-order", params)
-    if err != nil {
-        if l != nil {
-            l.Error("【查询订单状态失败】",
-                logger.Int64V2("order_id", order.ID),
-                logger.StringV2("order_number", order.OrderNumber),
-                logger.ErrorV2(err),
-            )
-        }
-        return 0, fmt.Errorf("query order status failed: %v", err)
-    }
+	resp, err := p.sendRequest(ctx, order.PlatformURL+"/query-order", params)
+	if err != nil {
+		if l != nil {
+			l.Error("【查询订单状态失败】",
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.ErrorV2(err),
+			)
+		}
+		return 0, fmt.Errorf("query order status failed: %v", err)
+	}
 
 	// 确保 Code 是字符串类型
 	code := fmt.Sprintf("%v", resp.Code)
-    if code != "00000" {
-        if l != nil {
-            l.Error("【查询订单状态失败】",
-                logger.Int64V2("order_id", order.ID),
-                logger.StringV2("order_number", order.OrderNumber),
-                logger.StringV2("code", code),
-                logger.StringV2("message", resp.Message),
-            )
-        }
-        return 0, fmt.Errorf("query order status failed: %s", resp.Message)
-    }
+	if code != "00000" {
+		if l != nil {
+			l.Error("【查询订单状态失败】",
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.StringV2("code", code),
+				logger.StringV2("message", resp.Message),
+			)
+		}
+		return 0, fmt.Errorf("query order status failed: %s", resp.Message)
+	}
 
 	// 转换状态
 	status, err := strconv.Atoi(resp.Status)
@@ -230,13 +230,13 @@ func (p *KekebangPlatform) QueryOrderStatus(ctx context.Context, order *model.Or
 
 	status, _ = p.mapOrderState(status, order.ID, order.OrderNumber)
 
-    if l != nil {
-        l.Info("【查询订单状态完成】",
-            logger.Int64V2("order_id", order.ID),
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.IntV2("status", status),
-        )
-    }
+	if l != nil {
+		l.Info("【查询订单状态完成】",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.IntV2("status", status),
+		)
+	}
 	return model.OrderStatus(status), nil
 }
 
@@ -268,6 +268,7 @@ func (p *KekebangPlatform) ParseCallbackData(data []byte) (*model.CallbackData, 
 	if !signature.VerifyKekebangSign(post, resp.Sign, account.AppSecret) {
 		return nil, fmt.Errorf("回调签名验证失败")
 	}
+	fmt.Println(account)
 
 	// 转换订单状态
 	_, statusStr := p.mapOrderState(resp.OrderState, 0, resp.OrderID)
@@ -287,21 +288,21 @@ func (p *KekebangPlatform) ParseCallbackData(data []byte) (*model.CallbackData, 
 
 // sendRequest 发送请求
 func (p *KekebangPlatform) sendRequest(ctx context.Context, url string, params map[string]interface{}) (*KekebangResponse, error) {
-    // 将参数转换为 JSON
-    jsonData, err := json.Marshal(params)
-    if err != nil {
-        return nil, fmt.Errorf("marshal params failed: %v", err)
-    }
+	// 将参数转换为 JSON
+	jsonData, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("marshal params failed: %v", err)
+	}
 
-    stage := "submit"
-    if strings.Contains(strings.ToLower(url), "query") {
-        stage = "query"
-    }
-    logger.WithContextCategory(ctx, "recharge").Info("kekebang 请求体",
-        logger.StringV2("stage", stage),
-        logger.StringV2("url", url),
-        logger.StringV2("body", string(jsonData)),
-    )
+	stage := "submit"
+	if strings.Contains(strings.ToLower(url), "query") {
+		stage = "query"
+	}
+	logger.WithContextCategory(ctx, "recharge").Info("kekebang 请求体",
+		logger.StringV2("stage", stage),
+		logger.StringV2("url", url),
+		logger.StringV2("body", string(jsonData)),
+	)
 
 	// 创建请求
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -325,12 +326,12 @@ func (p *KekebangPlatform) sendRequest(ctx context.Context, url string, params m
 	if err != nil {
 		return nil, fmt.Errorf("read response failed: %v", err)
 	}
-    logger.WithContextCategory(ctx, "recharge").Info("kekebang 响应",
-        logger.StringV2("stage", "response"),
-        logger.StringV2("url", url),
-        logger.IntV2("status_code", resp.StatusCode),
-        logger.StringV2("body", string(body)),
-    )
+	logger.WithContextCategory(ctx, "recharge").Info("kekebang 响应",
+		logger.StringV2("stage", "response"),
+		logger.StringV2("url", url),
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.StringV2("body", string(body)),
+	)
 
 	// 解析响应
 	var response KekebangResponse
@@ -367,12 +368,12 @@ type KekebangCallbackResponse struct {
 
 // QueryBalance 查询账户余额
 func (p *KekebangPlatform) QueryBalance(ctx context.Context, accountID int64) (float64, error) {
-    l := logger.WithContextCategory(ctx, "recharge")
-    if l != nil {
-        l.Info("【开始查询可客帮账户余额】",
-            logger.Int64V2("account_id", accountID),
-        )
-    }
-    // TODO: 实现余额查询，如需
-    return 0, fmt.Errorf("not implemented")
+	l := logger.WithContextCategory(ctx, "recharge")
+	if l != nil {
+		l.Info("【开始查询可客帮账户余额】",
+			logger.Int64V2("account_id", accountID),
+		)
+	}
+	// TODO: 实现余额查询，如需
+	return 0, fmt.Errorf("not implemented")
 }

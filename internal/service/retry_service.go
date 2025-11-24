@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/signature"
@@ -152,121 +153,157 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 		return fmt.Errorf("没有可用的API进行重试")
 	}
 
-	// 2. 创建重试记录
-	for _, relation := range relations {
-		records, err := s.retryRepo.GetByOrderID(ctx, order.ID)
-		if err != nil {
-			return fmt.Errorf("获取已使用API失败: %v", err)
-		}
+	// 2. 选择下一个未尝试的关系并创建单条重试记录
+	records, err := s.retryRepo.GetByOrderID(ctx, order.ID)
+	if err != nil {
+		return fmt.Errorf("获取已使用API失败: %v", err)
+	}
 
-		usedPairs := make([]struct {
+	usedPairs := make(map[string]struct{})
+	for _, record := range records {
+		var usedAPIList []struct {
 			APIID   int64 `json:"api_id"`
-			ParamID int64 `json:"param_id,omitempty"`
-		}, 0)
-		for _, record := range records {
-			var usedAPIList []struct {
-				APIID   int64 `json:"api_id"`
-				ParamID int64 `json:"param_id,omitempty"`
+			ParamID int64 `json:"param_id"`
+			Result  string `json:"result,omitempty"`
+			Error   string `json:"error,omitempty"`
+			Time    string `json:"time,omitempty"`
+		}
+		if err := json.Unmarshal([]byte(record.UsedAPIs), &usedAPIList); err == nil {
+			for _, u := range usedAPIList {
+				usedPairs[fmt.Sprintf("%d:%d", u.APIID, u.ParamID)] = struct{}{}
 			}
-			if err := json.Unmarshal([]byte(record.UsedAPIs), &usedAPIList); err != nil {
-				var simpleAPIList []int64
-				if err2 := json.Unmarshal([]byte(record.UsedAPIs), &simpleAPIList); err2 != nil {
-					return fmt.Errorf("解析已使用API失败: %v", err)
-				}
+		} else {
+			var simpleAPIList []int64
+			if err2 := json.Unmarshal([]byte(record.UsedAPIs), &simpleAPIList); err2 == nil {
 				for _, apiID := range simpleAPIList {
-					usedPairs = append(usedPairs, struct {
-						APIID   int64 `json:"api_id"`
-						ParamID int64 `json:"param_id,omitempty"`
-					}{APIID: apiID, ParamID: 0})
-				}
-			} else {
-				for _, u := range usedAPIList {
-					usedPairs = append(usedPairs, struct {
-						APIID   int64 `json:"api_id"`
-						ParamID int64 `json:"param_id,omitempty"`
-					}{APIID: u.APIID, ParamID: u.ParamID})
+					usedPairs[fmt.Sprintf("%d:%d", apiID, 0)] = struct{}{}
 				}
 			}
 		}
+	}
 
-		usedPairs = append(usedPairs, struct {
+	var nextRel *model.ProductAPIRelation
+	for _, rel := range relations {
+		key := fmt.Sprintf("%d:%d", rel.APIID, rel.ParamID)
+		if _, ok := usedPairs[key]; !ok {
+			nextRel = rel
+			break
+		}
+	}
+	if nextRel == nil {
+		return fmt.Errorf("没有可用的API进行重试")
+	}
+
+	// 历史已用集合标准化持久化（不包含本次候选）
+	uniquePairs := make([]struct {
+		APIID   int64 `json:"api_id"`
+		ParamID int64 `json:"param_id,omitempty"`
+	}, 0, len(usedPairs))
+	for k := range usedPairs {
+		var a, p int64
+		fmt.Sscanf(k, "%d:%d", &a, &p)
+		uniquePairs = append(uniquePairs, struct {
 			APIID   int64 `json:"api_id"`
 			ParamID int64 `json:"param_id,omitempty"`
-		}{APIID: relation.APIID, ParamID: relation.ParamID})
-		usedAPIsJSON, err := json.Marshal(usedPairs)
-		if err != nil {
-			return fmt.Errorf("序列化已使用API失败: %v", err)
-		}
+		}{APIID: a, ParamID: p})
+	}
+	usedAPIsJSON, err := json.Marshal(uniquePairs)
+	if err != nil {
+		return fmt.Errorf("序列化已使用API失败: %v", err)
+	}
 
-		// 设置重试时间：如果是第一次重试（RetryCount为0），立即执行；否则设置3秒后重试
-		retryCount := len(records)
-		nextRetryTime := time.Now()
-		if retryCount > 0 {
-			// 实现秒级充值：缩短重试间隔到3秒
-			nextRetryTime = time.Now().Add(3 * time.Second)
-		}
+    // 计算同组合的最大 AttemptNo，并检查是否存在待处理/处理中记录
+    maxAttempt := 0
+    var pendingRecord *model.OrderRetryRecord
+    for _, r := range records {
+        if r.APIID == nextRel.APIID && r.ParamID == nextRel.ParamID {
+            if int(r.AttemptNo) > maxAttempt {
+                maxAttempt = int(r.AttemptNo)
+            }
+            if r.Status == 0 || r.Status == 1 { // 待处理或处理中
+                pendingRecord = r
+            }
+        }
+    }
 
-		retryRecord := &model.OrderRetryRecord{
-			OrderID:       order.ID,
-			APIID:         relation.APIID,
-			ParamID:       relation.ParamID,
-			RetryType:     retryType,
-			Status:        0, // 待重试
-			NextRetryTime: nextRetryTime,
-			RetryParams:   "{}", // 设置为空JSON对象
-			UsedAPIs:      string(usedAPIsJSON),
-			RetryCount:    retryCount, // 设置重试次数为已存在的记录数
-		}
+    // 若存在同组合的待处理记录，复用并更新下一重试时间，避免新建重复记录
+    if pendingRecord != nil {
+        lg.Info("复用同组合待处理重试记录",
+            logger.Int64V2("record_id", pendingRecord.ID),
+            logger.Int64V2("order_id", order.ID),
+            logger.Int64V2("api_id", nextRel.APIID),
+            logger.Int64V2("param_id", nextRel.ParamID),
+            logger.IntV2("attempt_no", int(pendingRecord.AttemptNo)),
+        )
+        // 设定秒级重试
+        pendingRecord.NextRetryTime = time.Now().Add(3 * time.Second)
+        _ = s.retryRepo.Update(ctx, pendingRecord)
+        return nil
+    }
 
-		if err := s.retryRepo.Create(ctx, retryRecord); err != nil {
-			lg.Error("创建重试记录失败",
+    retryCount := len(records)
+    // 首次该组合重试：立即；否则秒级重试
+    nextRetryTime := time.Now()
+    if maxAttempt > 0 || retryCount > 0 {
+        nextRetryTime = time.Now().Add(3 * time.Second)
+    }
+
+    retryRecord := &model.OrderRetryRecord{
+        OrderID:       order.ID,
+        APIID:         nextRel.APIID,
+        ParamID:       nextRel.ParamID,
+        RetryType:     retryType,
+        Status:        0,
+        NextRetryTime: nextRetryTime,
+        RetryParams:   "{}",
+        UsedAPIs:      string(usedAPIsJSON),
+        RetryCount:    retryCount,
+        AttemptNo:     int(maxAttempt), // 继承上次尝试号，执行时会递增
+    }
+
+    if err := s.retryRepo.Create(ctx, retryRecord); err != nil {
+        lg.Error("创建重试记录失败",
+            logger.Int64V2("order_id", order.ID),
+            logger.Int64V2("api_id", nextRel.APIID),
+            logger.ErrorV2(err),
+        )
+        return nil
+    }
+
+    if retryRecord.RetryCount == 0 && maxAttempt == 0 {
+        lg.Info("首次重试·立即执行重试",
+            logger.Int64V2("record_id", retryRecord.ID),
+            logger.Int64V2("order_id", order.ID),
+        )
+		if err := s.executeRetry(ctx, retryRecord); err != nil {
+			retryRecord.Status = 3
+			retryRecord.LastError = err.Error()
+			if err := s.retryRepo.Update(ctx, retryRecord); err != nil {
+				lg.Error("更新重试记录状态失败",
+					logger.Int64V2("record_id", retryRecord.ID),
+					logger.Int64V2("order_id", retryRecord.OrderID),
+					logger.ErrorV2(err),
+				)
+			}
+			lg.Error("首次重试失败",
+				logger.Int64V2("record_id", retryRecord.ID),
 				logger.Int64V2("order_id", order.ID),
-				logger.Int64V2("api_id", relation.APIID),
 				logger.ErrorV2(err),
 			)
-			continue
-		}
-
-		// 如果是第一次重试（RetryCount为0），立即执行
-		if retryRecord.RetryCount == 0 {
-			lg.Info("首次重试·立即执行重试",
+		} else {
+			retryRecord.Status = 2
+			if err := s.retryRepo.Update(ctx, retryRecord); err != nil {
+				lg.Error("更新重试记录状态失败",
+					logger.Int64V2("record_id", retryRecord.ID),
+					logger.Int64V2("order_id", retryRecord.OrderID),
+					logger.ErrorV2(err),
+				)
+			}
+			lg.Info("首次重试成功",
 				logger.Int64V2("record_id", retryRecord.ID),
 				logger.Int64V2("order_id", order.ID),
 			)
-			if err := s.executeRetry(ctx, retryRecord); err != nil {
-				// 更新重试记录状态为失败
-				retryRecord.Status = 3 // 重试失败
-				retryRecord.LastError = err.Error()
-				if err := s.retryRepo.Update(ctx, retryRecord); err != nil {
-					lg.Error("更新重试记录状态失败",
-						logger.Int64V2("record_id", retryRecord.ID),
-						logger.Int64V2("order_id", retryRecord.OrderID),
-						logger.ErrorV2(err),
-					)
-				}
-				lg.Error("首次重试失败，继续尝试其他通道",
-					logger.Int64V2("record_id", retryRecord.ID),
-					logger.Int64V2("order_id", order.ID),
-					logger.ErrorV2(err),
-				)
-				// 不要立即返回错误，继续尝试其他通道
-			} else {
-				// 更新重试记录状态为成功
-				retryRecord.Status = 2 // 重试成功
-				if err := s.retryRepo.Update(ctx, retryRecord); err != nil {
-					lg.Error("更新重试记录状态失败",
-						logger.Int64V2("record_id", retryRecord.ID),
-						logger.Int64V2("order_id", retryRecord.OrderID),
-						logger.ErrorV2(err),
-					)
-				}
-				lg.Info("首次重试成功",
-					logger.Int64V2("record_id", retryRecord.ID),
-					logger.Int64V2("order_id", order.ID),
-				)
-				// 如果重试成功，可以直接返回
-				return nil
-			}
+			return nil
 		}
 	}
 
@@ -329,6 +366,27 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 	}
 
 	return nil
+}
+
+// UsedAPI 记录已使用的API信息
+type UsedAPI struct {
+	APIID   int64  `json:"api_id"`
+	ParamID int64  `json:"param_id"`
+	Result  string `json:"result,omitempty"` // API响应结果
+	Error   string `json:"error,omitempty"`   // 错误信息
+	Time    string `json:"time,omitempty"`    // 执行时间
+}
+
+// generateRandomOrderSuffix 生成随机订单号后缀
+func generateRandomOrderSuffix() string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	const length = 16
+	
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
 }
 
 // ProcessRetries 处理待重试的记录
@@ -578,8 +636,30 @@ func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetr
 		logger.IntV2("count", len(relations)),
 	)
 
-	// 3. 选择第一个可用的API关系
-	relation := relations[0]
+	var usedAPIList []UsedAPI
+	if record.UsedAPIs != "" {
+		_ = json.Unmarshal([]byte(record.UsedAPIs), &usedAPIList)
+	}
+	used := make(map[string]struct{})
+	for _, u := range usedAPIList {
+		used[fmt.Sprintf("%d:%d", u.APIID, u.ParamID)] = struct{}{}
+	}
+	var relation *model.ProductAPIRelation
+	for _, r := range relations {
+		key := fmt.Sprintf("%d:%d", r.APIID, r.ParamID)
+		if _, ok := used[key]; ok {
+			continue
+		}
+		relation = r
+		break
+	}
+	if relation == nil {
+		logger.WithContextCategory(ctx, "retry").Info("没有未尝试的API关系",
+			logger.Int64V2("record_id", record.ID),
+			logger.Int64V2("order_id", record.OrderID),
+		)
+		return fmt.Errorf("没有未尝试的API关系")
+	}
 	lg.Info("选择API关系",
 		logger.Int64V2("record_id", record.ID),
 		logger.Int64V2("order_id", record.OrderID),
@@ -620,16 +700,19 @@ func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetr
 		logger.Int64V2("param_id", param.ID),
 	)
 
-	// 6. 更新重试记录中的API信息
 	record.APIID = relation.APIID
 	record.ParamID = relation.ParamID
-	if err := s.retryRepo.Update(ctx, record); err != nil {
-		lg.Error("更新重试记录API信息失败",
-			logger.Int64V2("record_id", record.ID),
-			logger.Int64V2("order_id", record.OrderID),
-			logger.ErrorV2(err),
-		)
+	var exists bool
+	for _, u := range usedAPIList {
+		if u.APIID == relation.APIID && u.ParamID == relation.ParamID { exists = true; break }
 	}
+	if !exists {
+		usedAPIList = append(usedAPIList, UsedAPI{APIID: relation.APIID, ParamID: relation.ParamID})
+		if b, err := json.Marshal(usedAPIList); err == nil {
+			record.UsedAPIs = string(b)
+		}
+	}
+	_ = s.retryRepo.Update(ctx, record)
 	lg.Info("更新重试记录API信息成功",
 		logger.Int64V2("record_id", record.ID),
 		logger.Int64V2("order_id", record.OrderID),
@@ -677,26 +760,8 @@ func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetr
 			}
 			return fmt.Errorf("同通道重试已达到最大次数(%d)，订单已失败", relation.SameChannelRetryTimes)
 		} else {
-			// 生成基于重试次数的后缀，格式更简洁：原订单号-r重试次数
-			suffix := fmt.Sprintf("-r%d", retryAttempt)
-			base := order.OrderNumber
-			maxBaseLen := 64 - len(suffix)
-			if maxBaseLen < 1 {
-				// 保护性处理，至少保留1个字符
-				maxBaseLen = 1
-			}
-			if len(base) > maxBaseLen {
-				// 截断基础部分，避免超出长度限制
-				orig := base
-				base = base[:maxBaseLen]
-				logger.WithContext(ctx).Info("同通道重试：原始订单号过长，已截断以适配长度限制",
-					logger.Int64V2("order_id", order.ID),
-					logger.Int64V2("record_id", record.ID),
-					logger.StringV2("order_number", orig),
-					logger.IntV2("max_base_len", maxBaseLen),
-				)
-			}
-			newActiveOutTradeNum := base + suffix
+			// 生成随机C开头的重试订单号
+			newActiveOutTradeNum := fmt.Sprintf("C%s", generateRandomOrderSuffix())
 
 			// 【重要】不修改订单表的OutTradeNum，而是将新订单号存储在重试记录的ActiveOutTradeNum中
 			record.ActiveOutTradeNum = newActiveOutTradeNum
@@ -721,51 +786,32 @@ func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetr
 				logger.StringV2("order_number", order.OrderNumber),
 				logger.StringV2("out_trade_num", order.OutTradeNum), // 保持不变
 				logger.IntV2("attempt_no", retryAttempt),
-				logger.StringV2("retry_suffix", suffix),
+				logger.StringV2("retry_suffix", "C[随机]"),
 			)
 		}
 	}
 
-	// 7. 开启事务
-	if record.ActiveOutTradeNum == "" {
-		retryAttempt := record.AttemptNo + 1
-		suffix := fmt.Sprintf("-x%d", retryAttempt)
-		base := order.OrderNumber
-		maxBaseLen := 64 - len(suffix)
-		if maxBaseLen < 1 {
-			maxBaseLen = 1
-		}
-		if len(base) > maxBaseLen {
-			orig := base
-			base = base[:maxBaseLen]
-			logger.WithContext(ctx).Info("跨通道重试：订单号截断",
-				logger.Int64V2("order_id", order.ID),
-				logger.Int64V2("record_id", record.ID),
-				logger.StringV2("order_number", orig),
-				logger.IntV2("max_base_len", maxBaseLen),
-			)
-		}
-		newActiveOutTradeNum := base + suffix
-		record.ActiveOutTradeNum = newActiveOutTradeNum
-		record.AttemptNo = retryAttempt
-		now := time.Now()
-		record.LastAttemptAt = &now
-		if err := s.retryRepo.Update(ctx, record); err != nil {
-			logger.WithContext(ctx).Error("更新重试记录 ActiveOutTradeNum 失败",
-				logger.Int64V2("record_id", record.ID),
-				logger.Int64V2("order_id", record.OrderID),
-				logger.ErrorV2(err),
-			)
-			return fmt.Errorf("更新重试记录ActiveOutTradeNum失败: %v", err)
-		}
-		logger.WithContext(ctx).Info("跨通道重试生成ActiveOutTradeNum",
+	// 7. 开启事务前生成新的 ActiveOutTradeNum（使用随机C开头订单号）
+	newActiveOutTradeNum := fmt.Sprintf("C%s", generateRandomOrderSuffix())
+	record.ActiveOutTradeNum = newActiveOutTradeNum
+	record.AttemptNo = retryAttempt
+	now := time.Now()
+	record.LastAttemptAt = &now
+	if err := s.retryRepo.Update(ctx, record); err != nil {
+		logger.WithContext(ctx).Error("更新重试记录 ActiveOutTradeNum 失败",
 			logger.Int64V2("record_id", record.ID),
-			logger.Int64V2("order_id", order.ID),
-			logger.StringV2("active_out_trade_num", newActiveOutTradeNum),
-			logger.StringV2("order_number", order.OrderNumber),
-			logger.IntV2("attempt_no", retryAttempt),
+			logger.Int64V2("order_id", record.OrderID),
+			logger.ErrorV2(err),
 		)
+		return fmt.Errorf("更新重试记录ActiveOutTradeNum失败: %v", err)
 	}
+	logger.WithContext(ctx).Info("跨通道重试生成ActiveOutTradeNum",
+		logger.Int64V2("record_id", record.ID),
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("active_out_trade_num", newActiveOutTradeNum),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.IntV2("attempt_no", retryAttempt),
+	)
 
 	tx := s.orderRepo.(*repository.OrderRepositoryImpl).DB().Begin()
 	defer func() {
@@ -801,6 +847,52 @@ func (s *RetryService) executeRetry(ctx context.Context, record *model.OrderRetr
 
 	// 【重要】提交完成后立即恢复原始OrderNumber
 	order.OrderNumber = originalOrderNumber
+
+	// 记录API响应信息到used_apis
+	apiResponse := ""
+	if submitErr != nil {
+		apiResponse = fmt.Sprintf("错误: %v", submitErr)
+	} else {
+		apiResponse = "提交成功"
+	}
+	
+	// 更新used_apis记录当前API的响应信息
+	var responseAPIList []UsedAPI
+	if record.UsedAPIs != "" {
+		_ = json.Unmarshal([]byte(record.UsedAPIs), &responseAPIList)
+	}
+	
+	// 查找或创建当前API的记录
+	found := false
+	for i, responseAPI := range responseAPIList {
+		if responseAPI.APIID == api.ID && responseAPI.ParamID == param.ID {
+			responseAPIList[i].Result = apiResponse
+			responseAPIList[i].Time = time.Now().Format("2006-01-02 15:04:05")
+			if submitErr != nil {
+				responseAPIList[i].Error = submitErr.Error()
+			}
+			found = true
+			break
+		}
+	}
+	
+	if !found {
+		responseAPI := UsedAPI{
+			APIID:   api.ID,
+			ParamID: param.ID,
+			Result:  apiResponse,
+			Time:    time.Now().Format("2006-01-02 15:04:05"),
+		}
+		if submitErr != nil {
+			responseAPI.Error = submitErr.Error()
+		}
+		responseAPIList = append(responseAPIList, responseAPI)
+	}
+	
+	// 更新重试记录的used_apis字段
+	if responseAPIsJSON, err := json.Marshal(responseAPIList); err == nil {
+		record.UsedAPIs = string(responseAPIsJSON)
+	}
 
 	if submitErr != nil {
 		tx.Rollback()
@@ -961,6 +1053,14 @@ func (s *RetryService) GetAvailableAPIRelations(ctx context.Context, orderID int
 				}{APIID: u.APIID, ParamID: u.ParamID})
 			}
 		}
+
+		// 额外兼容：如果记录中有明确的 APIID/ParamID，直接计入已用集合（避免 UsedAPIs 为空导致重复选择）
+		if record.APIID != 0 {
+			usedPairs = append(usedPairs, struct {
+				APIID   int64 `json:"api_id"`
+				ParamID int64 `json:"param_id,omitempty"`
+			}{APIID: record.APIID, ParamID: record.ParamID})
+		}
 	}
 
 	lg.Info("已使用的API列表",
@@ -1067,9 +1167,15 @@ func (s *RetryService) GetAvailableAPIRelations(ctx context.Context, orderID int
 		availableRelations = append(availableRelations, relation)
 	}
 
-	// 4. 按排序字段排序
-	sort.Slice(availableRelations, func(i, j int) bool {
-		return availableRelations[i].Sort < availableRelations[j].Sort
+	// 4. 稳定排序：sort 升序 → api_id 升序 → param_id 升序
+	sort.SliceStable(availableRelations, func(i, j int) bool {
+		if availableRelations[i].Sort != availableRelations[j].Sort {
+			return availableRelations[i].Sort < availableRelations[j].Sort
+		}
+		if availableRelations[i].APIID != availableRelations[j].APIID {
+			return availableRelations[i].APIID < availableRelations[j].APIID
+		}
+		return availableRelations[i].ParamID < availableRelations[j].ParamID
 	})
 
 	lg.Info("获取到可用的API关系列表",
@@ -1286,7 +1392,7 @@ func (s *RetryService) handleSameChannelRetry(ctx context.Context, order *model.
 		Status:            1, // 直接置为处理中，避免被 ProcessRetries 并发捞起
 		NextRetryTime:     time.Now(),
 		ChannelCode:       channelCode,
-		AttemptNo:         executedAttempts,
+		AttemptNo:         nextAttemptNo,
 		ActiveOutTradeNum: newOutTradeNum,
 		LastAttemptAt:     &[]time.Time{time.Now()}[0],
 		RetryParams:       "{}",

@@ -109,25 +109,25 @@ func structToMap(req RechargeRequest) map[string]string {
 
 // SubmitOrder 提交订单
 func (p *DayuanrenPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-    // 注入订单号并使用 v2 recharge 类别日志
-    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
-    clog := logger.WithContextCategory(ctx, "recharge")
-    clog.Info("开始提交订单",
-        logger.StringV2("platform", "dayuanren"),
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("mobile", order.Mobile),
-    )
+	// 注入订单号并使用 v2 recharge 类别日志
+	ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+	clog := logger.WithContextCategory(ctx, "recharge")
+	clog.Info("开始提交订单",
+		logger.StringV2("platform", "dayuanren"),
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("mobile", order.Mobile),
+	)
 
 	_, appSecret, accountName, err := p.getAPIKeyAndSecret(api.AccountID)
-    if err != nil {
-        clog.Error("获取API密钥失败",
-            logger.Int64V2("order_id", order.ID),
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.ErrorV2(err),
-        )
-        return fmt.Errorf("获取API密钥失败: %v", err)
-    }
+	if err != nil {
+		clog.Error("获取API密钥失败",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.ErrorV2(err),
+		)
+		return fmt.Errorf("获取API密钥失败: %v", err)
+	}
 
 	// 构建请求参数（如有可选参数可补充）
 	req := RechargeRequest{
@@ -146,117 +146,117 @@ func (p *DayuanrenPlatform) SubmitOrder(ctx context.Context, order *model.Order,
 		form.Add(k, v)
 	}
 
-    // 仅记录参数键和表单预览，避免记录大量或敏感内容
-    paramKeys := make([]string, 0, len(params))
-    for k := range params {
-        paramKeys = append(paramKeys, k)
-    }
-    formPreview := form.Encode()
-    if len(formPreview) > 512 {
-        formPreview = formPreview[:512] + "..."
-    }
-    clog.Info("发送请求",
-        logger.StringV2("platform", "dayuanren"),
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("out_trade_num", req.OutTradeNum),
-        logger.StringV2("url", api.URL+"/index/recharge"),
-        logger.AnyV2("param_keys", paramKeys),
-        logger.StringV2("form_preview", formPreview),
-    )
+	// 仅记录参数键和表单预览，避免记录大量或敏感内容
+	paramKeys := make([]string, 0, len(params))
+	for k := range params {
+		paramKeys = append(paramKeys, k)
+	}
+	formPreview := form.Encode()
+	if len(formPreview) > 512 {
+		formPreview = formPreview[:512] + "..."
+	}
+	clog.Info("发送请求",
+		logger.StringV2("platform", "dayuanren"),
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("out_trade_num", req.OutTradeNum),
+		logger.StringV2("url", api.URL+"/index/recharge"),
+		logger.AnyV2("param_keys", paramKeys),
+		logger.StringV2("form_preview", formPreview),
+	)
 
 	resp, err := http.PostForm(api.URL+"/index/recharge", form)
-    if err != nil {
-        clog.Error("请求失败",
-            logger.Int64V2("order_id", order.ID),
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.StringV2("out_trade_num", req.OutTradeNum),
-            logger.StringV2("url", api.URL+"/index/recharge"),
-            logger.ErrorV2(err),
-        )
-        return fmt.Errorf("请求失败: %v", err)
-    }
+	if err != nil {
+		clog.Error("请求失败",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("out_trade_num", req.OutTradeNum),
+			logger.StringV2("url", api.URL+"/index/recharge"),
+			logger.ErrorV2(err),
+		)
+		return fmt.Errorf("请求失败: %v", err)
+	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
-    if err != nil {
-        clog.Error("读取响应失败",
-            logger.Int64V2("order_id", order.ID),
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.StringV2("out_trade_num", req.OutTradeNum),
-            logger.ErrorV2(err),
-        )
-        return fmt.Errorf("读取响应失败: %v", err)
-    }
-    bodyStr := string(body)
-    preview := bodyStr
-    if len(bodyStr) > 512 {
-        preview = bodyStr[:512] + "..."
-    }
-    clog.Info("收到响应",
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("out_trade_num", req.OutTradeNum),
-        logger.StringV2("body_preview", preview),
-    )
+	if err != nil {
+		clog.Error("读取响应失败",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("out_trade_num", req.OutTradeNum),
+			logger.ErrorV2(err),
+		)
+		return fmt.Errorf("读取响应失败: %v", err)
+	}
+	bodyStr := string(body)
+	preview := bodyStr
+	if len(bodyStr) > 512 {
+		preview = bodyStr[:512] + "..."
+	}
+	clog.Info("收到响应",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("out_trade_num", req.OutTradeNum),
+		logger.StringV2("body_preview", preview),
+	)
 
 	var respData Response
-    if err := json.Unmarshal(body, &respData); err != nil {
-        clog.Error("解析响应失败",
-            logger.Int64V2("order_id", order.ID),
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.StringV2("out_trade_num", req.OutTradeNum),
-            logger.ErrorV2(err),
-        )
-        return fmt.Errorf("解析响应失败: %v", err)
-    }
-    // 记录关键字段，避免冗长日志
-    clog.Info("解析响应成功",
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("out_trade_num", req.OutTradeNum),
-        logger.IntV2("errno", respData.Errno),
-        logger.StringV2("errmsg", respData.Errmsg),
-        logger.IntV2("data_len", len(respData.Data)),
-    )
+	if err := json.Unmarshal(body, &respData); err != nil {
+		clog.Error("解析响应失败",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("out_trade_num", req.OutTradeNum),
+			logger.ErrorV2(err),
+		)
+		return fmt.Errorf("解析响应失败: %v", err)
+	}
+	// 记录关键字段，避免冗长日志
+	clog.Info("解析响应成功",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("out_trade_num", req.OutTradeNum),
+		logger.IntV2("errno", respData.Errno),
+		logger.StringV2("errmsg", respData.Errmsg),
+		logger.IntV2("data_len", len(respData.Data)),
+	)
 
-    if respData.Errno != 0 {
-        clog.Error("API错误",
-            logger.Int64V2("order_id", order.ID),
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.StringV2("out_trade_num", req.OutTradeNum),
-            logger.IntV2("errno", respData.Errno),
-            logger.StringV2("errmsg", respData.Errmsg),
-        )
-        return fmt.Errorf("API错误: %s", respData.Errmsg)
-    }
+	if respData.Errno != 0 {
+		clog.Error("API错误",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("out_trade_num", req.OutTradeNum),
+			logger.IntV2("errno", respData.Errno),
+			logger.StringV2("errmsg", respData.Errmsg),
+		)
+		return fmt.Errorf("API错误: %s", respData.Errmsg)
+	}
 
 	var rechargeResp RechargeResponse
-    if err := json.Unmarshal(respData.Data, &rechargeResp); err != nil {
-        clog.Error("解析数据失败",
-            logger.Int64V2("order_id", order.ID),
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.StringV2("out_trade_num", req.OutTradeNum),
-            logger.ErrorV2(err),
-        )
-        return fmt.Errorf("解析数据失败: %v", err)
-    }
-    clog.Info("充值响应",
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("out_trade_num", req.OutTradeNum),
-        logger.StringV2("api_order_id", rechargeResp.OrderNumber),
-        logger.IntV2("product_id", rechargeResp.ProductID),
-        logger.StringV2("total_price", rechargeResp.TotalPrice),
-    )
+	if err := json.Unmarshal(respData.Data, &rechargeResp); err != nil {
+		clog.Error("解析数据失败",
+			logger.Int64V2("order_id", order.ID),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("out_trade_num", req.OutTradeNum),
+			logger.ErrorV2(err),
+		)
+		return fmt.Errorf("解析数据失败: %v", err)
+	}
+	clog.Info("充值响应",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("out_trade_num", req.OutTradeNum),
+		logger.StringV2("api_order_id", rechargeResp.OrderNumber),
+		logger.IntV2("product_id", rechargeResp.ProductID),
+		logger.StringV2("total_price", rechargeResp.TotalPrice),
+	)
 
-    clog.Info("提交订单成功",
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("out_trade_num", req.OutTradeNum),
-        logger.StringV2("api_order_id", rechargeResp.OrderNumber),
-    )
-    return nil
+	clog.Info("提交订单成功",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("out_trade_num", req.OutTradeNum),
+		logger.StringV2("api_order_id", rechargeResp.OrderNumber),
+	)
+	return nil
 }
 
 // QueryOrderStatus 查询订单状态
@@ -343,90 +343,90 @@ func (p *DayuanrenPlatform) mapOrderState(state int, orderID string) (int, strin
 	case -1:
 		status = int(model.OrderStatusFailed) // 失败
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("订单状态：失败",
-            logger.StringV2("platform", "dayuanren"),
-            logger.StringV2("order_id", orderID),
-            logger.IntV2("state", state),
-        )
+		logger.GetCategoryLogger("recharge").Info("订单状态：失败",
+			logger.StringV2("platform", "dayuanren"),
+			logger.StringV2("order_id", orderID),
+			logger.IntV2("state", state),
+		)
 	case 0:
 		status = int(model.OrderStatusProcessing) // 处理中
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("订单状态：处理中",
-            logger.StringV2("platform", "dayuanren"),
-            logger.StringV2("order_id", orderID),
-            logger.IntV2("state", state),
-        )
+		logger.GetCategoryLogger("recharge").Info("订单状态：处理中",
+			logger.StringV2("platform", "dayuanren"),
+			logger.StringV2("order_id", orderID),
+			logger.IntV2("state", state),
+		)
 	case 1:
 		status = int(model.OrderStatusSuccess) // 成功
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("订单状态：成功",
-            logger.StringV2("platform", "dayuanren"),
-            logger.StringV2("order_id", orderID),
-            logger.IntV2("state", state),
-        )
+		logger.GetCategoryLogger("recharge").Info("订单状态：成功",
+			logger.StringV2("platform", "dayuanren"),
+			logger.StringV2("order_id", orderID),
+			logger.IntV2("state", state),
+		)
 	case 2:
 		status = int(model.OrderStatusFailed) // 失败
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("订单状态：失败",
-            logger.StringV2("platform", "dayuanren"),
-            logger.StringV2("order_id", orderID),
-            logger.IntV2("state", state),
-        )
+		logger.GetCategoryLogger("recharge").Info("订单状态：失败",
+			logger.StringV2("platform", "dayuanren"),
+			logger.StringV2("order_id", orderID),
+			logger.IntV2("state", state),
+		)
 	case 3:
 		status = int(model.OrderStatusProcessing) // 部分成功/处理中
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Info("订单状态：部分成功/处理中",
-            logger.StringV2("platform", "dayuanren"),
-            logger.StringV2("order_id", orderID),
-            logger.IntV2("state", state),
-        )
+		logger.GetCategoryLogger("recharge").Info("订单状态：部分成功/处理中",
+			logger.StringV2("platform", "dayuanren"),
+			logger.StringV2("order_id", orderID),
+			logger.IntV2("state", state),
+		)
 	default:
 		status = int(model.OrderStatusFailed) // 默认失败
 		statusStr = strconv.Itoa(status)
-        logger.GetCategoryLogger("recharge").Error("订单状态：未知",
-            logger.StringV2("platform", "dayuanren"),
-            logger.StringV2("order_id", orderID),
-            logger.IntV2("state", state),
-        )
+		logger.GetCategoryLogger("recharge").Error("订单状态：未知",
+			logger.StringV2("platform", "dayuanren"),
+			logger.StringV2("order_id", orderID),
+			logger.IntV2("state", state),
+		)
 	}
 	return status, statusStr
 }
 
 // ParseCallbackData 解析回调数据
 func (p *DayuanrenPlatform) ParseCallbackData(data []byte) (*model.CallbackData, error) {
-    // 使用 recharge 类别日志器记录回调数据解析
-    clog := logger.GetCategoryLogger("recharge")
-    dataPreview := string(data)
-    if len(dataPreview) > 256 {
-        dataPreview = dataPreview[:256] + "..."
-    }
-    clog.Info("解析回调数据",
-        logger.StringV2("platform", "dayuanren"),
-        logger.IntV2("data_len", len(data)),
-        logger.StringV2("data_preview", dataPreview),
-    )
+	// 使用 recharge 类别日志器记录回调数据解析
+	clog := logger.GetCategoryLogger("recharge")
+	dataPreview := string(data)
+	if len(dataPreview) > 256 {
+		dataPreview = dataPreview[:256] + "..."
+	}
+	clog.Info("解析回调数据",
+		logger.StringV2("platform", "dayuanren"),
+		logger.IntV2("data_len", len(data)),
+		logger.StringV2("data_preview", dataPreview),
+	)
 	// 解析 url.Values
 	form, err := url.ParseQuery(string(data))
-    if err != nil {
-        clog.Error("回调参数解析失败",
-            logger.ErrorV2(err),
-        )
-        return nil, errors.New("回调参数解析失败")
-    }
+	if err != nil {
+		clog.Error("回调参数解析失败",
+			logger.ErrorV2(err),
+		)
+		return nil, errors.New("回调参数解析失败")
+	}
 	params := make(map[string]string)
 	for k, v := range form {
 		if len(v) > 0 {
 			params[k] = v[0]
 		}
 	}
-    // 仅记录参数键
-    paramKeys := make([]string, 0, len(params))
-    for k := range params {
-        paramKeys = append(paramKeys, k)
-    }
-    clog.Info("回调参数",
-        logger.AnyV2("param_keys", paramKeys),
-    )
+	// 仅记录参数键
+	paramKeys := make([]string, 0, len(params))
+	for k := range params {
+		paramKeys = append(paramKeys, k)
+	}
+	clog.Info("回调参数",
+		logger.AnyV2("param_keys", paramKeys),
+	)
 
 	state, _ := strconv.Atoi(params["state"])
 
@@ -448,15 +448,15 @@ func (p *DayuanrenPlatform) ParseCallbackData(data []byte) (*model.CallbackData,
 		OrderNumber:   orderID,
 		TransactionID: "dayuanren_" + orderID, // 使用平台前缀+订单号作为TransactionID
 	}
-    clog.Info("回调解析完成",
-        logger.StringV2("order_id", callbackData.OrderID),
-        logger.StringV2("order_number", callbackData.OrderNumber),
-        logger.StringV2("status", callbackData.Status),
-        logger.StringV2("message", callbackData.Message),
-        logger.StringV2("original_order_number", params["order_number"]),
-        logger.StringV2("out_trade_num", params["out_trade_num"]),
-    )
-    return callbackData, nil
+	clog.Info("回调解析完成",
+		logger.StringV2("order_id", callbackData.OrderID),
+		logger.StringV2("order_number", callbackData.OrderNumber),
+		logger.StringV2("status", callbackData.Status),
+		logger.StringV2("message", callbackData.Message),
+		logger.StringV2("original_order_number", params["order_number"]),
+		logger.StringV2("out_trade_num", params["out_trade_num"]),
+	)
+	return callbackData, nil
 }
 
 // getAPIKeyAndSecret 获取API密钥和密钥

@@ -86,15 +86,15 @@ func (c *CallbackController) HandleKekebangCallback(ctx *gin.Context) {
 		return
 	}
 	// 获取签名
-	sign, ok := data["sign"].(string)
-	if !ok {
-		ctx.JSON(http.StatusBadRequest, gin.H{
-			"code": "1001",
-			"msg":  "invalid sign",
-		})
-		return
-	}
-	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到签名信息", logger.StringV2("sign", sign))
+	// sign, ok := data["sign"].(string)
+	// if !ok {
+	// 	ctx.JSON(http.StatusBadRequest, gin.H{
+	// 		"code": "1001",
+	// 		"msg":  "invalid sign",
+	// 	})
+	// 	return
+	// }
+	// logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到签名信息", logger.StringV2("sign", sign))
 	// 使用账号的AppSecret验证签名
 	// if !verifySignature(body, sign, account.AppSecret) {
 	// 	ctx.JSON(http.StatusBadRequest, gin.H{

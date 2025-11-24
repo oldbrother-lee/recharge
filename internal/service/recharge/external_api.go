@@ -1,15 +1,15 @@
 package recharge
 
 import (
-    "bytes"
-    "context"
-    "encoding/json"
-    "fmt"
-    "io"
-    "net/http"
-    "strings"
-    "strconv"
-    "time"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
@@ -40,27 +40,27 @@ func (p *ExternalAPIPlatform) GetName() string {
 
 // getAPIKeyAndSecret 获取API密钥和密钥
 func (p *ExternalAPIPlatform) getAPIKeyAndSecret(ctx context.Context, accountID int64) (string, string, string, string, error) {
-    logger.WithContextCategory(ctx, "recharge").Info("【获取外部API账号与平台信息】", logger.Int64V2("account_id", accountID))
-    account, err := p.platformRepo.GetAccountByID(ctx, accountID)
-    if err != nil {
-        logger.WithContextCategory(ctx, "recharge").Error("【获取平台账号失败】", logger.Int64V2("account_id", accountID), logger.ErrorV2(err))
-        return "", "", "", "", fmt.Errorf("get platform account failed: %v", err)
-    }
-    // 不再在此处查询平台记录，URL 由调用方根据 api/url 字段传入或回退
-    return account.AccountName, account.AppKey, account.AppSecret, "", nil
+	logger.WithContextCategory(ctx, "recharge").Info("【获取外部API账号与平台信息】", logger.Int64V2("account_id", accountID))
+	account, err := p.platformRepo.GetAccountByID(ctx, accountID)
+	if err != nil {
+		logger.WithContextCategory(ctx, "recharge").Error("【获取平台账号失败】", logger.Int64V2("account_id", accountID), logger.ErrorV2(err))
+		return "", "", "", "", fmt.Errorf("get platform account failed: %v", err)
+	}
+	// 不再在此处查询平台记录，URL 由调用方根据 api/url 字段传入或回退
+	return account.AccountName, account.AppKey, account.AppSecret, "", nil
 }
 
 // SubmitOrder 提交订单到外部API
 func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
-    logger.WithContextCategory(ctx, "recharge").Info("【开始提交外部API订单】",
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.Int64V2("api_id", api.ID),
-        logger.Int64V2("api_account_id", api.AccountID),
-        logger.Int64V2("platform_id", api.PlatformID),
-        logger.StringV2("api_code", api.Code),
-        logger.Int64V2("param_id", apiParam.ID),
-    )
+	logger.WithContextCategory(ctx, "recharge").Info("【开始提交外部API订单】",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.Int64V2("api_id", api.ID),
+		logger.Int64V2("api_account_id", api.AccountID),
+		logger.Int64V2("platform_id", api.PlatformID),
+		logger.StringV2("api_code", api.Code),
+		logger.Int64V2("param_id", apiParam.ID),
+	)
 
 	// 获取API密钥和URL
 	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, api.AccountID)
@@ -80,18 +80,18 @@ func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Orde
 		callbackURL = api.CallbackURL
 		callbackFrom = "api"
 	}
-    logger.WithContextCategory(ctx, "recharge").Info("【选择回调地址】",
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("callback_url", callbackURL),
-        logger.StringV2("from", callbackFrom),
-    )
+	logger.WithContextCategory(ctx, "recharge").Info("【选择回调地址】",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("callback_url", callbackURL),
+		logger.StringV2("from", callbackFrom),
+	)
 
 	// 构建请求参数
 	params := map[string]interface{}{
 		"app_id": appID,
 		// "app_key":       appKey,
-		"timestamp":     time.Now().Unix(),
-		"nonce":         p.generateNonce(),
+		"timestamp": time.Now().Unix(),
+		"nonce":     p.generateNonce(),
 		// 传递给下游使用 OrderNumber 字段
 		"out_trade_num": order.OrderNumber,
 		"product_id": func() int64 {
@@ -115,50 +115,58 @@ func (p *ExternalAPIPlatform) SubmitOrder(ctx context.Context, order *model.Orde
 	sign := p.generateSign(ctx, params, appSecret)
 	params["sign"] = sign
 
-    logger.WithContextCategory(ctx, "recharge").Info("【准备发送外部API请求】",
-        logger.StringV2("url", apiBaseURL+"/external/order"),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("out_trade_num", order.OrderNumber),
-        logger.AnyV2("param_keys", func() []string { keys := make([]string, 0, len(params)); for k := range params { if k != "sign" { keys = append(keys, k) } }; return keys }()),
-    )
+	logger.WithContextCategory(ctx, "recharge").Info("【准备发送外部API请求】",
+		logger.StringV2("url", apiBaseURL+"/external/order"),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("out_trade_num", order.OrderNumber),
+		logger.AnyV2("param_keys", func() []string {
+			keys := make([]string, 0, len(params))
+			for k := range params {
+				if k != "sign" {
+					keys = append(keys, k)
+				}
+			}
+			return keys
+		}()),
+	)
 
 	// 发送请求到外部API
-    resp, err := p.sendRequest(ctx, appKey, apiBaseURL+"/external/order", params)
-    if err != nil {
-        logger.WithContextCategory(ctx, "recharge").Error("【提交到外部系统订单失败】",
-            logger.StringV2("url", apiBaseURL+"/external/order"),
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.StringV2("out_trade_num", order.OrderNumber),
-            logger.ErrorV2(err),
-        )
-        return fmt.Errorf("submit order failed: %v", err)
-    }
+	resp, err := p.sendRequest(ctx, appKey, apiBaseURL+"/external/order", params)
+	if err != nil {
+		logger.WithContextCategory(ctx, "recharge").Error("【提交到外部系统订单失败】",
+			logger.StringV2("url", apiBaseURL+"/external/order"),
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("out_trade_num", order.OrderNumber),
+			logger.ErrorV2(err),
+		)
+		return fmt.Errorf("submit order failed: %v", err)
+	}
 
 	// 检查响应
-    if resp.Code != 200 {
-        logger.WithContextCategory(ctx, "recharge").Error("【提交订单失败】",
-            logger.StringV2("order_number", order.OrderNumber),
-            logger.StringV2("out_trade_num", order.OrderNumber),
-            logger.IntV2("code", resp.Code),
-            logger.StringV2("message", resp.Message),
-        )
-        return fmt.Errorf("submit order failed: %s", resp.Message)
-    }
+	if resp.Code != 200 {
+		logger.WithContextCategory(ctx, "recharge").Error("【提交订单失败】",
+			logger.StringV2("order_number", order.OrderNumber),
+			logger.StringV2("out_trade_num", order.OrderNumber),
+			logger.IntV2("code", resp.Code),
+			logger.StringV2("message", resp.Message),
+		)
+		return fmt.Errorf("submit order failed: %s", resp.Message)
+	}
 
-    logger.WithContextCategory(ctx, "recharge").Info("【外部API提交订单成功】",
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("out_trade_num", order.OrderNumber),
-    )
-    return nil
+	logger.WithContextCategory(ctx, "recharge").Info("【外部API提交订单成功】",
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("out_trade_num", order.OrderNumber),
+	)
+	return nil
 }
 
 // QueryOrderStatus 查询订单状态
 func (p *ExternalAPIPlatform) QueryOrderStatus(ctx context.Context, order *model.Order) (model.OrderStatus, error) {
-    logger.WithContextCategory(ctx, "recharge").Info("internal_api 查询订单状态",
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.StringV2("out_trade_num", order.OrderNumber),
-    )
+	logger.WithContextCategory(ctx, "recharge").Info("internal_api 查询订单状态",
+		logger.Int64V2("order_id", order.ID),
+		logger.StringV2("order_number", order.OrderNumber),
+		logger.StringV2("out_trade_num", order.OrderNumber),
+	)
 
 	// 获取API密钥和URL
 	appID, appKey, appSecret, apiURL, err := p.getAPIKeyAndSecret(ctx, order.PlatformAccountID)
@@ -173,9 +181,9 @@ func (p *ExternalAPIPlatform) QueryOrderStatus(ctx context.Context, order *model
 
 	// 构建查询参数
 	params := map[string]interface{}{
-		"app_id":       appID,
-		"timestamp":     time.Now().Unix(),
-		"nonce":         p.generateNonce(),
+		"app_id":    appID,
+		"timestamp": time.Now().Unix(),
+		"nonce":     p.generateNonce(),
 		// 传递给下游使用 OrderNumber 字段
 		"out_trade_num": order.OrderNumber,
 	}
@@ -311,12 +319,12 @@ func (p *ExternalAPIPlatform) generateNonce() string {
 
 // generateSign 生成签名
 func (p *ExternalAPIPlatform) generateSign(ctx context.Context, params map[string]interface{}, appSecret string) string {
-    sign, err := p.signatureValidator.GenerateExternalAPISignature(params, appSecret)
-    if err != nil {
-        logger.WithContextCategory(ctx, "recharge").Error("Failed to generate external API signature", logger.ErrorV2(err))
-        return ""
-    }
-    return sign
+	sign, err := p.signatureValidator.GenerateExternalAPISignature(params, appSecret)
+	if err != nil {
+		logger.WithContextCategory(ctx, "recharge").Error("Failed to generate external API signature", logger.ErrorV2(err))
+		return ""
+	}
+	return sign
 }
 
 // mapOrderStatus 映射订单状态
@@ -345,22 +353,22 @@ type APIResponse struct {
 
 // sendRequest 发送HTTP请求
 func (p *ExternalAPIPlatform) sendRequest(ctx context.Context, app_key, url string, params map[string]interface{}) (*APIResponse, error) {
-    // 序列化请求参数（不打印敏感字段）
-    jsonData, err := json.Marshal(params)
-    if err != nil {
-        return nil, fmt.Errorf("marshal request params failed: %v", err)
-    }
+	// 序列化请求参数（不打印敏感字段）
+	jsonData, err := json.Marshal(params)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request params failed: %v", err)
+	}
 
-    stage := "submit"
-    ul := strings.ToLower(url)
-    if strings.Contains(ul, "/query") || strings.Contains(ul, "balance") {
-        stage = "query"
-    }
-    logger.WithContextCategory(ctx, "recharge").Info("外部API请求体",
-        logger.StringV2("stage", stage),
-        logger.StringV2("url", url),
-        logger.StringV2("body", string(jsonData)),
-    )
+	stage := "submit"
+	ul := strings.ToLower(url)
+	if strings.Contains(ul, "/query") || strings.Contains(ul, "balance") {
+		stage = "query"
+	}
+	logger.WithContextCategory(ctx, "recharge").Info("外部API请求体",
+		logger.StringV2("stage", stage),
+		logger.StringV2("url", url),
+		logger.StringV2("body", string(jsonData)),
+	)
 
 	// 创建HTTP请求
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonData))
@@ -396,18 +404,18 @@ func (p *ExternalAPIPlatform) sendRequest(ctx context.Context, app_key, url stri
 		return nil, fmt.Errorf("read response failed: %v", err)
 	}
 
-    logger.WithContextCategory(ctx, "recharge").Info("【外部API响应】",
-        logger.StringV2("stage", "response"),
-        logger.StringV2("url", url),
-        logger.IntV2("status_code", resp.StatusCode),
-        logger.StringV2("body", string(body)),
-    )
+	logger.WithContextCategory(ctx, "recharge").Info("【外部API响应】",
+		logger.StringV2("stage", "response"),
+		logger.StringV2("url", url),
+		logger.IntV2("status_code", resp.StatusCode),
+		logger.StringV2("body", string(body)),
+	)
 
 	// 解析响应
 	var apiResp APIResponse
-    if err := json.Unmarshal(body, &apiResp); err != nil {
-        return nil, fmt.Errorf("unmarshal response failed: %v, response body: %s", err, string(body))
-    }
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, fmt.Errorf("unmarshal response failed: %v, response body: %s", err, string(body))
+	}
 
 	return &apiResp, nil
 }

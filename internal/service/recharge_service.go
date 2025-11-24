@@ -1,20 +1,21 @@
 package service
 
 import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"recharge-go/internal/model"
-	"recharge-go/internal/repository"
-	notificationRepo "recharge-go/internal/repository/notification"
-	"recharge-go/internal/service/recharge"
-	"recharge-go/pkg/logger"
-	"recharge-go/pkg/queue"
-	"recharge-go/pkg/redis"
-	"strconv"
-	"sync"
-	"time"
+    "context"
+    "encoding/json"
+    "errors"
+    "fmt"
+    "recharge-go/internal/model"
+    "recharge-go/internal/repository"
+    notificationRepo "recharge-go/internal/repository/notification"
+    "recharge-go/internal/service/recharge"
+    "recharge-go/pkg/logger"
+    "recharge-go/pkg/queue"
+    "recharge-go/pkg/redis"
+    "strconv"
+    "sync"
+    "time"
+    "sort"
 
 	redisV8 "github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
@@ -1107,16 +1108,16 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			logger.Int64V2("api_account_id", api.AccountID))
 
 		// 获取所有可用的API关系
-		relations, err2 := s.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
-		if err2 != nil {
+        relations, err2 := s.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
+        if err2 != nil {
 			logger.WithContextCategory(ctx, "recharge").Error("【获取API关系失败】",
 				logger.ErrorV2(err2),
 				logger.Int64V2("order_id", order.ID))
 			return fmt.Errorf("get API relations failed: %v", err2)
 		}
 
-        // 解析已使用的API列表（兼容对象数组 {api_id,param_id} 和简单数组 [api_id]）
-        var usedAPIs []map[string]interface{}
+		// 解析已使用的API列表（兼容对象数组 {api_id,param_id} 和简单数组 [api_id]）
+		var usedAPIs []map[string]interface{}
         if order.UsedAPIs != "" {
             if err := json.Unmarshal([]byte(order.UsedAPIs), &usedAPIs); err != nil {
                 logger.WithContextCategory(ctx, "recharge").Error("【解析已使用API列表失败】",
@@ -1125,92 +1126,132 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
                 usedAPIs = []map[string]interface{}{}
             }
         }
+        // 对候选关系进行稳定排序：先按 sort 升序，其次按 api_id 升序，最后按 param_id 升序
+        sort.SliceStable(relations, func(i, j int) bool {
+            if relations[i].Sort != relations[j].Sort {
+                return relations[i].Sort < relations[j].Sort
+            }
+            if relations[i].APIID != relations[j].APIID {
+                return relations[i].APIID < relations[j].APIID
+            }
+            return relations[i].ParamID < relations[j].ParamID
+        })
 
-        // 去重辅助：判断集合中是否存在指定 api_id+param_id
-        containsPair := func(list []map[string]interface{}, apiID int64, paramID int64) bool {
-            for _, u := range list {
+        // 工具：判断 {api_id,param_id} 是否已存在
+        existsPair := func(arr []map[string]interface{}, apiID int64, paramID int64) bool {
+            for _, u := range arr {
                 var a, p int64
-                if v, ok := u["api_id"].(float64); ok { a = int64(v) } else if vv, ok2 := u["api_id"].(int64); ok2 { a = vv }
-                if v, ok := u["param_id"].(float64); ok { p = int64(v) } else if vv, ok2 := u["param_id"].(int64); ok2 { p = vv } else { p = 0 }
+                if v, ok := u["api_id"].(float64); ok { a = int64(v) }
+                if v, ok := u["param_id"].(float64); ok { p = int64(v) } else { p = 0 }
                 if a == apiID && p == paramID { return true }
             }
             return false
         }
 
         // 添加当前API+Param到已使用列表（去重）
-        if !containsPair(usedAPIs, api.ID, apiParam.ID) {
+        if !existsPair(usedAPIs, api.ID, apiParam.ID) {
             usedAPIs = append(usedAPIs, map[string]interface{}{
-                "api_id":  api.ID,
+                "api_id":   api.ID,
                 "param_id": apiParam.ID,
             })
         }
+        // 延后在选定下一候选后再加入已用集合并序列化
 
 		// 找到下一个可用的API
 		var nextAPIID, nextParamID int64
         for _, relation := range relations {
-            // 检查API+Param是否已使用
-            alreadyUsed := false
-            for _, usedAPI := range usedAPIs {
-                apiID, _ := usedAPI["api_id"].(float64)
-                // 兼容旧格式无 param_id 的情况，视为 0，仅匹配完全相同的组合键
-                var paramID float64
-                if v, ok := usedAPI["param_id"].(float64); ok {
-                    paramID = v
-                } else {
-                    paramID = 0
-                }
-                if int64(apiID) == relation.APIID && int64(paramID) == relation.ParamID {
-                    alreadyUsed = true
-                    break
-                }
-            }
-            if !alreadyUsed {
-                nextAPIID = relation.APIID
-                nextParamID = relation.ParamID
-                break
-            }
+			// 检查API+Param是否已使用
+			alreadyUsed := false
+			for _, usedAPI := range usedAPIs {
+				apiID, _ := usedAPI["api_id"].(float64)
+				// 兼容旧格式无 param_id 的情况，视为 0，仅匹配完全相同的组合键
+				var paramID float64
+				if v, ok := usedAPI["param_id"].(float64); ok {
+					paramID = v
+				} else {
+					paramID = 0
+				}
+				if int64(apiID) == relation.APIID && int64(paramID) == relation.ParamID {
+					alreadyUsed = true
+					break
+				}
+			}
+			if !alreadyUsed {
+				nextAPIID = relation.APIID
+				nextParamID = relation.ParamID
+				break
+			}
         }
 
-		if nextAPIID == 0 {
-			logger.WithContextCategory(ctx, "recharge").Error("【没有可用的API】", logger.Int64V2("order_id", order.ID))
-			// 调用订单失败处理方法，会自动退还余额和创建通知
-			if err := s.orderService.ProcessOrderFail(ctx, order.ID, "无可用API"); err != nil {
-				logger.WithContextCategory(ctx, "recharge").Error("处理订单失败时出错", logger.ErrorV2(err), logger.Int64V2("order_id", order.ID))
+        // 选定下一候选后，将其加入已用集合，避免重复选择（去重），并准备持久化
+        preUniqueCount := 0
+        {
+            seen := make(map[string]struct{})
+            for _, u := range usedAPIs {
+                var a, p int64
+                if v, ok := u["api_id"].(float64); ok { a = int64(v) }
+                if v, ok := u["param_id"].(float64); ok { p = int64(v) } else { p = 0 }
+                key := fmt.Sprintf("%d:%d", a, p)
+                if _, ok := seen[key]; !ok { seen[key] = struct{}{}; preUniqueCount++ }
+            }
+        }
+        if nextAPIID != 0 && nextParamID != 0 && !existsPair(usedAPIs, nextAPIID, nextParamID) {
+            usedAPIs = append(usedAPIs, map[string]interface{}{
+                "api_id":   nextAPIID,
+                "param_id": nextParamID,
+            })
+        }
+        // 标准化去重列表用于持久化
+        uniqueUsed := make([]map[string]interface{}, 0, len(usedAPIs))
+        {
+            seen := make(map[string]struct{})
+            for _, u := range usedAPIs {
+                var a, p int64
+                if v, ok := u["api_id"].(float64); ok { a = int64(v) }
+                if v, ok := u["param_id"].(float64); ok { p = int64(v) } else { p = 0 }
+                key := fmt.Sprintf("%d:%d", a, p)
+                if _, ok := seen[key]; !ok {
+                    seen[key] = struct{}{}
+                    uniqueUsed = append(uniqueUsed, map[string]interface{}{
+                        "api_id":   a,
+                        "param_id": p,
+                    })
+                }
+            }
+        }
+        usedAPIsJSON, _ := json.Marshal(uniqueUsed)
+
+        if nextAPIID == 0 {
+            logger.WithContextCategory(ctx, "recharge").Error("【没有可用的API】", logger.Int64V2("order_id", order.ID))
+            // 调用订单失败处理方法，会自动退还余额和创建通知
+            if err := s.orderService.ProcessOrderFail(ctx, order.ID, "无可用API"); err != nil {
+                logger.WithContextCategory(ctx, "recharge").Error("处理订单失败时出错", logger.ErrorV2(err), logger.Int64V2("order_id", order.ID))
 			}
 			return fmt.Errorf("no available API")
 		}
 
-        // 将下一候选也加入已用集合，避免再次选择同套餐（去重）
-        if nextAPIID != 0 && nextParamID != 0 && !containsPair(usedAPIs, nextAPIID, nextParamID) {
-            usedAPIs = append(usedAPIs, map[string]interface{}{
-                "api_id":  nextAPIID,
-                "param_id": nextParamID,
-            })
-        }
-        usedAPIsJSON, _ := json.Marshal(usedAPIs)
-
-        logger.WithContextCategory(ctx, "recharge").Info("【准备更新订单状态与切换API】",
-            logger.Int64V2("order_id", order.ID),
-            logger.Int64V2("from_api_id", api.ID),
-            logger.Int64V2("to_api_id", nextAPIID),
-            logger.IntV2("used_apis_count", len(usedAPIs)))
-        if err2 := s.orderRepo.UpdateStatusAndAPIID(ctx, order.ID, model.OrderStatusPendingRecharge, nextAPIID, string(usedAPIsJSON)); err2 != nil {
-            logger.WithContextCategory(ctx, "recharge").Error("【更新订单状态和API ID失败】", logger.ErrorV2(err2), logger.Int64V2("order_id", order.ID), logger.Int64V2("to_api_id", nextAPIID))
-            return fmt.Errorf("update order status and API ID failed: %v", err2)
-        }
+		logger.WithContextCategory(ctx, "recharge").Info("【准备更新订单状态与切换API】",
+			logger.Int64V2("order_id", order.ID),
+			logger.Int64V2("from_api_id", api.ID),
+			logger.Int64V2("to_api_id", nextAPIID),
+			logger.IntV2("used_apis_count", len(usedAPIs)))
+		if err2 := s.orderRepo.UpdateStatusAndAPIID(ctx, order.ID, model.OrderStatusPendingRecharge, nextAPIID, string(usedAPIsJSON)); err2 != nil {
+			logger.WithContextCategory(ctx, "recharge").Error("【更新订单状态和API ID失败】", logger.ErrorV2(err2), logger.Int64V2("order_id", order.ID), logger.Int64V2("to_api_id", nextAPIID))
+			return fmt.Errorf("update order status and API ID failed: %v", err2)
+		}
 		logger.WithContextCategory(ctx, "recharge").Info("【更新订单状态与API成功】", logger.Int64V2("order_id", order.ID), logger.Int64V2("new_api_id", nextAPIID))
 
 		logger.WithContextCategory(ctx, "recharge").Info("【准备创建重试记录】", logger.Int64V2("order_id", order.ID))
 		submitErr := err // 保存 SubmitOrder 的错误
-        retryParams := map[string]interface{}{
-            "order_id":  order.ID,
-            "api_id":    nextAPIID,
-            "param_id":  nextParamID,
-            "platform":  api.PlatformID,
-            "retry_at":  time.Now(),
-            "next_at":   time.Now().Add(5 * time.Minute),
-            "error_msg": submitErr.Error(),
-        }
+		retryParams := map[string]interface{}{
+			"order_id":  order.ID,
+			"api_id":    nextAPIID,
+			"param_id":  nextParamID,
+			"platform":  api.PlatformID,
+			"retry_at":  time.Now(),
+			"next_at":   time.Now().Add(5 * time.Minute),
+			"error_msg": submitErr.Error(),
+		}
 		logger.WithContextCategory(ctx, "recharge").Info("重试参数预览", logger.Int64V2("order_id", order.ID), logger.Int64V2("api_id", nextAPIID), logger.Int64V2("param_id", nextParamID))
 		retryParamsJSON, _ := json.Marshal(retryParams)
 
@@ -1221,36 +1262,24 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			}
 			return keys
 		}()))
-        // 计算重试时间：首次切换平台立即重试；后续去重计数>1则延迟5分钟
+        // 计算重试时间：首个切换（preUniqueCount==1）立即重试，否则延迟5分钟
         nextRetryTime := time.Now()
-        unique := 0
-        seen := make(map[string]struct{})
-        for _, u := range usedAPIs {
-            var a, p int64
-            if v, ok := u["api_id"].(float64); ok { a = int64(v) } else if vv, ok2 := u["api_id"].(int64); ok2 { a = vv }
-            if v, ok := u["param_id"].(float64); ok { p = int64(v) } else if vv, ok2 := u["param_id"].(int64); ok2 { p = vv } else { p = 0 }
-            key := fmt.Sprintf("%d-%d", a, p)
-            if _, ok := seen[key]; !ok {
-                seen[key] = struct{}{}
-                unique++
-            }
-        }
-        if unique > 1 {
+        if preUniqueCount > 1 {
             nextRetryTime = time.Now().Add(5 * time.Minute)
         }
 
-        retryRecord := &model.OrderRetryRecord{
-            OrderID:       order.ID,
-            APIID:         nextAPIID,
-            ParamID:       nextParamID,
-            RetryType:     1, // 1: 平台切换
-            RetryCount:    unique,
-            LastError:     submitErr.Error(),
-            RetryParams:   string(retryParamsJSON),
+		retryRecord := &model.OrderRetryRecord{
+			OrderID:       order.ID,
+			APIID:         nextAPIID,
+			ParamID:       nextParamID,
+			RetryType:     1, // 1: 平台切换
+			RetryCount:    len(usedAPIs),
+			LastError:     submitErr.Error(),
+			RetryParams:   string(retryParamsJSON),
             UsedAPIs:      string(usedAPIsJSON),
-            Status:        0, // 0: 待处理
-            NextRetryTime: nextRetryTime,
-        }
+			Status:        0, // 0: 待处理
+			NextRetryTime: nextRetryTime,
+		}
 		logger.WithContextCategory(ctx, "recharge").Info("重试记录构建完成", logger.Int64V2("order_id", retryRecord.OrderID), logger.IntV2("retry_count", retryRecord.RetryCount), logger.Int64V2("api_id", retryRecord.APIID), logger.Int64V2("param_id", retryRecord.ParamID))
 
 		if s.retryRepo == nil {

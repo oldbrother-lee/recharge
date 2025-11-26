@@ -8,8 +8,9 @@ import (
 	"recharge-go/internal/utils"
 	"strconv"
 
+	"recharge-go/pkg/log"
+
 	"github.com/gin-gonic/gin"
-	"recharge-go/pkg/logger"
 )
 
 type ProductController struct {
@@ -39,28 +40,28 @@ func NewProductController(productService *service.ProductService) *ProductContro
 func (c *ProductController) List(ctx *gin.Context) {
 	var req model.ProductListRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
-		logger.WithContextCategory(ctx.Request.Context(), "product_controller").Error("参数绑定错误", logger.ErrorV2(err))
+		log.WithContextCategory(ctx.Request.Context(), "product_controller").Error("参数绑定错误", log.ErrorV2(err))
 		utils.Error(ctx, http.StatusBadRequest, fmt.Sprintf("参数错误: %v", err))
 		return
 	}
 
-	logger.WithContextCategory(ctx.Request.Context(), "product_controller").Info("绑定参数成功",
-		logger.IntV2("page", req.Page),
-		logger.IntV2("page_size", req.PageSize),
-		logger.IntV2("type", req.Type),
-		logger.IntV2("category", req.Category),
-		logger.StringV2("isp", req.ISP),
-		logger.IntV2("status", req.Status),
+	log.WithContextCategory(ctx.Request.Context(), "product_controller").Info("绑定参数成功",
+		log.IntV2("page", req.Page),
+		log.IntV2("page_size", req.PageSize),
+		log.IntV2("type", req.Type),
+		log.IntV2("category", req.Category),
+		log.StringV2("isp", req.ISP),
+		log.IntV2("status", req.Status),
 	)
 
 	resp, err := c.productService.List(ctx.Request.Context(), &req)
 	if err != nil {
-		logger.WithContextCategory(ctx.Request.Context(), "product_controller").Error("服务调用错误", logger.ErrorV2(err))
+		log.WithContextCategory(ctx.Request.Context(), "product_controller").Error("服务调用错误", log.ErrorV2(err))
 		utils.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("服务错误: %v", err))
 		return
 	}
 
-	logger.WithContextCategory(ctx.Request.Context(), "product_controller").Info("请求处理成功")
+	log.WithContextCategory(ctx.Request.Context(), "product_controller").Info("请求处理成功")
 	utils.Success(ctx, resp)
 }
 

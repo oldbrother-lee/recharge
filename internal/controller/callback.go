@@ -9,7 +9,8 @@ import (
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/signature"
 	"strconv"
 	"strings"
@@ -69,7 +70,7 @@ func (c *CallbackController) HandleKekebangCallback(ctx *gin.Context) {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "failed to get account info"})
 		return
 	}
-	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("平台账号加载成功", logger.StringV2("userid", userID), logger.AnyV2("account", account))
+	log.WithContextCategory(ctx.Request.Context(), "callback").Info("平台账号加载成功", log.StringV2("userid", userID), log.AnyV2("account", account))
 
 	// 读取请求体
 	body, err := io.ReadAll(ctx.Request.Body)
@@ -86,15 +87,15 @@ func (c *CallbackController) HandleKekebangCallback(ctx *gin.Context) {
 		return
 	}
 	// 获取签名
-	// sign, ok := data["sign"].(string)
-	// if !ok {
-	// 	ctx.JSON(http.StatusBadRequest, gin.H{
-	// 		"code": "1001",
-	// 		"msg":  "invalid sign",
-	// 	})
-	// 	return
-	// }
-	// logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到签名信息", logger.StringV2("sign", sign))
+	sign, ok := data["sign"].(string)
+	if !ok {
+		ctx.JSON(http.StatusBadRequest, gin.H{
+			"code": "1001",
+			"msg":  "invalid sign",
+		})
+		return
+	}
+	log.WithContextCategory(ctx.Request.Context(), "callback").Info("收到签名信息", log.StringV2("sign", sign))
 	// 使用账号的AppSecret验证签名
 	// if !verifySignature(body, sign, account.AppSecret) {
 	// 	ctx.JSON(http.StatusBadRequest, gin.H{

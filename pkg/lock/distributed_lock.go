@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-redis/redis/v8"
-	"recharge-go/pkg/logger"
+    "github.com/go-redis/redis/v8"
+    logger "recharge-go/pkg/log"
 )
 
 // DistributedLock 分布式锁接口

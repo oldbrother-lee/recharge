@@ -3,7 +3,7 @@ package signature
 import (
 	"crypto/md5"
 	"fmt"
-	"recharge-go/pkg/logger"
+    logger "recharge-go/pkg/log"
 	"sort"
 	"strings"
 )

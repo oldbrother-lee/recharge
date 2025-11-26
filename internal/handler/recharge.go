@@ -2,7 +2,7 @@ package handler
 
 import (
     "recharge-go/internal/service"
-    "recharge-go/pkg/logger"
+    logger "recharge-go/pkg/log"
 
     "github.com/gin-gonic/gin"
 )
@@ -33,7 +33,7 @@ func (h *RechargeHandler) HandleCallback(c *gin.Context) {
 	// 读取请求体
     data, err := c.GetRawData()
     if err != nil {
-        logger.Error("读取回调请求体失败: %v", err)
+        logger.ErrorLogV2("callback_read_body_failed", logger.ErrorV2(err))
         c.JSON(400, gin.H{
             "code": "1001",
             "msg":  "invalid request body",
@@ -49,8 +49,8 @@ func (h *RechargeHandler) HandleCallback(c *gin.Context) {
     )
 
 	// 处理回调
-	if err := h.rechargeService.HandleCallback(c.Request.Context(), platform, data); err != nil {
-		logger.Error("处理回调失败: %v", err)
+    if err := h.rechargeService.HandleCallback(c.Request.Context(), platform, data); err != nil {
+        logger.ErrorLogV2("handle_callback_failed", logger.ErrorV2(err))
 		c.JSON(200, gin.H{
 			"code": "1002",
 			"msg":  "handle callback failed",

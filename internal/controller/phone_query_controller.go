@@ -6,7 +6,7 @@ import (
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
 	"recharge-go/pkg/utils/response"
 
 	"github.com/gin-gonic/gin"
@@ -39,7 +39,7 @@ func NewPhoneQueryController(phoneQueryService service.PhoneQueryService) *Phone
 func (c *PhoneQueryController) QueryBalance(ctx *gin.Context) {
 	var req model.PhoneBalanceRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		logger.Log.Error("绑定余额查询请求参数失败", zap.Error(err))
+		log.Log.Error("绑定余额查询请求参数失败", zap.Error(err))
 		response.Error(ctx, http.StatusBadRequest, "请求参数错误: "+err.Error())
 		return
 	}
@@ -52,7 +52,7 @@ func (c *PhoneQueryController) QueryBalance(ctx *gin.Context) {
 		}
 	}
 
-	logger.Log.Info("开始处理余额查询请求",
+	log.Log.Info("开始处理余额查询请求",
 		zap.String("phone", req.Phone),
 		zap.String("isp_type", req.ISPType),
 		zap.Int("max_retries", maxRetries),
@@ -69,7 +69,7 @@ func (c *PhoneQueryController) QueryBalance(ctx *gin.Context) {
 	}
 
 	if err != nil {
-		logger.Log.Error("查询余额失败",
+		log.Log.Error("查询余额失败",
 			zap.String("phone", req.Phone),
 			zap.String("isp_type", req.ISPType),
 			zap.Error(err),
@@ -80,7 +80,7 @@ func (c *PhoneQueryController) QueryBalance(ctx *gin.Context) {
 
 	// 检查API返回的错误码
 	if result.ErrCode != 0 {
-		logger.Log.Warn("第三方API返回错误",
+		log.Log.Warn("第三方API返回错误",
 			zap.String("phone", req.Phone),
 			zap.Int("errcode", result.ErrCode),
 			zap.String("errmsg", result.ErrMsg),
@@ -89,7 +89,7 @@ func (c *PhoneQueryController) QueryBalance(ctx *gin.Context) {
 		return
 	}
 
-	logger.Log.Info("余额查询成功",
+	log.Log.Info("余额查询成功",
 		zap.String("phone", req.Phone),
 		zap.String("balance", result.Data),
 	)
@@ -111,7 +111,7 @@ func (c *PhoneQueryController) QueryBalance(ctx *gin.Context) {
 func (c *PhoneQueryController) QueryPaymentRecords(ctx *gin.Context) {
 	var req model.PaymentRecordRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		logger.Log.Error("绑定缴费记录查询请求参数失败", zap.Error(err))
+		log.Log.Error("绑定缴费记录查询请求参数失败", zap.Error(err))
 		response.Error(ctx, http.StatusBadRequest, "请求参数错误: "+err.Error())
 		return
 	}
@@ -124,7 +124,7 @@ func (c *PhoneQueryController) QueryPaymentRecords(ctx *gin.Context) {
 		}
 	}
 
-	logger.Log.Info("开始处理缴费记录查询请求",
+	log.Log.Info("开始处理缴费记录查询请求",
 		zap.String("phone", req.Phone),
 		zap.String("isp_type", req.ISPType),
 		zap.Int("max_retries", maxRetries),
@@ -141,7 +141,7 @@ func (c *PhoneQueryController) QueryPaymentRecords(ctx *gin.Context) {
 	}
 
 	if err != nil {
-		logger.Log.Error("查询缴费记录失败",
+		log.Log.Error("查询缴费记录失败",
 			zap.String("phone", req.Phone),
 			zap.String("isp_type", req.ISPType),
 			zap.Error(err),
@@ -152,7 +152,7 @@ func (c *PhoneQueryController) QueryPaymentRecords(ctx *gin.Context) {
 
 	// 检查API返回的错误码
 	if result.ErrCode != 0 {
-		logger.Log.Warn("第三方API返回错误",
+		log.Log.Warn("第三方API返回错误",
 			zap.String("phone", req.Phone),
 			zap.Int("errcode", result.ErrCode),
 			zap.String("errmsg", result.ErrMsg),
@@ -162,7 +162,7 @@ func (c *PhoneQueryController) QueryPaymentRecords(ctx *gin.Context) {
 	}
 
 	records := result.GetRecords()
-	logger.Log.Info("缴费记录查询成功",
+	log.Log.Info("缴费记录查询成功",
 		zap.String("phone", req.Phone),
 		zap.Int("record_count", len(records)),
 	)

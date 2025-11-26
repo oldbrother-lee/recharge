@@ -4,7 +4,7 @@ import (
 	"context"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
-	"recharge-go/pkg/logger"
+    logger "recharge-go/pkg/log"
 )
 
 type ProductService struct {

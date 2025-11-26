@@ -10,7 +10,8 @@ import (
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
 	"recharge-go/pkg/database"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 	"strconv"
 	"time"
 
@@ -93,7 +94,7 @@ type MF178OrderRequest struct {
 
 // CreateOrder 创建订单
 func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
-	logger.Log.Info("开始处理创建订单请求")
+	log.Log.Info("开始处理创建订单请求")
 
 	userid := ctx.Param("userid")
 	// 1. 查询 platform_accounts 表，找到 account_name = userid 的账号
@@ -114,10 +115,10 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 	// 1. 读取请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		if logger.Log == nil {
-			logger.WithContextCategory(ctx.Request.Context(), "mf178_order").Error("读取请求体失败", logger.ErrorV2(err), logger.StringV2("request_id", ctx.GetString("request_id")))
+		if log.Log == nil {
+			log.WithContextCategory(ctx.Request.Context(), "mf178_order").Error("读取请求体失败", log.ErrorV2(err), log.StringV2("request_id", ctx.GetString("request_id")))
 		} else {
-			logger.Log.Error("读取请求体失败",
+			log.Log.Error("读取请求体失败",
 				zap.Error(err),
 				zap.String("request_id", ctx.GetString("request_id")))
 		}
@@ -131,14 +132,14 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 	}
 	// 恢复请求体
 	ctx.Request.Body = io.NopCloser(bytes.NewBuffer(body))
-	logger.Log.Info("原始请求体",
+	log.Log.Info("原始请求体",
 		zap.String("body", string(body)),
 		zap.String("request_id", ctx.GetString("request_id")))
 
 	// 2. 解析请求参数
 	var req MF178OrderRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		logger.Log.Error("参数绑定失败",
+		log.Log.Error("参数绑定失败",
 			zap.Error(err),
 			zap.String("body", string(body)))
 		response := gin.H{
@@ -149,14 +150,14 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, response)
 		return
 	}
-	logger.Log.Info("请求参数",
+	log.Log.Info("请求参数",
 		zap.Any("request", req),
 		zap.String("request_id", ctx.GetString("request_id")))
 
 	// 3. 检查订单是否已存在
 	order, err := c.orderService.GetOrderByOutTradeNum(ctx, strconv.FormatInt(req.UserOrderID, 10))
 	if err != nil && err != gorm.ErrRecordNotFound {
-		logger.Log.Error("查询订单失败",
+		log.Log.Error("查询订单失败",
 			zap.Error(err),
 			zap.String("order_id", strconv.FormatInt(req.UserOrderID, 10)))
 		utils.Error(ctx, http.StatusInternalServerError, "查询订单失败1")
@@ -215,7 +216,7 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 	// userQuotePaymentInt := int(userQuotePayment)
 
 	// 5. 记录订单信息到日志文件
-	logger.Log.Info("收到新订单请求",
+	log.Log.Info("收到新订单请求",
 		zap.String("platform", "mf178"),
 		zap.Int64("order_id", req.UserOrderID),
 		zap.String("mobile", req.Target),
@@ -236,21 +237,21 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 	// 6. 转换产品编码
 	productID, err := strconv.ParseInt(req.OuterGoodsCode, 10, 64)
 	if err != nil {
-		logger.Log.Error("产品编码转换失败",
+		log.Log.Error("产品编码转换失败",
 			zap.Error(err),
 			zap.String("original_code", req.OuterGoodsCode),
 			zap.String("request_id", ctx.GetString("request_id")))
 		utils.Error(ctx, http.StatusBadRequest, "无效的产品编码")
 		return
 	}
-	logger.Log.Info("产品编码转换成功",
+	log.Log.Info("产品编码转换成功",
 		zap.Int64("product_id", productID),
 		zap.String("request_id", ctx.GetString("request_id")))
 
 	// 7. 验证产品是否存在
 	product, err := c.verifyProductExists(productID)
 	if err != nil {
-		logger.Log.Error("产品验证失败",
+		log.Log.Error("产品验证失败",
 			zap.Error(err),
 			zap.Int64("product_id", productID),
 			zap.String("request_id", ctx.GetString("request_id")))
@@ -263,8 +264,8 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 		return
 	}
 	// 移除裸输出，避免重复日志
-	
-	logger.Log.Info("产品验证通过",
+
+	log.Log.Info("产品验证通过",
 		zap.Int64("product_id", productID),
 		zap.String("request_id", ctx.GetString("request_id")))
 
@@ -278,7 +279,7 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 		isp = 3
 	}
 	// 移除裸输出，避免重复日志
-	
+
 	order = &model.Order{
 		Mobile:            req.Target,
 		ProductID:         productID,
@@ -301,12 +302,12 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 		PlatformCode:      platform.Code,
 		PlatformName:      platform.Name,
 	}
-	logger.Log.Info("准备创建订单",
+	log.Log.Info("准备创建订单",
 		zap.Any("order", order),
 		zap.String("request_id", ctx.GetString("request_id")))
 
 	if err := c.orderService.CreateOrder(ctx, order); err != nil {
-		logger.Log.Error("创建订单失败",
+		log.Log.Error("创建订单失败",
 			zap.Error(err),
 			zap.String("request_id", ctx.GetString("request_id")))
 		response := gin.H{
@@ -317,23 +318,23 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, response)
 		return
 	}
-	logger.Log.Info("订单创建成功",
+	log.Log.Info("订单创建成功",
 		zap.Any("order", order),
 		zap.String("request_id", ctx.GetString("request_id")))
 
 	// 9. 创建充值任务
-	logger.Log.Info("【准备创建充值任务】",
+	log.Log.Info("【准备创建充值任务】",
 		zap.Int64("order_id", order.ID),
 		zap.String("order_number", order.OrderNumber))
 
 	if err := c.rechargeService.CreateRechargeTask(ctx, order.ID); err != nil {
-		logger.Log.Error("【创建充值任务失败】",
+		log.Log.Error("【创建充值任务失败】",
 			zap.Int64("order_id", order.ID),
 			zap.String("order_number", order.OrderNumber),
 			zap.Error(err))
 		// 这里可以选择是否返回错误，因为订单已经创建成功
 	} else {
-		logger.Log.Info("【创建充值任务成功】",
+		log.Log.Info("【创建充值任务成功】",
 			zap.Int64("order_id", order.ID),
 			zap.String("order_number", order.OrderNumber))
 	}
@@ -348,7 +349,7 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 			"orderNo":    order.OrderNumber,
 		},
 	}
-	logger.Log.Info("返回响应",
+	log.Log.Info("返回响应",
 		zap.Any("response", response),
 		zap.String("request_id", ctx.GetString("request_id")))
 	ctx.JSON(http.StatusOK, response)
@@ -356,21 +357,21 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 
 // QueryOrder 查询订单状态
 func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
-	if logger.Log == nil {
+	if log.Log == nil {
 		// 如果 logger 未初始化，使用 fmt 打印
-		logger.WithContextCategory(ctx.Request.Context(), "mf178_order").Info("开始处理查询订单请求", logger.StringV2("request_id", ctx.GetString("request_id")))
+		log.WithContextCategory(ctx.Request.Context(), "mf178_order").Info("开始处理查询订单请求", log.StringV2("request_id", ctx.GetString("request_id")))
 	} else {
-		logger.Log.Info("开始处理查询订单请求",
+		log.Log.Info("开始处理查询订单请求",
 			zap.String("request_id", ctx.GetString("request_id")))
 	}
 
 	// 读取原始请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		if logger.Log == nil {
-			logger.WithContextCategory(ctx.Request.Context(), "mf178_order").Error("读取请求体失败", logger.ErrorV2(err), logger.StringV2("request_id", ctx.GetString("request_id")))
+		if log.Log == nil {
+			log.WithContextCategory(ctx.Request.Context(), "mf178_order").Error("读取请求体失败", log.ErrorV2(err), log.StringV2("request_id", ctx.GetString("request_id")))
 		} else {
-			logger.Log.Error("读取请求体失败",
+			log.Log.Error("读取请求体失败",
 				zap.Error(err),
 				zap.String("request_id", ctx.GetString("request_id")))
 		}
@@ -384,7 +385,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 	}
 	// 恢复请求体
 	ctx.Request.Body = io.NopCloser(bytes.NewBuffer(body))
-	logger.Log.Info("原始请求体",
+	log.Log.Info("原始请求体",
 		zap.String("body", string(body)),
 		zap.String("request_id", ctx.GetString("request_id")))
 
@@ -409,7 +410,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 		return
 	}
 
-	logger.Log.Info("开始查询订单",
+	log.Log.Info("开始查询订单",
 		zap.Int64("order_id", req.UserOrderID),
 		zap.String("request_id", ctx.GetString("request_id")))
 
@@ -418,7 +419,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 	if err != nil {
 		// 判断是否为记录不存在错误
 		if err.Error() == "record not found" {
-			logger.Log.Info("订单不存在",
+			log.Log.Info("订单不存在",
 				zap.Error(err),
 				zap.Int64("order_id", req.UserOrderID),
 				zap.String("request_id", ctx.GetString("request_id")))
@@ -435,7 +436,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 			return
 		}
 		// 其他数据库错误
-		logger.Log.Error("数据库查询订单失败",
+		log.Log.Error("数据库查询订单失败",
 			zap.Error(err),
 			zap.Int64("order_id", req.UserOrderID),
 			zap.String("request_id", ctx.GetString("request_id")))
@@ -449,7 +450,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 	}
 
 	if order == nil {
-		logger.Log.Info("订单查询结果为空",
+		log.Log.Info("订单查询结果为空",
 			zap.Int64("order_id", req.UserOrderID),
 			zap.String("request_id", ctx.GetString("request_id")))
 		response := gin.H{
@@ -467,7 +468,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 
 	// 根据订单状态获取状态码和描述
 	status, rspInfo := getOrderStatusAndInfo(order)
-	logger.Log.Info("获取订单状态",
+	log.Log.Info("获取订单状态",
 		zap.Int("status_code", status),
 		zap.String("status_info", rspInfo),
 		zap.Int64("order_id", req.UserOrderID),
@@ -484,7 +485,7 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 		},
 	}
 
-	logger.Log.Info("查询订单成功",
+	log.Log.Info("查询订单成功",
 		zap.Any("response", response),
 		zap.Int64("order_id", req.UserOrderID),
 		zap.String("request_id", ctx.GetString("request_id")))

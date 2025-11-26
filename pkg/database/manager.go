@@ -1,24 +1,24 @@
 package database
 
 import (
-	"context"
-	"fmt"
-	"time"
+    "context"
+    "fmt"
+    "time"
 
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-	"gorm.io/gorm/schema"
-	"gorm.io/plugin/dbresolver"
+    "go.uber.org/zap"
+    "gorm.io/driver/mysql"
+    "gorm.io/gorm"
+    "gorm.io/gorm/logger"
+    "gorm.io/gorm/schema"
+    "gorm.io/plugin/dbresolver"
 
-	loggerV2 "recharge-go/pkg/logger"
+    log "recharge-go/pkg/log"
 )
 
 // DatabaseManager 数据库管理器
 type DatabaseManager struct {
-	db     *gorm.DB
-	config *DatabaseConfig
-	logger *loggerV2.LoggerV2
+    db     *gorm.DB
+    config *DatabaseConfig
 }
 
 // DatabaseConfig 数据库配置
@@ -63,11 +63,10 @@ type ConnectionStats struct {
 }
 
 // NewDatabaseManager 创建数据库管理器
-func NewDatabaseManager(config *DatabaseConfig, logger *loggerV2.LoggerV2) (*DatabaseManager, error) {
-	manager := &DatabaseManager{
-		config: config,
-		logger: logger,
-	}
+func NewDatabaseManager(config *DatabaseConfig) (*DatabaseManager, error) {
+    manager := &DatabaseManager{
+        config: config,
+    }
 
 	if err := manager.connect(); err != nil {
 		return nil, err
@@ -103,9 +102,9 @@ func (dm *DatabaseManager) connect() error {
 
 	// 配置读写分离
 	if len(dm.config.ReadReplicas) > 0 {
-		if err := dm.configureReadReplicas(db); err != nil {
-			dm.logger.Warn("Failed to configure read replicas", loggerV2.ErrorV2(err))
-		}
+        if err := dm.configureReadReplicas(db); err != nil {
+            log.L().Warn("Failed to configure read replicas", zap.Error(err))
+        }
 	}
 
 	dm.db = db
@@ -135,11 +134,10 @@ func (dm *DatabaseManager) createGormLogger() logger.Interface {
 		logLevel = logger.Info
 	}
 
-	return &CustomGormLogger{
-		logger:        dm.logger,
-		logLevel:      logLevel,
-		slowThreshold: dm.config.SlowThreshold,
-	}
+    return &CustomGormLogger{
+        logLevel:      logLevel,
+        slowThreshold: dm.config.SlowThreshold,
+    }
 }
 
 // configureConnectionPool 配置连接池
@@ -237,9 +235,8 @@ type CustomNamingStrategy struct {
 
 // CustomGormLogger 自定义GORM日志器
 type CustomGormLogger struct {
-	logger        *loggerV2.LoggerV2
-	logLevel      logger.LogLevel
-	slowThreshold time.Duration
+    logLevel      logger.LogLevel
+    slowThreshold time.Duration
 }
 
 // LogMode 设置日志模式
@@ -251,23 +248,23 @@ func (l *CustomGormLogger) LogMode(level logger.LogLevel) logger.Interface {
 
 // Info 记录信息日志
 func (l *CustomGormLogger) Info(ctx context.Context, msg string, data ...interface{}) {
-	if l.logLevel >= logger.Info {
-		l.logger.WithContext(ctx).Info(fmt.Sprintf(msg, data...))
-	}
+    if l.logLevel >= logger.Info {
+        log.WithContext(ctx).Info(fmt.Sprintf(msg, data...))
+    }
 }
 
 // Warn 记录警告日志
 func (l *CustomGormLogger) Warn(ctx context.Context, msg string, data ...interface{}) {
-	if l.logLevel >= logger.Warn {
-		l.logger.WithContext(ctx).Warn(fmt.Sprintf(msg, data...))
-	}
+    if l.logLevel >= logger.Warn {
+        log.WithContext(ctx).Warn(fmt.Sprintf(msg, data...))
+    }
 }
 
 // Error 记录错误日志
 func (l *CustomGormLogger) Error(ctx context.Context, msg string, data ...interface{}) {
-	if l.logLevel >= logger.Error {
-		l.logger.WithContext(ctx).Error(fmt.Sprintf(msg, data...))
-	}
+    if l.logLevel >= logger.Error {
+        log.WithContext(ctx).Error(fmt.Sprintf(msg, data...))
+    }
 }
 
 // Trace 记录SQL跟踪日志
@@ -279,18 +276,18 @@ func (l *CustomGormLogger) Trace(ctx context.Context, begin time.Time, fc func()
 	elapsed := time.Since(begin)
 	sql, rows := fc()
 
-	fields := []loggerV2.Field{
-		loggerV2.String("sql", sql),
-		loggerV2.Duration("elapsed", elapsed),
-		loggerV2.Int64("rows", rows),
-	}
+    fields := []zap.Field{
+        zap.String("sql", sql),
+        zap.Duration("elapsed", elapsed),
+        zap.Int64("rows", rows),
+    }
 
 	if err != nil {
-		fields = append(fields, loggerV2.ErrorV2(err))
-		l.logger.WithContext(ctx).Error("SQL execution failed", fields...)
-	} else if elapsed > l.slowThreshold && l.slowThreshold != 0 {
-		l.logger.WithContext(ctx).Warn("Slow SQL query detected", fields...)
-	} else if l.logLevel >= logger.Info {
-		l.logger.WithContext(ctx).Debug("SQL executed", fields...)
-	}
+        fields = append(fields, zap.Error(err))
+        log.WithContext(ctx).Error("SQL execution failed", fields...)
+    } else if elapsed > l.slowThreshold && l.slowThreshold != 0 {
+        log.WithContext(ctx).Warn("Slow SQL query detected", fields...)
+    } else if l.logLevel >= logger.Info {
+        log.WithContext(ctx).Debug("SQL executed", fields...)
+    }
 }

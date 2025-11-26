@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -71,10 +71,10 @@ func (c *ExternalRefundController) ProcessRefund(ctx *gin.Context) {
 	logData.AppKey = req.AppID
 	logData.OrderID = req.OutTradeNum
 
-	logger.Info("收到外部退款请求",
-		"app_id", req.AppID,
-		"out_trade_num", req.OutTradeNum,
-		"reason", req.Reason)
+	log.Info(ctx, "external_refund_request",
+		log.String("app_id", req.AppID),
+		log.String("out_trade_num", req.OutTradeNum),
+		log.String("reason", req.Reason))
 
 	// 根据外部交易号获取订单
 	order, err := c.orderService.GetOrderByOutTradeNum(ctx, req.OutTradeNum)
@@ -111,11 +111,11 @@ func (c *ExternalRefundController) ProcessRefund(ctx *gin.Context) {
 		},
 	}
 
-	logger.Info("外部退款处理成功",
-		"order_id", order.ID,
-		"order_number", order.OrderNumber,
-		"out_trade_num", order.OutTradeNum,
-		"amount", order.Price)
+	log.Info(ctx, "external_refund_success",
+		log.Int64("order_id", order.ID),
+		log.String("order_number", order.OrderNumber),
+		log.String("out_trade_num", order.OutTradeNum),
+		log.Float64("amount", order.Price))
 
 	ctx.JSON(http.StatusOK, response)
 }
@@ -129,10 +129,10 @@ func (c *ExternalRefundController) respondError(ctx *gin.Context, statusCode int
 		Message: message,
 	}
 
-	logger.Error("外部退款请求失败",
-		"status_code", statusCode,
-		"message", message,
-		"error", logData.ErrorMsg)
+	log.Error(ctx, "external_refund_failed",
+		log.Int("status_code", statusCode),
+		log.String("message", message),
+		log.String("error", logData.ErrorMsg))
 
 	ctx.JSON(statusCode, response)
 }

@@ -10,15 +10,15 @@ import (
 )
 
 type Order struct {
-	ID           int64     `gorm:"column:id"`
-	CustomerID   int64     `gorm:"column:customer_id"`
-	OrderNumber  string    `gorm:"column:order_number"`
-	ProductID    int64     `gorm:"column:product_id"`
-	Denom        string    `gorm:"column:denom"`
-	TotalPrice   float64   `gorm:"column:total_price"`
-	Price        float64   `gorm:"column:price"`
-	Status       int       `gorm:"column:status"`
-	CreateTime   time.Time `gorm:"column:create_time"`
+	ID          int64     `gorm:"column:id"`
+	CustomerID  int64     `gorm:"column:customer_id"`
+	OrderNumber string    `gorm:"column:order_number"`
+	ProductID   int64     `gorm:"column:product_id"`
+	Denom       string    `gorm:"column:denom"`
+	TotalPrice  float64   `gorm:"column:total_price"`
+	Price       float64   `gorm:"column:price"`
+	Status      int       `gorm:"column:status"`
+	CreateTime  time.Time `gorm:"column:create_time"`
 }
 
 func main() {

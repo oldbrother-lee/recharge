@@ -10,7 +10,8 @@ import (
 	"recharge-go/internal/service"
 	"recharge-go/internal/service/platform"
 	"recharge-go/pkg/database"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/metrics"
 	pkgMiddleware "recharge-go/pkg/middleware"
 
@@ -82,8 +83,8 @@ func SetupRouterV2(
 	r.Use(securityMiddleware.Security())
 	r.Use(metricsManager.HTTPMetricsMiddleware())
 	r.Use(securityMiddleware.RateLimit())
-	r.Use(logger.GinLogger())
-	r.Use(logger.GinRecovery())
+	r.Use(log.GinLogger())
+	r.Use(log.GinRecovery())
 
 	// API routes
 	v1 := r.Group("/api/v1")

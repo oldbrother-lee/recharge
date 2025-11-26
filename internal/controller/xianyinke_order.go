@@ -9,7 +9,8 @@ import (
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
 	"recharge-go/pkg/database"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -41,7 +42,7 @@ func (c *XianyinkeOrderController) CreateOrder(ctx *gin.Context) {
 	accountRepo := repository.NewPlatformRepository(database.DB)
 	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
-		logger.Log.Error("[xianyinke] 查询平台账号失败", zap.Error(err), zap.String("userid", userid))
+		log.Log.Error("[xianyinke] 查询平台账号失败", zap.Error(err), zap.String("userid", userid))
 		ctx.JSON(http.StatusOK, gin.H{"result": "fail"})
 		return
 	}
@@ -54,7 +55,7 @@ func (c *XianyinkeOrderController) CreateOrder(ctx *gin.Context) {
 	// 2) 解析请求体
 	var req model.XianyinkeOrderRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		logger.Error("[xianyinke] 解析请求参数失败: %v", err)
+		log.Error(ctx, "[xianyinke] 解析请求参数失败", log.Err(err))
 		ctx.JSON(http.StatusOK, gin.H{"result": "fail"})
 		return
 	}
@@ -74,14 +75,14 @@ func (c *XianyinkeOrderController) CreateOrder(ctx *gin.Context) {
 	outTradeNum := strconv.FormatInt(req.ID, 10)
 	existOrder, err := c.orderService.GetOrderByOutTradeNum(ctx, outTradeNum)
 	if err != nil && err != gorm.ErrRecordNotFound {
-		logger.Log.Error("[xianyinke] 查询订单失败", zap.Error(err), zap.String("out_trade_num", outTradeNum))
+		log.Log.Error("[xianyinke] 查询订单失败", zap.Error(err), zap.String("out_trade_num", outTradeNum))
 		ctx.JSON(http.StatusOK, gin.H{"result": "fail"})
 		return
 	}
 	if existOrder != nil {
-        ctx.JSON(http.StatusOK, gin.H{"result": "fail", "msg": "订单已存在"})
-        return
-    }
+		ctx.JSON(http.StatusOK, gin.H{"result": "fail", "msg": "订单已存在"})
+		return
+	}
 
 	// 5) 从 chan_pro_code 解析内部商品ID
 	productID, err := strconv.ParseInt(req.ChanProCode, 10, 64)
@@ -137,14 +138,14 @@ func (c *XianyinkeOrderController) CreateOrder(ctx *gin.Context) {
 	}
 
 	if err := c.orderService.CreateOrder(ctx, order); err != nil {
-		logger.Error(fmt.Sprintf("[xianyinke] 创建订单失败: %v, 订单: %v", err, order))
+		logger.Log.Error("[xianyinke] 创建订单失败", zap.Error(err), zap.Any("order", order))
 		ctx.JSON(http.StatusOK, gin.H{"result": "创建订单失败"})
 		return
 	}
 
 	// 8) 入充值队列
 	if err := c.rechargeService.CreateRechargeTask(ctx, order.ID); err != nil {
-		logger.Error("[xianyinke] 创建充值任务失败: %v", err)
+		logger.Log.Error("[xianyinke] 创建充值任务失败", zap.Error(err))
 		ctx.JSON(http.StatusOK, gin.H{"result": "fail"})
 		return
 	}

@@ -2,10 +2,10 @@ package handler
 
 import (
 	"net/http"
-	"recharge-go/internal/model/notification"
-	notificationService "recharge-go/internal/service/notification"
-	"recharge-go/internal/utils"
-	"recharge-go/pkg/logger"
+    "recharge-go/internal/model/notification"
+    notificationService "recharge-go/internal/service/notification"
+    "recharge-go/internal/utils"
+    logger "recharge-go/pkg/log"
 
 	"strconv"
 
@@ -54,8 +54,8 @@ func (h *NotificationHandler) CreateNotification(c *gin.Context) {
 		Status:           1, // 待处理
 	}
 
-	if err := h.notificationService.CreateNotification(c.Request.Context(), record); err != nil {
-		logger.Error("create notification failed", "error", err)
+    if err := h.notificationService.CreateNotification(c.Request.Context(), record); err != nil {
+        logger.ErrorLogV2("create_notification_failed", logger.ErrorV2(err))
 		utils.Error(c, http.StatusInternalServerError, "create notification failed")
 		return
 	}
@@ -72,9 +72,9 @@ func (h *NotificationHandler) GetNotificationStatus(c *gin.Context) {
 		return
 	}
 
-	record, err := h.notificationService.GetNotificationStatus(c.Request.Context(), id)
-	if err != nil {
-		logger.Error("get notification status failed", "error", err)
+    record, err := h.notificationService.GetNotificationStatus(c.Request.Context(), id)
+    if err != nil {
+        logger.ErrorLogV2("get_notification_status_failed", logger.ErrorV2(err))
 		utils.Error(c, http.StatusInternalServerError, "get notification status failed")
 		return
 	}
@@ -112,9 +112,9 @@ func (h *NotificationHandler) ListNotifications(c *gin.Context) {
 		params["status"] = req.Status
 	}
 
-	records, total, err := h.notificationService.ListNotifications(c.Request.Context(), params, req.Page, req.PageSize)
-	if err != nil {
-		logger.Error("list notifications failed", "error", err)
+    records, total, err := h.notificationService.ListNotifications(c.Request.Context(), params, req.Page, req.PageSize)
+    if err != nil {
+        logger.ErrorLogV2("list_notifications_failed", logger.ErrorV2(err))
 		utils.Error(c, http.StatusInternalServerError, "list notifications failed")
 		return
 	}
@@ -136,8 +136,8 @@ func (h *NotificationHandler) RetryFailedNotification(c *gin.Context) {
 		return
 	}
 
-	if err := h.notificationService.RetryFailedNotification(c.Request.Context(), id); err != nil {
-		logger.Error("retry failed notification failed", "error", err)
+    if err := h.notificationService.RetryFailedNotification(c.Request.Context(), id); err != nil {
+        logger.ErrorLogV2("retry_failed_notification_failed", logger.ErrorV2(err))
 		utils.Error(c, http.StatusInternalServerError, "retry failed notification failed")
 		return
 	}

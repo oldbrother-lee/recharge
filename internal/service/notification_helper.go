@@ -9,8 +9,8 @@ import (
 
 	"recharge-go/internal/model"
 	notificationModel "recharge-go/internal/model/notification"
-	notificationRepo "recharge-go/internal/repository/notification"
-	"recharge-go/pkg/logger"
+    notificationRepo "recharge-go/internal/repository/notification"
+    logger "recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
 
 	"gorm.io/gorm"

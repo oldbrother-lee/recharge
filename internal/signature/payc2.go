@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"recharge-go/internal/model"
-	"recharge-go/pkg/logger"
+	logger "recharge-go/pkg/log"
 )
 
 // Payc2Handler payc2签名处理器
@@ -60,7 +60,11 @@ func (h *Payc2Handler) GenerateSignature(ctx context.Context, params map[string]
 	hash.Write([]byte(signStr))
 	sign := hex.EncodeToString(hash.Sum(nil))
 
-	logger.Info("payc2签名生成", "params", params, "signStr", signStr, "sign", sign)
+	logger.InfoV2("payc2_generate_signature",
+		logger.AnyV2("params", params),
+		logger.StringV2("signStr", signStr),
+		logger.StringV2("sign", sign),
+	)
 	return sign, nil
 }
 
@@ -74,11 +78,11 @@ func (h *Payc2Handler) BuildRequestParams(ctx context.Context, order *model.Orde
 
 	// 构建基础参数
 	params := map[string]interface{}{
-		"merch":         h.config.AppID,              // 商户号
-		"amount":        int(order.Denom),            // 订单金额（整数）
-		"notifyUrl":     api.CallbackURL,             // 回调通知地址
-		"timeoutSecond": 360,                         // 超时时间（30分钟）
-		"phone":         order.Mobile,                // 手机号
+		"merch":         h.config.AppID,             // 商户号
+		"amount":        int(order.Denom),           // 订单金额（整数）
+		"notifyUrl":     api.CallbackURL,            // 回调通知地址
+		"timeoutSecond": 360,                        // 超时时间（30分钟）
+		"phone":         order.Mobile,               // 手机号
 		"telco":         h.getTelcoFromOrder(order), // 运营商
 	}
 
@@ -123,7 +127,7 @@ func (h *Payc2Handler) VerifyCallback(params map[string]interface{}) bool {
 	delete(params, "sign")
 	expectedSign, err := h.GenerateSignature(context.Background(), params)
 	if err != nil {
-		logger.Error("验证回调签名失败", "error", err)
+		logger.ErrorLogV2("verify_callback_signature_failed", logger.ErrorV2(err))
 		return false
 	}
 

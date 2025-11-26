@@ -4,7 +4,8 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -27,14 +28,14 @@ func NewPlatformAPIController(service service.PlatformAPIService, platformServic
 
 // CreateAPI 创建平台接口
 func (c *PlatformAPIController) CreateAPI(ctx *gin.Context) {
-	logger.Log.Info("开始创建平台接口",
+	log.Log.Info("开始创建平台接口",
 		zap.String("method", "CreateAPI"),
 		zap.String("path", ctx.Request.URL.Path),
 	)
 
 	var api model.PlatformAPI
 	if err := ctx.ShouldBindJSON(&api); err != nil {
-		logger.Log.Error("参数绑定失败", zap.Error(err))
+		log.Log.Error("参数绑定失败", zap.Error(err))
 		utils.Error(ctx, 400, "参数格式错误")
 		return
 	}
@@ -57,7 +58,7 @@ func (c *PlatformAPIController) CreateAPI(ctx *gin.Context) {
 	// 检查平台是否存在
 	platform, err := c.platformService.GetPlatform(api.PlatformID)
 	if err != nil {
-		logger.Log.Error("获取平台信息失败", zap.Error(err))
+		log.Log.Error("获取平台信息失败", zap.Error(err))
 		utils.Error(ctx, 500, "获取平台信息失败")
 		return
 	}
@@ -75,7 +76,7 @@ func (c *PlatformAPIController) CreateAPI(ctx *gin.Context) {
 	api.RetryTimes = 3
 
 	if err := c.service.CreateAPI(ctx, &api); err != nil {
-		logger.Log.Error("创建平台接口失败", zap.Error(err))
+		log.Log.Error("创建平台接口失败", zap.Error(err))
 		utils.Error(ctx, 500, err.Error())
 		return
 	}

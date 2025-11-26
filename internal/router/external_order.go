@@ -8,8 +8,8 @@ import (
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
 	"recharge-go/internal/signature"
-	"recharge-go/pkg/lock"
-	"recharge-go/pkg/logger"
+    "recharge-go/pkg/lock"
+    "recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
 	"recharge-go/pkg/redis"
 
@@ -58,7 +58,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 
 	// 创建订单异常服务
 	orderExceptionRepo := repository.NewOrderExceptionRepository(db)
-	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, logger.Log)
+    orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
 
 	// 创建统一订单服务（暂时不传入retryService）
 	unifiedOrderService := service.NewUnifiedOrderService(
@@ -69,7 +69,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		notificationRepo,
 		queueInstance,
 		db,
-		logger.Log,
+        log.Log,
 		systemConfigService,
 		productRepo,
 		nil, // retryService 稍后设置

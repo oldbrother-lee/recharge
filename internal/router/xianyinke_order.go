@@ -7,8 +7,8 @@ import (
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
 	"recharge-go/pkg/database"
-	"recharge-go/pkg/lock"
-	"recharge-go/pkg/logger"
+    "recharge-go/pkg/lock"
+    "recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
 	"recharge-go/pkg/redis"
 
@@ -88,7 +88,7 @@ func RegisterXianyinkeOrderRoutes(r *gin.RouterGroup) {
 
 	// 创建订单异常服务
 	orderExceptionRepo := repository.NewOrderExceptionRepository(database.DB)
-	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, logger.Log)
+    orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
 
 	// 创建统一订单处理服务（暂时不传入retryService）
 	unifiedOrderService := service.NewUnifiedOrderService(
@@ -99,7 +99,7 @@ func RegisterXianyinkeOrderRoutes(r *gin.RouterGroup) {
 		nRepo,
 		queueInstance,
 		database.DB,
-		logger.Log,
+        log.Log,
 		systemConfigService,
 		productRepo,
 		nil, // retryService 稍后设置

@@ -6,7 +6,7 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/pkg/lock"
-	"recharge-go/pkg/logger"
+	logger "recharge-go/pkg/log"
 
 	"gorm.io/gorm"
 )
@@ -23,14 +23,14 @@ const (
 
 // RefundRequest 退款请求
 type RefundRequest struct {
-	UserID    int64       `json:"user_id"`    // 用户ID
-	OrderID   int64       `json:"order_id"`   // 订单ID
-	Amount    float64     `json:"amount"`     // 退款金额
-	Remark    string      `json:"remark"`     // 退款备注
-	Operator  string      `json:"operator"`   // 操作员
-	Type      RefundType  `json:"type"`       // 退款类型
-	AccountID *int64      `json:"account_id"` // 平台账号ID（平台退款时必填）
-	Tx        *gorm.DB    `json:"-"`          // 事务（可选）
+	UserID    int64      `json:"user_id"`    // 用户ID
+	OrderID   int64      `json:"order_id"`   // 订单ID
+	Amount    float64    `json:"amount"`     // 退款金额
+	Remark    string     `json:"remark"`     // 退款备注
+	Operator  string     `json:"operator"`   // 操作员
+	Type      RefundType `json:"type"`       // 退款类型
+	AccountID *int64     `json:"account_id"` // 平台账号ID（平台退款时必填）
+	Tx        *gorm.DB   `json:"-"`          // 事务（可选）
 }
 
 // RefundResponse 退款响应
@@ -76,12 +76,12 @@ func NewUnifiedRefundService(
 
 // ProcessRefund 处理退款（统一入口）
 func (s *UnifiedRefundService) ProcessRefund(ctx context.Context, req *RefundRequest) (*RefundResponse, error) {
-	logger.Info("开始处理统一退款请求",
-		"user_id", req.UserID,
-		"order_id", req.OrderID,
-		"amount", req.Amount,
-		"type", req.Type,
-		"account_id", req.AccountID)
+	logger.Log.Info("开始处理统一退款请求",
+		logger.Int64V2("user_id", req.UserID),
+		logger.Int64V2("order_id", req.OrderID),
+		logger.Float64V2("amount", req.Amount),
+		logger.IntV2("type", int(req.Type)),
+		logger.AnyV2("account_id", req.AccountID))
 
 	// 参数验证
 	if err := s.validateRefundRequest(req); err != nil {
@@ -125,7 +125,10 @@ func (s *UnifiedRefundService) validateRefundRequest(req *RefundRequest) error {
 
 // processUserRefund 处理用户余额退款
 func (s *UnifiedRefundService) processUserRefund(ctx context.Context, req *RefundRequest) (*RefundResponse, error) {
-	logger.Info("处理用户余额退款", "user_id", req.UserID, "order_id", req.OrderID, "amount", req.Amount)
+	logger.Log.Info("处理用户余额退款",
+		logger.Int64V2("user_id", req.UserID),
+		logger.Int64V2("order_id", req.OrderID),
+		logger.Float64V2("amount", req.Amount))
 
 	// 检查是否已退款（幂等性）
 	alreadyRefund, err := s.checkAlreadyRefund(ctx, req.UserID, req.OrderID, model.BalanceStyleRefund)
@@ -136,7 +139,9 @@ func (s *UnifiedRefundService) processUserRefund(ctx context.Context, req *Refun
 		}, err
 	}
 	if alreadyRefund {
-		logger.Info("订单已退款，跳过重复操作", "user_id", req.UserID, "order_id", req.OrderID)
+		logger.Log.Info("订单已退款，跳过重复操作",
+			logger.Int64V2("user_id", req.UserID),
+			logger.Int64V2("order_id", req.OrderID))
 		return &RefundResponse{
 			Success:       true,
 			Message:       "订单已退款",
@@ -155,7 +160,10 @@ func (s *UnifiedRefundService) processUserRefund(ctx context.Context, req *Refun
 	}
 
 	if refundErr != nil {
-		logger.Error("用户余额退款失败", "user_id", req.UserID, "order_id", req.OrderID, "error", refundErr)
+		logger.Log.Error("用户余额退款失败",
+			logger.Int64V2("user_id", req.UserID),
+			logger.Int64V2("order_id", req.OrderID),
+			logger.ErrorV2(refundErr))
 		return &RefundResponse{
 			Success: false,
 			Message: "退款失败: " + refundErr.Error(),
@@ -168,7 +176,9 @@ func (s *UnifiedRefundService) processUserRefund(ctx context.Context, req *Refun
 		// 使用传入的事务查询最新余额
 		var user model.User
 		if err := req.Tx.Where("id = ?", req.UserID).First(&user).Error; err != nil {
-			logger.Error("在事务内获取用户信息失败", "user_id", req.UserID, "error", err)
+			logger.Log.Error("在事务内获取用户信息失败",
+				logger.Int64V2("user_id", req.UserID),
+				logger.ErrorV2(err))
 			// 退款成功但获取余额失败，不影响退款结果
 		} else {
 			balanceAfter = user.Balance
@@ -177,14 +187,20 @@ func (s *UnifiedRefundService) processUserRefund(ctx context.Context, req *Refun
 		// 没有事务时使用普通查询
 		user, err := s.userRepo.GetByID(ctx, req.UserID)
 		if err != nil {
-			logger.Error("获取用户信息失败", "user_id", req.UserID, "error", err)
+			logger.Log.Error("获取用户信息失败",
+				logger.Int64V2("user_id", req.UserID),
+				logger.ErrorV2(err))
 			// 退款成功但获取余额失败，不影响退款结果
 		} else {
 			balanceAfter = user.Balance
 		}
 	}
 
-	logger.Info("用户余额退款成功", "user_id", req.UserID, "order_id", req.OrderID, "amount", req.Amount, "balance_after", balanceAfter)
+	logger.Log.Info("用户余额退款成功",
+		logger.Int64V2("user_id", req.UserID),
+		logger.Int64V2("order_id", req.OrderID),
+		logger.Float64V2("amount", req.Amount),
+		logger.Float64V2("balance_after", balanceAfter))
 	return &RefundResponse{
 		Success:      true,
 		Message:      "退款成功",
@@ -195,11 +211,22 @@ func (s *UnifiedRefundService) processUserRefund(ctx context.Context, req *Refun
 
 // processPlatformRefund 处理平台账号退款
 func (s *UnifiedRefundService) processPlatformRefund(ctx context.Context, req *RefundRequest) (*RefundResponse, error) {
-	logger.Info("处理平台账号退款", "user_id", req.UserID, "order_id", req.OrderID, "amount", req.Amount, "account_id", *req.AccountID)
+	if req.AccountID != nil {
+		logger.Log.Info("处理平台账号退款",
+			logger.Int64V2("user_id", req.UserID),
+			logger.Int64V2("order_id", req.OrderID),
+			logger.Float64V2("amount", req.Amount),
+			logger.Int64V2("account_id", *req.AccountID))
+	} else {
+		logger.Log.Info("处理平台账号退款",
+			logger.Int64V2("user_id", req.UserID),
+			logger.Int64V2("order_id", req.OrderID),
+			logger.Float64V2("amount", req.Amount))
+	}
 
 	// 检查必要的服务是否已初始化
 	if s.platformAccountBalanceService == nil {
-		logger.Error("platformAccountBalanceService 未初始化")
+		logger.Log.Error("platformAccountBalanceService 未初始化")
 		return &RefundResponse{
 			Success: false,
 			Message: "平台账户余额服务未初始化",
@@ -215,7 +242,9 @@ func (s *UnifiedRefundService) processPlatformRefund(ctx context.Context, req *R
 		}, err
 	}
 	if alreadyRefund {
-		logger.Info("订单已退款，跳过重复操作", "user_id", req.UserID, "order_id", req.OrderID)
+		logger.Log.Info("订单已退款，跳过重复操作",
+			logger.Int64V2("user_id", req.UserID),
+			logger.Int64V2("order_id", req.OrderID))
 		return &RefundResponse{
 			Success:       true,
 			Message:       "订单已退款",
@@ -229,7 +258,18 @@ func (s *UnifiedRefundService) processPlatformRefund(ctx context.Context, req *R
 	refundErr = s.platformAccountBalanceService.RefundBalance(ctx, req.UserID, req.Amount, req.OrderID, req.Remark)
 
 	if refundErr != nil {
-		logger.Error("平台账号退款失败", "user_id", req.UserID, "order_id", req.OrderID, "account_id", *req.AccountID, "error", refundErr)
+		if req.AccountID != nil {
+			logger.Log.Error("平台账号退款失败",
+				logger.Int64V2("user_id", req.UserID),
+				logger.Int64V2("order_id", req.OrderID),
+				logger.Int64V2("account_id", *req.AccountID),
+				logger.ErrorV2(refundErr))
+		} else {
+			logger.Log.Error("平台账号退款失败",
+				logger.Int64V2("user_id", req.UserID),
+				logger.Int64V2("order_id", req.OrderID),
+				logger.ErrorV2(refundErr))
+		}
 		return &RefundResponse{
 			Success: false,
 			Message: "退款失败: " + refundErr.Error(),
@@ -242,7 +282,9 @@ func (s *UnifiedRefundService) processPlatformRefund(ctx context.Context, req *R
 		// 使用传入的事务查询最新余额
 		var user model.User
 		if err := req.Tx.Where("id = ?", req.UserID).First(&user).Error; err != nil {
-			logger.Error("在事务内获取用户信息失败", "user_id", req.UserID, "error", err)
+			logger.Log.Error("在事务内获取用户信息失败",
+				logger.Int64V2("user_id", req.UserID),
+				logger.ErrorV2(err))
 			// 退款成功但获取余额失败，不影响退款结果
 		} else {
 			balanceAfter = user.Balance
@@ -251,14 +293,29 @@ func (s *UnifiedRefundService) processPlatformRefund(ctx context.Context, req *R
 		// 没有事务时使用普通查询
 		user, err := s.userRepo.GetByID(ctx, req.UserID)
 		if err != nil {
-			logger.Error("获取用户信息失败", "user_id", req.UserID, "error", err)
+			logger.Log.Error("获取用户信息失败",
+				logger.Int64V2("user_id", req.UserID),
+				logger.ErrorV2(err))
 			// 退款成功但获取余额失败，不影响退款结果
 		} else {
 			balanceAfter = user.Balance
 		}
 	}
 
-	logger.Info("平台账号退款成功", "user_id", req.UserID, "order_id", req.OrderID, "amount", req.Amount, "account_id", *req.AccountID, "balance_after", balanceAfter)
+	if req.AccountID != nil {
+		logger.Log.Info("平台账号退款成功",
+			logger.Int64V2("user_id", req.UserID),
+			logger.Int64V2("order_id", req.OrderID),
+			logger.Float64V2("amount", req.Amount),
+			logger.Int64V2("account_id", *req.AccountID),
+			logger.Float64V2("balance_after", balanceAfter))
+	} else {
+		logger.Log.Info("平台账号退款成功",
+			logger.Int64V2("user_id", req.UserID),
+			logger.Int64V2("order_id", req.OrderID),
+			logger.Float64V2("amount", req.Amount),
+			logger.Float64V2("balance_after", balanceAfter))
+	}
 	return &RefundResponse{
 		Success:      true,
 		Message:      "退款成功",
@@ -274,7 +331,10 @@ func (s *UnifiedRefundService) checkAlreadyRefund(ctx context.Context, userID, o
 		Where("user_id = ? AND order_id = ? AND style = ?", userID, orderID, style).
 		Count(&count).Error
 	if err != nil {
-		logger.Error("检查退款记录失败", "user_id", userID, "order_id", orderID, "error", err)
+		logger.Log.Error("检查退款记录失败",
+			logger.Int64V2("user_id", userID),
+			logger.Int64V2("order_id", orderID),
+			logger.ErrorV2(err))
 		return false, err
 	}
 	return count > 0, nil
@@ -282,19 +342,23 @@ func (s *UnifiedRefundService) checkAlreadyRefund(ctx context.Context, userID, o
 
 // BatchRefund 批量退款
 func (s *UnifiedRefundService) BatchRefund(ctx context.Context, requests []*RefundRequest) ([]*RefundResponse, error) {
-	logger.Info("开始批量退款", "count", len(requests))
-	
+	logger.Log.Info("开始批量退款", logger.IntV2("count", len(requests)))
+
 	responses := make([]*RefundResponse, len(requests))
-	
+
 	for i, req := range requests {
 		resp, err := s.ProcessRefund(ctx, req)
 		if err != nil {
-			logger.Error("批量退款中单个退款失败", "index", i, "user_id", req.UserID, "order_id", req.OrderID, "error", err)
+			logger.Log.Error("批量退款中单个退款失败",
+				logger.IntV2("index", i),
+				logger.Int64V2("user_id", req.UserID),
+				logger.Int64V2("order_id", req.OrderID),
+				logger.ErrorV2(err))
 		}
 		responses[i] = resp
 	}
-	
-	logger.Info("批量退款完成", "count", len(requests))
+
+	logger.Log.Info("批量退款完成", logger.IntV2("count", len(requests)))
 	return responses, nil
 }
 
@@ -307,7 +371,9 @@ func (s *UnifiedRefundService) GetRefundHistory(ctx context.Context, userID int6
 		Offset(offset).
 		Find(&logs).Error
 	if err != nil {
-		logger.Error("获取退款历史失败", "user_id", userID, "error", err)
+		logger.Log.Error("获取退款历史失败",
+			logger.Int64V2("user_id", userID),
+			logger.ErrorV2(err))
 		return nil, err
 	}
 	return logs, nil

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"recharge-go/internal/model"
-	"recharge-go/pkg/logger"
+	logger "recharge-go/pkg/log"
 )
 
 // KekebangHandler 客客帮签名处理器
@@ -50,7 +50,11 @@ func (h *KekebangHandler) GenerateSignature(ctx context.Context, params map[stri
 	hash.Write([]byte(signStr))
 	sign := hex.EncodeToString(hash.Sum(nil))
 
-	logger.Info("客客帮签名生成", "params", params, "signStr", signStr, "sign", sign)
+	logger.InfoV2("kekebang_generate_signature",
+		logger.AnyV2("params", params),
+		logger.StringV2("signStr", signStr),
+		logger.StringV2("sign", sign),
+	)
 	return sign, nil
 }
 

@@ -15,7 +15,7 @@ import (
 	"recharge-go/internal/service/platform"
 	"recharge-go/pkg/database"
 	"recharge-go/pkg/lock"
-	loggerV2 "recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
 	"recharge-go/pkg/metrics"
 	pkgMiddleware "recharge-go/pkg/middleware"
 	"recharge-go/pkg/queue"
@@ -39,11 +39,10 @@ type Container struct {
 	services           *Services
 	controllers        *Controllers
 	logger             *zap.Logger
-	loggerV2           *loggerV2.LoggerV2
 	metricsManager     *metrics.MetricsManager
 	securityMiddleware *pkgMiddleware.SecurityMiddleware
-    databaseManager    *database.DatabaseManager
-    serviceName        string
+	databaseManager    *database.DatabaseManager
+	serviceName        string
 }
 
 // Repositories 仓储集合
@@ -127,7 +126,7 @@ func NewContainerWithConfig(configPath string) (*Container, error) {
 
 // NewContainerWithConfigAndService 使用指定配置文件和服务名创建容器实例
 func NewContainerWithConfigAndService(configPath, serviceName string) (*Container, error) {
-    c := &Container{serviceName: serviceName}
+	c := &Container{serviceName: serviceName}
 
 	// 加载指定的配置文件
 	var err error
@@ -254,7 +253,6 @@ func (c *Container) initRepositories() {
 		SystemConfig:        repository.NewSystemConfigRepository(c.db),
 		ExternalAPIKey:      repository.NewExternalAPIKeyRepository(c.db),
 		OrderException:      repository.NewOrderExceptionRepository(c.db),
-
 	}
 }
 
@@ -360,10 +358,10 @@ func (c *Container) initServices() error {
 		c.repositories.PlatformAPIParam,
 		c.services.PlatformAccountBalance,
 		c.services.Balance,
-		c.services.PhoneQuery, // 添加手机查询服务依赖
+		c.services.PhoneQuery,             // 添加手机查询服务依赖
 		c.repositories.BalanceQueryRecord, // 添加余额查询记录仓库依赖
-		c.services.UnifiedOrder, // 添加统一订单服务
-		c.services.SystemConfig, // 添加系统配置服务
+		c.services.UnifiedOrder,           // 添加统一订单服务
+		c.services.SystemConfig,           // 添加系统配置服务
 		c.repositories.Notification,
 		queueInstance,
 	)
@@ -471,8 +469,6 @@ func (c *Container) initServices() error {
 	// 初始化PlatformPushStatus服务
 	c.services.PlatformPushStatus = platform.NewPushStatusService(c.repositories.PlatformAccount)
 
-
-
 	// 初始化系统配置数据
 	if err := c.services.SystemConfig.InitSystemConfigs(context.Background()); err != nil {
 		c.logger.Error("初始化系统配置失败", zap.Error(err))
@@ -484,12 +480,24 @@ func (c *Container) initServices() error {
 
 // initLogger 初始化日志
 func (c *Container) initLogger(serviceName string) error {
-	// 使用pkg/logger包中的InitLogger函数初始化日志
-	if err := loggerV2.InitLogger(serviceName); err != nil {
-		return fmt.Errorf("初始化logger失败: %w", err)
+	outputFile := "stdout"
+	if serviceName != "" {
+		outputFile = filepath.Join("logs", serviceName+".log")
+	}
+	if err := log.Init(log.Config{
+		Level:      "info",
+		Format:     "json",
+		Output:     outputFile,
+		MaxSize:    100,
+		MaxBackups: 5,
+		MaxAge:     30,
+		Compress:   true,
+		Caller:     true,
+		Stacktrace: true,
+	}); err != nil {
+		return fmt.Errorf("初始化日志失败: %w", err)
 	}
 
-	// 同时保持原有的zap logger初始化
 	logger, err := zap.NewProduction(zap.AddCallerSkip(1))
 	if err != nil {
 		return fmt.Errorf("初始化zap logger失败: %w", err)
@@ -534,9 +542,7 @@ func (c *Container) GetServices() *Services {
 }
 
 // GetLoggerV2 获取优化后的日志器
-func (c *Container) GetLoggerV2() *loggerV2.LoggerV2 {
-	return c.loggerV2
-}
+// 移除旧版 v2 logger 依赖，统一使用 pkg/log
 
 // GetMetricsManager 获取指标管理器
 func (c *Container) GetMetricsManager() *metrics.MetricsManager {
@@ -555,36 +561,26 @@ func (c *Container) GetDatabaseManager() *database.DatabaseManager {
 
 // initOptimizedComponents 初始化优化组件
 func (c *Container) initOptimizedComponents() error {
-    outputFile := "logs/app.log"
-    if c.serviceName != "" {
-        outputFile = filepath.Join("logs", c.serviceName+".log")
-    }
-    loggerConfig := &loggerV2.LoggerConfigV2{
-        Level:      "info",
-        Format:     "json",
-        Output:     outputFile,
-        MaxSize:    100,
-        MaxBackups: 5,
-        MaxAge:     30,
-        Compress:   true,
-        Caller:     true,
-        Stacktrace: true,
-    }
-
-    var err error
-    c.loggerV2, err = loggerV2.NewLoggerV2(loggerConfig)
-    if err != nil {
-        return fmt.Errorf("failed to initialize logger v2: %w", err)
-    }
-
-    // 设置全局 v2 日志器与分类注册表，确保各模块可按类别写入不同文件
-    if err := loggerV2.InitGlobalLoggerV2(*loggerConfig); err != nil {
-        return fmt.Errorf("failed to init global logger v2: %w", err)
-    }
-    loggerV2.InitLoggerRegistry(*loggerConfig)
+	outputFile := "logs/app.log"
+	if c.serviceName != "" {
+		outputFile = filepath.Join("logs", c.serviceName+".log")
+	}
+	if err := log.Init(log.Config{
+		Level:      "info",
+		Format:     "json",
+		Output:     outputFile,
+		MaxSize:    100,
+		MaxBackups: 5,
+		MaxAge:     30,
+		Compress:   true,
+		Caller:     true,
+		Stacktrace: false,
+	}); err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
 
 	// 初始化指标管理器
-	c.metricsManager = metrics.NewMetricsManager(c.loggerV2)
+	c.metricsManager = metrics.NewMetricsManager()
 
 	// 初始化数据库管理器
 	dbConfig := &database.DatabaseConfig{
@@ -601,10 +597,11 @@ func (c *Container) initOptimizedComponents() error {
 		LogLevel:        "info",
 	}
 
-	c.databaseManager, err = database.NewDatabaseManager(dbConfig, c.loggerV2)
+	dm, err := database.NewDatabaseManager(dbConfig)
 	if err != nil {
 		return fmt.Errorf("failed to initialize database manager: %w", err)
 	}
+	c.databaseManager = dm
 
 	// 初始化安全中间件
 	securityConfig := &pkgMiddleware.SecurityConfig{
@@ -630,7 +627,7 @@ func (c *Container) initOptimizedComponents() error {
 		},
 	}
 
-	c.securityMiddleware = pkgMiddleware.NewSecurityMiddleware(securityConfig, c.loggerV2)
+	c.securityMiddleware = pkgMiddleware.NewSecurityMiddleware(securityConfig)
 
 	return nil
 }

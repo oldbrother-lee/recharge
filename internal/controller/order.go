@@ -1,14 +1,17 @@
 package controller
 
 import (
-    "net/http"
-    "recharge-go/internal/model"
-    "recharge-go/internal/service"
-    "recharge-go/internal/utils"
-    "recharge-go/pkg/logger"
-    "strconv"
-    "bytes"
-    "io"
+	"bytes"
+	"io"
+	"net/http"
+	"recharge-go/internal/model"
+	"recharge-go/internal/service"
+	"recharge-go/internal/utils"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
+	"strconv"
+
+	"go.uber.org/zap"
 
 	"github.com/gin-gonic/gin"
 )
@@ -24,35 +27,35 @@ func NewOrderController(orderService service.OrderService) *OrderController {
 
 // CreateOrder 创建订单
 func (c *OrderController) CreateOrder(ctx *gin.Context) {
-    var order model.Order
-    if b, err := ctx.GetRawData(); err == nil {
-        logger.WithContextCategory(ctx, "server").Info("创建订单请求",
-            logger.StringV2("stage", "intake"),
-            logger.StringV2("raw_body", string(b)),
-            logger.StringV2("content_type", ctx.ContentType()),
-            logger.StringV2("user_agent", ctx.Request.UserAgent()),
-        )
-        ctx.Request.Body = io.NopCloser(bytes.NewBuffer(b))
-    }
-    if err := ctx.ShouldBindJSON(&order); err != nil {
-        utils.Error(ctx, http.StatusBadRequest, err.Error())
-        return
-    }
+	var order model.Order
+	if b, err := ctx.GetRawData(); err == nil {
+		log.WithContextCategory(ctx, "server").Info("创建订单请求",
+			log.StringV2("stage", "intake"),
+			log.StringV2("raw_body", string(b)),
+			log.StringV2("content_type", ctx.ContentType()),
+			log.StringV2("user_agent", ctx.Request.UserAgent()),
+		)
+		ctx.Request.Body = io.NopCloser(bytes.NewBuffer(b))
+	}
+	if err := ctx.ShouldBindJSON(&order); err != nil {
+		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if err := c.orderService.CreateOrder(ctx, &order); err != nil {
 		utils.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-    logger.WithContextCategory(ctx, "server").Info("创建订单落库",
-        logger.StringV2("stage", "persist"),
-        logger.Int64V2("order_id", order.ID),
-        logger.StringV2("order_number", order.OrderNumber),
-        logger.Int64V2("customer_id", order.CustomerID),
-        logger.StringV2("mobile", order.Mobile),
-        logger.IntV2("status", int(order.Status)),
-    )
-    utils.Success(ctx, order)
+	log.WithContextCategory(ctx, "server").Info("创建订单落库",
+		log.StringV2("stage", "persist"),
+		log.Int64V2("order_id", order.ID),
+		log.StringV2("order_number", order.OrderNumber),
+		log.Int64V2("customer_id", order.CustomerID),
+		log.StringV2("mobile", order.Mobile),
+		log.IntV2("status", int(order.Status)),
+	)
+	utils.Success(ctx, order)
 }
 
 // GetOrderByID 根据ID获取订单
@@ -346,13 +349,13 @@ func (c *OrderController) ProcessOrderPartial(ctx *gin.Context) {
 
 // GetOrders 获取订单列表（管理员接口）
 func (c *OrderController) GetOrders(ctx *gin.Context) {
-    // 获取当前用户信息
-    userID := ctx.GetInt64("user_id")
-    roles, _ := ctx.Get("roles")
-    var userRole string
-    if rolesSlice, ok := roles.([]string); ok && len(rolesSlice) > 0 {
-        userRole = rolesSlice[0]
-    }
+	// 获取当前用户信息
+	userID := ctx.GetInt64("user_id")
+	roles, _ := ctx.Get("roles")
+	var userRole string
+	if rolesSlice, ok := roles.([]string); ok && len(rolesSlice) > 0 {
+		userRole = rolesSlice[0]
+	}
 
 	// 获取分页参数
 	page := ctx.DefaultQuery("page", "1")
@@ -360,37 +363,37 @@ func (c *OrderController) GetOrders(ctx *gin.Context) {
 	pageInt, _ := strconv.Atoi(page)
 	pageSizeInt, _ := strconv.Atoi(pageSize)
 
-    // 获取查询参数
-    params := make(map[string]interface{})
-    // 支持按面值过滤（denom）
-    queryParams := []string{"order_number", "mobile", "status", "client", "platform_code", "start_time", "end_time", "isp", "out_trade_num", "denom"}
-    for _, param := range queryParams {
-        if value := ctx.Query(param); value != "" {
-            params[param] = value
-        }
-    }
+	// 获取查询参数
+	params := make(map[string]interface{})
+	// 支持按面值过滤（denom）
+	queryParams := []string{"order_number", "mobile", "status", "client", "platform_code", "start_time", "end_time", "isp", "out_trade_num", "denom"}
+	for _, param := range queryParams {
+		if value := ctx.Query(param); value != "" {
+			params[param] = value
+		}
+	}
 
-    // 如果是代理商，只查询自己的订单
-    if userRole == "AGENT" {
-        params["user_id"] = userID
-    } else if userRole == "" {
-        utils.Error(ctx, http.StatusBadRequest, "没有权限，联系管理员")
-        return
-    }
+	// 如果是代理商，只查询自己的订单
+	if userRole == "AGENT" {
+		params["user_id"] = userID
+	} else if userRole == "" {
+		utils.Error(ctx, http.StatusBadRequest, "没有权限，联系管理员")
+		return
+	}
 
-    // 诊断日志：记录角色、用户ID、分页与查询参数
-    logger.WithContext(ctx).Info("OrderController.GetOrders",
-        logger.StringV2("role", userRole),
-        logger.Int64V2("user_id", userID),
-        logger.AnyV2("params", params),
-        logger.IntV2("page", pageInt),
-        logger.IntV2("page_size", pageSizeInt),
-    )
+	// 诊断日志：记录角色、用户ID、分页与查询参数
+	logger.WithContext(ctx).Info("OrderController.GetOrders",
+		logger.StringV2("role", userRole),
+		logger.Int64V2("user_id", userID),
+		logger.AnyV2("params", params),
+		logger.IntV2("page", pageInt),
+		logger.IntV2("page_size", pageSizeInt),
+	)
 
 	// 使用包含通知信息的查询方法
-    orders, total, err := c.orderService.GetOrdersWithNotification(ctx, params, pageInt, pageSizeInt)
+	orders, total, err := c.orderService.GetOrdersWithNotification(ctx, params, pageInt, pageSizeInt)
 	if err != nil {
-		logger.Error("获取订单列表失败: %v", err)
+		logger.Log.Error("获取订单列表失败", zap.Error(err))
 		utils.Error(ctx, http.StatusInternalServerError, "获取订单列表失败")
 		return
 	}
@@ -403,48 +406,48 @@ func (c *OrderController) GetOrders(ctx *gin.Context) {
 
 // GetSuccessStatsByIspAndDenom 获取按运营商与面值的成功订单统计
 func (c *OrderController) GetSuccessStatsByIspAndDenom(ctx *gin.Context) {
-    // 获取当前用户信息与角色
-    userID := ctx.GetInt64("user_id")
-    roles, _ := ctx.Get("roles")
-    var userRole string
-    if rolesSlice, ok := roles.([]string); ok && len(rolesSlice) > 0 {
-        userRole = rolesSlice[0]
-    }
+	// 获取当前用户信息与角色
+	userID := ctx.GetInt64("user_id")
+	roles, _ := ctx.Get("roles")
+	var userRole string
+	if rolesSlice, ok := roles.([]string); ok && len(rolesSlice) > 0 {
+		userRole = rolesSlice[0]
+	}
 
-    // 获取查询参数（与订单列表保持一致）
-    params := make(map[string]interface{})
-    queryParams := []string{"order_number", "mobile", "status", "client", "platform_code", "start_time", "end_time", "isp", "out_trade_num", "denom"}
-    for _, param := range queryParams {
-        if value := ctx.Query(param); value != "" {
-            params[param] = value
-        }
-    }
+	// 获取查询参数（与订单列表保持一致）
+	params := make(map[string]interface{})
+	queryParams := []string{"order_number", "mobile", "status", "client", "platform_code", "start_time", "end_time", "isp", "out_trade_num", "denom"}
+	for _, param := range queryParams {
+		if value := ctx.Query(param); value != "" {
+			params[param] = value
+		}
+	}
 
-    // 角色限制：代理商只能查询自己的订单统计
-    if userRole == "AGENT" {
-        params["user_id"] = userID
-    } else if userRole == "" {
-        utils.Error(ctx, http.StatusBadRequest, "没有权限，联系管理员")
-        return
-    }
+	// 角色限制：代理商只能查询自己的订单统计
+	if userRole == "AGENT" {
+		params["user_id"] = userID
+	} else if userRole == "" {
+		utils.Error(ctx, http.StatusBadRequest, "没有权限，联系管理员")
+		return
+	}
 
-    logger.WithContext(ctx).Info("OrderController.GetSuccessStatsByIspAndDenom",
-        logger.StringV2("role", userRole),
-        logger.Int64V2("user_id", userID),
-        logger.AnyV2("params", params),
-    )
+	logger.WithContext(ctx).Info("OrderController.GetSuccessStatsByIspAndDenom",
+		logger.StringV2("role", userRole),
+		logger.Int64V2("user_id", userID),
+		logger.AnyV2("params", params),
+	)
 
-    stats, err := c.orderService.GetSuccessStatsByIspDenom(ctx, params)
-    if err != nil {
-        logger.Error("获取统计失败: %v", err)
-        utils.Error(ctx, http.StatusInternalServerError, "获取统计失败")
-        return
-    }
+	stats, err := c.orderService.GetSuccessStatsByIspDenom(ctx, params)
+	if err != nil {
+		logger.Log.Error("获取统计失败", zap.Error(err))
+		utils.Error(ctx, http.StatusInternalServerError, "获取统计失败")
+		return
+	}
 
-    utils.Success(ctx, gin.H{
-        "list": stats,
-        "total": len(stats),
-    })
+	utils.Success(ctx, gin.H{
+		"list":  stats,
+		"total": len(stats),
+	})
 }
 
 // DeleteOrder 删除订单（软删除）
@@ -455,7 +458,7 @@ func (c *OrderController) DeleteOrder(ctx *gin.Context) {
 		return
 	}
 	if err := c.orderService.DeleteOrder(ctx, id); err != nil {
-		logger.Error("删除订单失败", "order_id", id, "error", err)
+		logger.Log.Error("删除订单失败", zap.String("order_id", id), zap.Error(err))
 		utils.Error(ctx, 500, "删除订单失败: "+err.Error())
 		return
 	}
@@ -486,7 +489,7 @@ func (c *OrderController) BatchDeleteOrders(ctx *gin.Context) {
 		if err := c.orderService.DeleteOrder(ctx, orderIDStr); err != nil {
 			failedCount++
 			errors = append(errors, "订单"+orderIDStr+"删除失败: "+err.Error())
-			logger.Error("批量删除订单失败", "order_id", orderID, "error", err)
+			logger.Log.Error("批量删除订单失败", zap.Int64("order_id", orderID), zap.Error(err))
 		} else {
 			successCount++
 		}
@@ -528,7 +531,7 @@ func (c *OrderController) BatchProcessOrderSuccess(ctx *gin.Context) {
 		if err := c.orderService.ProcessOrderSuccess(ctx, orderID); err != nil {
 			failedCount++
 			errors = append(errors, "订单"+strconv.FormatInt(orderID, 10)+"设置成功失败: "+err.Error())
-			logger.Error("批量设置订单成功失败", "order_id", orderID, "error", err)
+			logger.Log.Error("批量设置订单成功失败", zap.Int64("order_id", orderID), zap.Error(err))
 		} else {
 			successCount++
 		}
@@ -571,7 +574,7 @@ func (c *OrderController) BatchProcessOrderFail(ctx *gin.Context) {
 		if err := c.orderService.ProcessOrderFail(ctx, orderID, req.Remark); err != nil {
 			failedCount++
 			errors = append(errors, "订单"+strconv.FormatInt(orderID, 10)+"设置失败失败: "+err.Error())
-			logger.Error("批量设置订单失败失败", "order_id", orderID, "error", err)
+			logger.Log.Error("批量设置订单失败失败", zap.Int64("order_id", orderID), zap.Error(err))
 		} else {
 			successCount++
 		}
@@ -613,7 +616,7 @@ func (c *OrderController) BatchSendNotification(ctx *gin.Context) {
 		if err := c.orderService.SendNotification(ctx, orderID); err != nil {
 			failedCount++
 			errors = append(errors, "订单"+strconv.FormatInt(orderID, 10)+"发送通知失败: "+err.Error())
-			logger.Error("批量发送回调通知失败", "order_id", orderID, "error", err)
+			logger.Log.Error("批量发送回调通知失败", zap.Int64("order_id", orderID), zap.Error(err))
 		} else {
 			successCount++
 		}
@@ -637,7 +640,7 @@ func (c *OrderController) CleanupOrders(ctx *gin.Context) {
 	start := ctx.Query("start")
 	end := ctx.Query("end")
 
-	logger.Info("CleanupOrders", "start", start, "end", end)
+	logger.Log.Info("CleanupOrders", zap.String("start", start), zap.String("end", end))
 	if start == "" || end == "" {
 		utils.Error(ctx, 1, "请提供开始和结束时间!")
 		return

@@ -3,9 +3,9 @@ package handler
 import (
 	"context"
 	"fmt"
-	"recharge-go/internal/config"
-	"recharge-go/internal/middleware"
-	"recharge-go/pkg/logger"
+    "recharge-go/internal/config"
+    "recharge-go/internal/middleware"
+    logger "recharge-go/pkg/log"
 
 	"github.com/gin-gonic/gin"
 )
@@ -61,8 +61,8 @@ func (s *Server) Engine() *gin.Engine {
 
 // Start 启动服务器
 func (s *Server) Start() error {
-	addr := fmt.Sprintf(":%d", s.cfg.Server.Port)
-	logger.Info("HTTP服务器启动，监听地址: %s", addr)
+    addr := fmt.Sprintf(":%d", s.cfg.Server.Port)
+    logger.InfoV2("http_server_started", logger.StringV2("addr", addr))
 	return s.engine.Run(addr)
 }
 

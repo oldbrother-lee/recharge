@@ -12,7 +12,7 @@ import (
 
 	"recharge-go/configs"
 	"recharge-go/internal/model"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
 
 	"go.uber.org/zap"
 )
@@ -46,7 +46,7 @@ func NewPhoneQueryService(cfg *configs.Config) PhoneQueryService {
 
 // QueryBalance 查询余额
 func (s *phoneQueryService) QueryBalance(ctx context.Context, phone, ispType string) (*model.PhoneBalanceResponse, error) {
-	logger.Log.Info("开始查询手机余额",
+	log.Log.Info("开始查询手机余额",
 		zap.String("phone", phone),
 		zap.String("isp_type", ispType),
 	)
@@ -63,7 +63,7 @@ func (s *phoneQueryService) QueryBalance(ctx context.Context, phone, ispType str
 	duration := time.Since(start)
 
 	if err != nil {
-		logger.Log.Error("查询手机余额失败",
+		log.Log.Error("查询手机余额失败",
 			zap.String("phone", phone),
 			zap.String("isp_type", ispType),
 			zap.Error(err),
@@ -74,7 +74,7 @@ func (s *phoneQueryService) QueryBalance(ctx context.Context, phone, ispType str
 
 	var balanceResp model.PhoneBalanceResponse
 	if err := json.Unmarshal(resp, &balanceResp); err != nil {
-		logger.Log.Error("解析余额查询响应失败",
+		log.Log.Error("解析余额查询响应失败",
 			zap.String("phone", phone),
 			zap.String("response", string(resp)),
 			zap.Error(err),
@@ -82,7 +82,7 @@ func (s *phoneQueryService) QueryBalance(ctx context.Context, phone, ispType str
 		return nil, fmt.Errorf("解析响应失败: %v", err)
 	}
 
-	logger.Log.Info("查询手机余额成功",
+	log.Log.Info("查询手机余额成功",
 		zap.String("phone", phone),
 		zap.String("isp_type", ispType),
 		zap.Int("errcode", balanceResp.ErrCode),
@@ -95,7 +95,7 @@ func (s *phoneQueryService) QueryBalance(ctx context.Context, phone, ispType str
 
 // QueryPaymentRecords 查询缴费记录
 func (s *phoneQueryService) QueryPaymentRecords(ctx context.Context, phone, ispType string) (*model.PaymentRecordResponse, error) {
-	logger.Log.Info("开始查询缴费记录",
+	log.Log.Info("开始查询缴费记录",
 		zap.String("phone", phone),
 		zap.String("isp_type", ispType),
 	)
@@ -117,7 +117,7 @@ func (s *phoneQueryService) QueryPaymentRecords(ctx context.Context, phone, ispT
 	duration := time.Since(start)
 
 	if err != nil {
-		logger.Log.Error("查询缴费记录失败",
+		log.Log.Error("查询缴费记录失败",
 			zap.String("phone", phone),
 			zap.String("isp_type", ispType),
 			zap.Error(err),
@@ -128,7 +128,7 @@ func (s *phoneQueryService) QueryPaymentRecords(ctx context.Context, phone, ispT
 
 	var recordResp model.PaymentRecordResponse
 	if err := json.Unmarshal(resp, &recordResp); err != nil {
-		logger.Log.Error("解析缴费记录响应失败",
+		log.Log.Error("解析缴费记录响应失败",
 			zap.String("phone", phone),
 			zap.String("response", string(resp)),
 			zap.Error(err),
@@ -137,7 +137,7 @@ func (s *phoneQueryService) QueryPaymentRecords(ctx context.Context, phone, ispT
 	}
 
 	records := recordResp.GetRecords()
-	logger.Log.Info("查询缴费记录成功",
+	log.Log.Info("查询缴费记录成功",
 		zap.String("phone", phone),
 		zap.String("isp_type", ispType),
 		zap.Int("errcode", recordResp.ErrCode),
@@ -165,7 +165,7 @@ func (s *phoneQueryService) QueryBalanceWithRetry(ctx context.Context, phone, is
 
 		if i < maxRetries-1 {
 			retryDelay := time.Duration(i+1) * time.Second
-			logger.Log.Warn("余额查询失败，准备重试",
+			log.Log.Warn("余额查询失败，准备重试",
 				zap.String("phone", phone),
 				zap.Int("retry_count", i+1),
 				zap.Int("max_retries", maxRetries),
@@ -200,7 +200,7 @@ func (s *phoneQueryService) QueryPaymentRecordsWithRetry(ctx context.Context, ph
 
 		if i < maxRetries-1 {
 			retryDelay := time.Duration(i+1) * time.Second
-			logger.Log.Warn("缴费记录查询失败，准备重试",
+			log.Log.Warn("缴费记录查询失败，准备重试",
 				zap.String("phone", phone),
 				zap.Int("retry_count", i+1),
 				zap.Int("max_retries", maxRetries),
@@ -248,7 +248,7 @@ func (s *phoneQueryService) sendFormRequest(ctx context.Context, endpoint string
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set("User-Agent", "RechargeGo-PhoneQuery/1.0")
 
-	logger.Log.Info("发送第三方API请求",
+	log.Log.Info("发送第三方API请求",
 		zap.String("url", url),
 		zap.String("method", "POST"),
 		zap.String("content_type", contentType),
@@ -261,7 +261,7 @@ func (s *phoneQueryService) sendFormRequest(ctx context.Context, endpoint string
 	duration := time.Since(start)
 
 	if err != nil {
-		logger.Log.Error("第三方API请求失败",
+		log.Log.Error("第三方API请求失败",
 			zap.String("url", url),
 			zap.Error(err),
 			zap.Duration("duration", duration),
@@ -273,7 +273,7 @@ func (s *phoneQueryService) sendFormRequest(ctx context.Context, endpoint string
 	// 读取响应
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		logger.Log.Error("读取第三方API响应失败",
+		log.Log.Error("读取第三方API响应失败",
 			zap.String("url", url),
 			zap.Int("status_code", resp.StatusCode),
 			zap.Error(err),
@@ -281,7 +281,7 @@ func (s *phoneQueryService) sendFormRequest(ctx context.Context, endpoint string
 		return nil, fmt.Errorf("读取响应失败: %v", err)
 	}
 
-	logger.Log.Info("第三方API请求完成",
+	log.Log.Info("第三方API请求完成",
 		zap.String("url", url),
 		zap.Int("status_code", resp.StatusCode),
 		zap.Int("response_size", len(body)),
@@ -290,7 +290,7 @@ func (s *phoneQueryService) sendFormRequest(ctx context.Context, endpoint string
 
 	// 检查HTTP状态码
 	if resp.StatusCode != http.StatusOK {
-		logger.Log.Error("第三方API返回错误状态码",
+		log.Log.Error("第三方API返回错误状态码",
 			zap.String("url", url),
 			zap.Int("status_code", resp.StatusCode),
 			zap.String("response_body", string(body)),

@@ -5,7 +5,8 @@ import (
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
 	"recharge-go/internal/validator"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -26,32 +27,32 @@ func NewPlatformAPIParamController(service service.PlatformAPIParamService) *Pla
 
 // CreateParam 创建平台接口参数
 func (c *PlatformAPIParamController) CreateParam(ctx *gin.Context) {
-	logger.Log.Info("开始创建平台接口参数",
+	log.Log.Info("开始创建平台接口参数",
 		zap.String("method", "CreateParam"),
 		zap.String("path", ctx.Request.URL.Path),
 	)
 
 	var param model.PlatformAPIParam
 	if err := ctx.ShouldBindJSON(&param); err != nil {
-		logger.Log.Error("参数绑定失败", zap.Error(err))
+		log.Log.Error("参数绑定失败", zap.Error(err))
 		utils.Error(ctx, 400, "参数格式错误1")
 		return
 	}
 
 	// 参数验证
 	if err := validator.ValidatePlatformAPIParam(&param); err != nil {
-		logger.Log.Error("参数验证失败", zap.Error(err))
+		log.Log.Error("参数验证失败", zap.Error(err))
 		utils.Error(ctx, 400, err.Error())
 		return
 	}
 
 	if err := c.service.CreateParam(ctx, &param); err != nil {
-		logger.Log.Error("创建平台接口参数失败", zap.Error(err))
+		log.Log.Error("创建平台接口参数失败", zap.Error(err))
 		utils.Error(ctx, 500, "创建平台接口参数失败")
 		return
 	}
 
-	logger.Log.Info("创建平台接口参数成功", zap.Any("param", param))
+	log.Log.Info("创建平台接口参数成功", zap.Any("param", param))
 	utils.Success(ctx, param)
 }
 

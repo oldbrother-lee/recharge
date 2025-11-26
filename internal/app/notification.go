@@ -6,7 +6,7 @@ import (
 
 	"recharge-go/internal/handler"
 	"recharge-go/internal/task"
-	"recharge-go/pkg/logger"
+    logger "recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
 )
 

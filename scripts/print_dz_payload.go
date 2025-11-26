@@ -43,10 +43,10 @@ func printPayload(title string, payload RequestData, rc4Key string) {
 func PrintDzPayloadSamples() {
 	// 固定参数（按你的示例）
 	baseURL := "http://api.hdb666.com/api/phrecharge?devKey=10028"
-	rc4Key := "IT8MYBDY"                  // RC4密钥（示例用你的 app_key）
-	username := "1863563749302"           // 登录账号
-	password := "JpE9F7heOl1fP%S0"        // 登录密码
-	loginToken := "TOKEN_FROM_LOGIN"      // 登录返回的 token（打印拉单/通知用占位）
+	rc4Key := "IT8MYBDY"             // RC4密钥（示例用你的 app_key）
+	username := "1863563749302"      // 登录账号
+	password := "JpE9F7heOl1fP%S0"   // 登录密码
+	loginToken := "TOKEN_FROM_LOGIN" // 登录返回的 token（打印拉单/通知用占位）
 
 	fmt.Println("网关地址:", baseURL)
 
@@ -76,10 +76,10 @@ func PrintDzPayloadSamples() {
 			Ver:    "1.0.0.0",
 			Token:  loginToken,
 			Data: map[string]interface{}{
-				"isp":          v.isp,      // 1=移动，2=电信，3=联通
-				"face_value":   v.face,     // 面值
-				"cursor_token": "",        // 首次为空；后续传增量游标
-				"limit":        50,         // 拉取上限
+				"isp":          v.isp,  // 1=移动，2=电信，3=联通
+				"face_value":   v.face, // 面值
+				"cursor_token": "",     // 首次为空；后续传增量游标
+				"limit":        50,     // 拉取上限
 			},
 		}
 		title := fmt.Sprintf("拉单请求(isp=%d face=%.2f)", v.isp, v.face)

@@ -15,7 +15,7 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	zclient "recharge-go/internal/service/zhangyu"
-	"recharge-go/pkg/logger"
+	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/redis"
 	"recharge-go/pkg/signature"
 	"strconv"
@@ -1253,7 +1253,7 @@ func (s *PlatformService) rc4EncryptJSON(data interface{}, key string) (string, 
 // 得众HTTP请求并解密
 func (s *PlatformService) dzPostAndDecrypt(url string, enc string, rc4Key string) (string, error) {
 	// 记录HTTP请求详情
-	logger.Info("得众HTTP请求详情",
+	logger.Log.Info("得众HTTP请求详情",
 		logger.StringV2("url", url),
 		logger.StringV2("method", "POST"),
 		logger.IntV2("data_length", len(enc)),
@@ -1265,7 +1265,7 @@ func (s *PlatformService) dzPostAndDecrypt(url string, enc string, rc4Key string
 	defer resp.Body.Close()
 
 	// 记录HTTP响应状态
-	logger.Info("得众HTTP响应状态",
+	logger.Log.Info("得众HTTP响应状态",
 		logger.IntV2("status_code", resp.StatusCode),
 		logger.StringV2("status", resp.Status),
 		logger.StringV2("content_type", resp.Header.Get("Content-Type")),
@@ -1281,7 +1281,7 @@ func (s *PlatformService) dzPostAndDecrypt(url string, enc string, rc4Key string
 	if len(bodyPreview) > 200 {
 		bodyPreview = bodyPreview[:200] + "..."
 	}
-	logger.Info("得众HTTP原始响应",
+	logger.Log.Info("得众HTTP原始响应",
 		logger.IntV2("body_length", len(body)),
 		logger.StringV2("body_preview", bodyPreview),
 	)
@@ -1290,27 +1290,27 @@ func (s *PlatformService) dzPostAndDecrypt(url string, enc string, rc4Key string
 	// 响应可能是JSON字符串或直接Base64
 	if len(body) > 0 && body[0] == '"' && body[len(body)-1] == '"' {
 		if err := json.Unmarshal(body, &base64Data); err != nil {
-			logger.Error("解析JSON响应失败", logger.ErrorV2(err), logger.StringV2("raw_body", string(body)))
+			logger.Log.Error("解析JSON响应失败", logger.ErrorV2(err), logger.StringV2("raw_body", string(body)))
 			return "", err
 		}
 		previewLen := 100
 		if len(base64Data) < previewLen {
 			previewLen = len(base64Data)
 		}
-		logger.Info("得众响应为JSON格式", logger.StringV2("base64_data_preview", base64Data[:previewLen]))
+		logger.Log.Info("得众响应为JSON格式", logger.StringV2("base64_data_preview", base64Data[:previewLen]))
 	} else {
 		base64Data = string(body)
 		previewLen := 100
 		if len(base64Data) < previewLen {
 			previewLen = len(base64Data)
 		}
-		logger.Info("得众响应为直接base64格式", logger.StringV2("base64_data_preview", base64Data[:previewLen]))
+		logger.Log.Info("得众响应为直接base64格式", logger.StringV2("base64_data_preview", base64Data[:previewLen]))
 	}
 
 	// 解密
 	data, err := base64.StdEncoding.DecodeString(base64Data)
 	if err != nil {
-		logger.Error("base64解码失败",
+		logger.Log.Error("base64解码失败",
 			logger.ErrorV2(err),
 			logger.StringV2("base64_data", base64Data),
 			logger.IntV2("data_length", len(base64Data)),

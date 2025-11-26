@@ -1,21 +1,21 @@
 package service
 
 import (
-    "context"
-    "encoding/json"
-    "errors"
-    "fmt"
-    "recharge-go/internal/model"
-    "recharge-go/internal/repository"
-    notificationRepo "recharge-go/internal/repository/notification"
-    "recharge-go/internal/service/recharge"
-    "recharge-go/pkg/logger"
-    "recharge-go/pkg/queue"
-    "recharge-go/pkg/redis"
-    "strconv"
-    "sync"
-    "time"
-    "sort"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"recharge-go/internal/model"
+	"recharge-go/internal/repository"
+	notificationRepo "recharge-go/internal/repository/notification"
+	"recharge-go/internal/service/recharge"
+	logger "recharge-go/pkg/log"
+	"recharge-go/pkg/queue"
+	"recharge-go/pkg/redis"
+	"sort"
+	"strconv"
+	"sync"
+	"time"
 
 	redisV8 "github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
@@ -1108,8 +1108,8 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			logger.Int64V2("api_account_id", api.AccountID))
 
 		// 获取所有可用的API关系
-        relations, err2 := s.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
-        if err2 != nil {
+		relations, err2 := s.productRepo.GetAPIRelationsByProductID(ctx, order.ProductID)
+		if err2 != nil {
 			logger.WithContextCategory(ctx, "recharge").Error("【获取API关系失败】",
 				logger.ErrorV2(err2),
 				logger.Int64V2("order_id", order.ID))
@@ -1118,48 +1118,56 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 
 		// 解析已使用的API列表（兼容对象数组 {api_id,param_id} 和简单数组 [api_id]）
 		var usedAPIs []map[string]interface{}
-        if order.UsedAPIs != "" {
-            if err := json.Unmarshal([]byte(order.UsedAPIs), &usedAPIs); err != nil {
-                logger.WithContextCategory(ctx, "recharge").Error("【解析已使用API列表失败】",
-                    logger.ErrorV2(err),
-                    logger.Int64V2("order_id", order.ID))
-                usedAPIs = []map[string]interface{}{}
-            }
-        }
-        // 对候选关系进行稳定排序：先按 sort 升序，其次按 api_id 升序，最后按 param_id 升序
-        sort.SliceStable(relations, func(i, j int) bool {
-            if relations[i].Sort != relations[j].Sort {
-                return relations[i].Sort < relations[j].Sort
-            }
-            if relations[i].APIID != relations[j].APIID {
-                return relations[i].APIID < relations[j].APIID
-            }
-            return relations[i].ParamID < relations[j].ParamID
-        })
+		if order.UsedAPIs != "" {
+			if err := json.Unmarshal([]byte(order.UsedAPIs), &usedAPIs); err != nil {
+				logger.WithContextCategory(ctx, "recharge").Error("【解析已使用API列表失败】",
+					logger.ErrorV2(err),
+					logger.Int64V2("order_id", order.ID))
+				usedAPIs = []map[string]interface{}{}
+			}
+		}
+		// 对候选关系进行稳定排序：先按 sort 升序，其次按 api_id 升序，最后按 param_id 升序
+		sort.SliceStable(relations, func(i, j int) bool {
+			if relations[i].Sort != relations[j].Sort {
+				return relations[i].Sort < relations[j].Sort
+			}
+			if relations[i].APIID != relations[j].APIID {
+				return relations[i].APIID < relations[j].APIID
+			}
+			return relations[i].ParamID < relations[j].ParamID
+		})
 
-        // 工具：判断 {api_id,param_id} 是否已存在
-        existsPair := func(arr []map[string]interface{}, apiID int64, paramID int64) bool {
-            for _, u := range arr {
-                var a, p int64
-                if v, ok := u["api_id"].(float64); ok { a = int64(v) }
-                if v, ok := u["param_id"].(float64); ok { p = int64(v) } else { p = 0 }
-                if a == apiID && p == paramID { return true }
-            }
-            return false
-        }
+		// 工具：判断 {api_id,param_id} 是否已存在
+		existsPair := func(arr []map[string]interface{}, apiID int64, paramID int64) bool {
+			for _, u := range arr {
+				var a, p int64
+				if v, ok := u["api_id"].(float64); ok {
+					a = int64(v)
+				}
+				if v, ok := u["param_id"].(float64); ok {
+					p = int64(v)
+				} else {
+					p = 0
+				}
+				if a == apiID && p == paramID {
+					return true
+				}
+			}
+			return false
+		}
 
-        // 添加当前API+Param到已使用列表（去重）
-        if !existsPair(usedAPIs, api.ID, apiParam.ID) {
-            usedAPIs = append(usedAPIs, map[string]interface{}{
-                "api_id":   api.ID,
-                "param_id": apiParam.ID,
-            })
-        }
-        // 延后在选定下一候选后再加入已用集合并序列化
+		// 添加当前API+Param到已使用列表（去重）
+		if !existsPair(usedAPIs, api.ID, apiParam.ID) {
+			usedAPIs = append(usedAPIs, map[string]interface{}{
+				"api_id":   api.ID,
+				"param_id": apiParam.ID,
+			})
+		}
+		// 延后在选定下一候选后再加入已用集合并序列化
 
 		// 找到下一个可用的API
 		var nextAPIID, nextParamID int64
-        for _, relation := range relations {
+		for _, relation := range relations {
 			// 检查API+Param是否已使用
 			alreadyUsed := false
 			for _, usedAPI := range usedAPIs {
@@ -1181,51 +1189,66 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 				nextParamID = relation.ParamID
 				break
 			}
-        }
+		}
 
-        // 选定下一候选后，将其加入已用集合，避免重复选择（去重），并准备持久化
-        preUniqueCount := 0
-        {
-            seen := make(map[string]struct{})
-            for _, u := range usedAPIs {
-                var a, p int64
-                if v, ok := u["api_id"].(float64); ok { a = int64(v) }
-                if v, ok := u["param_id"].(float64); ok { p = int64(v) } else { p = 0 }
-                key := fmt.Sprintf("%d:%d", a, p)
-                if _, ok := seen[key]; !ok { seen[key] = struct{}{}; preUniqueCount++ }
-            }
-        }
-        if nextAPIID != 0 && nextParamID != 0 && !existsPair(usedAPIs, nextAPIID, nextParamID) {
-            usedAPIs = append(usedAPIs, map[string]interface{}{
-                "api_id":   nextAPIID,
-                "param_id": nextParamID,
-            })
-        }
-        // 标准化去重列表用于持久化
-        uniqueUsed := make([]map[string]interface{}, 0, len(usedAPIs))
-        {
-            seen := make(map[string]struct{})
-            for _, u := range usedAPIs {
-                var a, p int64
-                if v, ok := u["api_id"].(float64); ok { a = int64(v) }
-                if v, ok := u["param_id"].(float64); ok { p = int64(v) } else { p = 0 }
-                key := fmt.Sprintf("%d:%d", a, p)
-                if _, ok := seen[key]; !ok {
-                    seen[key] = struct{}{}
-                    uniqueUsed = append(uniqueUsed, map[string]interface{}{
-                        "api_id":   a,
-                        "param_id": p,
-                    })
-                }
-            }
-        }
-        usedAPIsJSON, _ := json.Marshal(uniqueUsed)
+		// 选定下一候选后，将其加入已用集合，避免重复选择（去重），并准备持久化
+		preUniqueCount := 0
+		{
+			seen := make(map[string]struct{})
+			for _, u := range usedAPIs {
+				var a, p int64
+				if v, ok := u["api_id"].(float64); ok {
+					a = int64(v)
+				}
+				if v, ok := u["param_id"].(float64); ok {
+					p = int64(v)
+				} else {
+					p = 0
+				}
+				key := fmt.Sprintf("%d:%d", a, p)
+				if _, ok := seen[key]; !ok {
+					seen[key] = struct{}{}
+					preUniqueCount++
+				}
+			}
+		}
+		if nextAPIID != 0 && nextParamID != 0 && !existsPair(usedAPIs, nextAPIID, nextParamID) {
+			usedAPIs = append(usedAPIs, map[string]interface{}{
+				"api_id":   nextAPIID,
+				"param_id": nextParamID,
+			})
+		}
+		// 标准化去重列表用于持久化
+		uniqueUsed := make([]map[string]interface{}, 0, len(usedAPIs))
+		{
+			seen := make(map[string]struct{})
+			for _, u := range usedAPIs {
+				var a, p int64
+				if v, ok := u["api_id"].(float64); ok {
+					a = int64(v)
+				}
+				if v, ok := u["param_id"].(float64); ok {
+					p = int64(v)
+				} else {
+					p = 0
+				}
+				key := fmt.Sprintf("%d:%d", a, p)
+				if _, ok := seen[key]; !ok {
+					seen[key] = struct{}{}
+					uniqueUsed = append(uniqueUsed, map[string]interface{}{
+						"api_id":   a,
+						"param_id": p,
+					})
+				}
+			}
+		}
+		usedAPIsJSON, _ := json.Marshal(uniqueUsed)
 
-        if nextAPIID == 0 {
-            logger.WithContextCategory(ctx, "recharge").Error("【没有可用的API】", logger.Int64V2("order_id", order.ID))
-            // 调用订单失败处理方法，会自动退还余额和创建通知
-            if err := s.orderService.ProcessOrderFail(ctx, order.ID, "无可用API"); err != nil {
-                logger.WithContextCategory(ctx, "recharge").Error("处理订单失败时出错", logger.ErrorV2(err), logger.Int64V2("order_id", order.ID))
+		if nextAPIID == 0 {
+			logger.WithContextCategory(ctx, "recharge").Error("【没有可用的API】", logger.Int64V2("order_id", order.ID))
+			// 调用订单失败处理方法，会自动退还余额和创建通知
+			if err := s.orderService.ProcessOrderFail(ctx, order.ID, "无可用API"); err != nil {
+				logger.WithContextCategory(ctx, "recharge").Error("处理订单失败时出错", logger.ErrorV2(err), logger.Int64V2("order_id", order.ID))
 			}
 			return fmt.Errorf("no available API")
 		}
@@ -1262,11 +1285,11 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			}
 			return keys
 		}()))
-        // 计算重试时间：首个切换（preUniqueCount==1）立即重试，否则延迟5分钟
-        nextRetryTime := time.Now()
-        if preUniqueCount > 1 {
-            nextRetryTime = time.Now().Add(5 * time.Minute)
-        }
+		// 计算重试时间：首个切换（preUniqueCount==1）立即重试，否则延迟5分钟
+		nextRetryTime := time.Now()
+		if preUniqueCount > 1 {
+			nextRetryTime = time.Now().Add(5 * time.Minute)
+		}
 
 		retryRecord := &model.OrderRetryRecord{
 			OrderID:       order.ID,
@@ -1276,7 +1299,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 			RetryCount:    len(usedAPIs),
 			LastError:     submitErr.Error(),
 			RetryParams:   string(retryParamsJSON),
-            UsedAPIs:      string(usedAPIsJSON),
+			UsedAPIs:      string(usedAPIsJSON),
 			Status:        0, // 0: 待处理
 			NextRetryTime: nextRetryTime,
 		}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"recharge-go/internal/model"
-	"recharge-go/internal/repository"
-	"recharge-go/pkg/logger"
+    "recharge-go/internal/repository"
+    logger "recharge-go/pkg/log"
 
 	"gorm.io/gorm"
 )

@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"recharge-go/internal/model"
-	"recharge-go/pkg/logger"
+	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/signature"
 )
 
@@ -209,7 +209,10 @@ func ParseProductListData(rawData []byte) (*BeeProductListData, error) {
 	var arrayData []BeeProduct
 	err = json.Unmarshal(rawData, &arrayData)
 	if err != nil {
-		logger.Error("bee parse product list data", "error", err, "raw_data", string(rawData)[:min(len(rawData), 1000)])
+		logger.Log.Error("bee_parse_product_list_data",
+			logger.ErrorV2(err),
+			logger.StringV2("raw_data", string(rawData)[:min(len(rawData), 1000)]),
+		)
 		return nil, fmt.Errorf("无法解析数据格式: %v", err)
 	}
 

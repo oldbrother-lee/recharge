@@ -4,8 +4,8 @@ import (
 	"context"
 	"recharge-go/internal/model/notification"
 	notificationRepo "recharge-go/internal/repository/notification"
+	"recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
-	"recharge-go/pkg/logger"
 	"time"
 )
 
@@ -79,15 +79,15 @@ func (s *notificationService) RetryFailedNotification(ctx context.Context, id in
 		select {
 		case <-ctx.Done():
 			// 上下文已取消，不再入队
-			logger.WithContextCategory(ctx, "notification").Info("跳过已取消上下文的通知重试入队", logger.Int64V2("notification_id", record.ID))
+			log.Info(ctx, "skip_cancelled_notification_retry_enque", log.Int64("notification_id", record.ID))
 			return
 		default:
 		}
 		if err := s.queue.Push(ctx, "notification_queue", record); err != nil {
-			logger.WithContextCategory(ctx, "notification").Error("通知延迟重新入队失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID))
+			log.Error(ctx, "notification_retry_enqueue_failed", log.Err(err), log.Int64("notification_id", record.ID))
 			return
 		}
-		logger.WithContextCategory(ctx, "notification").Info("通知已延迟重新入队", logger.Int64V2("notification_id", record.ID), logger.DurationV2("delay", delay))
+		log.Info(ctx, "notification_retry_enqueued", log.Int64("notification_id", record.ID), log.Duration("delay", delay))
 	})
 
 	return nil

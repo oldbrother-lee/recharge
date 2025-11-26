@@ -7,8 +7,8 @@ import (
 	"math/rand"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
-	"recharge-go/internal/signature"
-	"recharge-go/pkg/logger"
+    "recharge-go/internal/signature"
+    logger "recharge-go/pkg/log"
 	"sort"
 	"strings"
 	"time"
@@ -64,9 +64,9 @@ func NewRetryService(
 // HandleRetry 处理重试
 func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retryType int) error {
 	// 将订单号注入上下文，便于全链路日志携带
-	ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
-	// v2 类别日志：retry
-	lg := logger.WithContextCategory(ctx, "retry")
+    ctx = logger.InjectOrderNumber(ctx, order.OrderNumber)
+    // v2 类别日志：retry
+    lg := logger.WithContextCategory(ctx, "retry")
 	// 入口诊断日志（串联订单号）
 	lg.Info("重试入口",
 		logger.Int64V2("order_id", order.ID),

@@ -9,7 +9,8 @@ import (
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
 	"recharge-go/pkg/database"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/signature"
 	"recharge-go/pkg/utils/response"
 	"strconv"
@@ -36,7 +37,7 @@ func NewKekebangOrderController(orderService service.OrderService, rechargeServi
 }
 
 func (c *KekebangOrderController) verifyProductExists(productID int64) (*model.Product, error) {
-	logger.Log.Info("开始验证产品是否存在", zap.Int64("product_id", productID))
+	log.Log.Info("开始验证产品是否存在", zap.Int64("product_id", productID))
 
 	var product model.Product
 	err := database.DB.Model(&model.Product{}).
@@ -44,11 +45,11 @@ func (c *KekebangOrderController) verifyProductExists(productID int64) (*model.P
 		First(&product).Error
 
 	if err != nil {
-		logger.Log.Error("验证产品失败", zap.Error(err), zap.Int64("product_id", productID))
+		log.Log.Error("验证产品失败", zap.Error(err), zap.Int64("product_id", productID))
 		return nil, err
 	}
 
-	logger.Log.Info("产品验证通过", zap.Int64("product_id", productID))
+	log.Log.Info("产品验证通过", zap.Int64("product_id", productID))
 	return &product, nil
 }
 
@@ -72,7 +73,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 
 	var req model.KekebangOrderRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		logger.Error("【解析请求参数失败】error: %v", err)
+		log.Error(ctx, "【解析请求参数失败】", log.Err(err))
 		response := gin.H{
 			"code":    "FAIL",
 			"message": "参数错误",
@@ -83,11 +84,12 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 	}
 
 	// 记录原始请求数据
-	logger.Info(fmt.Sprintf("【收到可客帮订单请求】request: %+v", req))
+	log.Log.Info("【收到可客帮订单请求】request",
+		zap.Any("req", req))
 	//先检查订单是否存在
 	order, err := c.orderService.GetOrderByOutTradeNum(ctx, strconv.FormatInt(req.UserOrderID, 10))
 	if err != nil && err != gorm.ErrRecordNotFound {
-		logger.Log.Error("查询订单失败",
+		log.Log.Error("查询订单失败",
 			zap.Error(err),
 			zap.String("order_id", strconv.FormatInt(req.UserOrderID, 10)))
 		response := gin.H{
@@ -113,7 +115,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 	}
 	productID, err := strconv.ParseInt(req.OuterGoodsCode, 10, 64)
 	if err != nil {
-		logger.Error(fmt.Sprintf("【产品编码转换失败】error: %v", err))
+		log.Error(ctx, "【产品编码转换失败】", log.Err(err))
 		utils.Error(ctx, 500, "产品编码转换失败")
 		return
 	}
@@ -162,7 +164,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 
 	// 调用订单服务创建订单
 	if err := c.orderService.CreateOrder(ctx, order); err != nil {
-		logger.Error(fmt.Sprintf("【创建订单失败】error: %v", err))
+		logger.Log.Error("创建订单失败", zap.Error(err))
 		response := gin.H{
 			"code":    "FAIL",
 			"message": "产品不存在",
@@ -174,7 +176,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 
 	// 创建充值任务
 	if err := c.rechargeService.CreateRechargeTask(ctx, order.ID); err != nil {
-		logger.Error("【创建充值任务失败】error: %v", err)
+		logger.Log.Error("创建充值任务失败", zap.Error(err))
 		utils.Error(ctx, 500, "创建充值任务失败")
 		return
 	}
@@ -194,13 +196,13 @@ func (c *KekebangOrderController) verifySign(req model.KekebangOrderRequest) boo
 	// 将请求参数转换为 map
 	jsonData, err := json.Marshal(req)
 	if err != nil {
-		logger.Error("【序列化请求参数失败】error: %v", err)
+		logger.Log.Error("序列化请求参数失败", zap.Error(err))
 		return false
 	}
 
 	var params map[string]interface{}
 	if err := json.Unmarshal(jsonData, &params); err != nil {
-		logger.Error("【反序列化请求参数失败】error: %v", err)
+		logger.Log.Error("反序列化请求参数失败", zap.Error(err))
 		return false
 	}
 
@@ -245,19 +247,19 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 	}
 
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		logger.Error("【解析请求参数失败】error: %v", err)
+		logger.Log.Error("解析请求参数失败", zap.Error(err))
 		response.Error(ctx, 400, "解析请求参数失败")
 		return
 	}
 
 	// 记录原始请求数据
-	logger.Info("【收到可客帮订单查询请求】request: %+v", req)
+	logger.Log.Info("收到可客帮订单查询请求", zap.Any("request", req))
 	userid := ctx.Param("userid")
 	// 1. 查询 platform_accounts 表，找到 account_name = userid 的账号
 	accountRepo := repository.NewPlatformRepository(database.DB)
 	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
-		logger.Error("【无效的账号标识】userid: %s", userid)
+		logger.Log.Error("无效的账号标识", zap.String("userid", userid))
 		utils.Error(ctx, http.StatusBadRequest, "无效的账号标识")
 		return
 	}
@@ -272,7 +274,7 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 	secretKey := account.AppSecret
 
 	if !signature.VerifyKekebangSign(params, req.Sign, secretKey) {
-		logger.Error("【签名验证失败】request: %+v", req)
+		logger.Log.Error("签名验证失败", zap.Any("request", req))
 		utils.Error(ctx, 400, "签名验证失败")
 		return
 	}
@@ -282,7 +284,7 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 	if err != nil {
 		// 判断是否为记录不存在错误
 		if err.Error() == "record not found" {
-			logger.Info("【订单不存在】order_id: %d", req.UserOrderID)
+			logger.Log.Info("订单不存在", zap.Int64("order_id", req.UserOrderID))
 			response := gin.H{
 				"code":    0,
 				"message": "success",
@@ -296,13 +298,13 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 			return
 		}
 		// 其他数据库错误
-		logger.Error("【查询订单失败】error: %v", err)
+		logger.Log.Error("查询订单失败", zap.Error(err))
 		utils.Error(ctx, 500, "查询订单失败")
 		return
 	}
 
 	if order == nil {
-		logger.Info("【订单查询结果为空】order_id: %d", req.UserOrderID)
+		logger.Log.Info("订单查询结果为空", zap.Int64("order_id", req.UserOrderID))
 		response := gin.H{
 			"code":    0,
 			"message": "success",

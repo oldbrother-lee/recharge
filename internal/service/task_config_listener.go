@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"time"
 
+	logger "recharge-go/pkg/log"
+
 	"github.com/go-redis/redis/v8"
-	"recharge-go/pkg/logger"
 )
 
 // TaskConfigListener 任务配置变更监听器
@@ -34,7 +35,7 @@ func (l *TaskConfigListener) Start() error {
 	pubsub := l.redis.Subscribe(l.ctx, TaskConfigChangeChannel)
 	defer pubsub.Close()
 
-	logger.Info("开始监听任务配置变更事件")
+	logger.InfoV2("start_listen_task_config_change")
 
 	// 使用goroutine来处理消息接收，避免阻塞
 	msgChan := make(chan *redis.Message, 1)

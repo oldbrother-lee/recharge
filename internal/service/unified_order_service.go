@@ -10,7 +10,7 @@ import (
     "recharge-go/internal/model"
     "recharge-go/internal/repository"
     notificationRepo "recharge-go/internal/repository/notification"
-    "recharge-go/pkg/logger"
+    logger "recharge-go/pkg/log"
     "recharge-go/pkg/queue"
     "go.uber.org/zap"
     "gorm.io/gorm"

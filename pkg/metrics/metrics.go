@@ -9,14 +9,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-
-	loggerV2 "recharge-go/pkg/logger"
 )
 
 // MetricsManager 指标管理器
 type MetricsManager struct {
 	registry *prometheus.Registry
-	logger   *loggerV2.LoggerV2
 
 	// HTTP指标
 	httpRequestsTotal   *prometheus.CounterVec
@@ -42,12 +39,11 @@ type MetricsManager struct {
 }
 
 // NewMetricsManager 创建指标管理器
-func NewMetricsManager(logger *loggerV2.LoggerV2) *MetricsManager {
+func NewMetricsManager() *MetricsManager {
 	registry := prometheus.NewRegistry()
 
 	mm := &MetricsManager{
 		registry: registry,
-		logger:   logger,
 	}
 
 	mm.initMetrics()

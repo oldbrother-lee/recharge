@@ -15,8 +15,8 @@ import (
 
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
-	"recharge-go/internal/signature"
-	"recharge-go/pkg/logger"
+    "recharge-go/internal/signature"
+    logger "recharge-go/pkg/log"
 
 	"gorm.io/gorm"
 )

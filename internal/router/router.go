@@ -8,7 +8,7 @@ import (
 	"recharge-go/internal/service"
 	"recharge-go/internal/service/platform"
 	"recharge-go/pkg/database"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -43,8 +43,8 @@ func SetupRouter(
 
 	// Global middleware
 	r.Use(middleware.CORS())
-	r.Use(logger.GinLogger())
-	r.Use(logger.GinRecovery())
+	r.Use(log.GinLogger())
+	r.Use(log.GinRecovery())
 
 	// API routes
 	api := r.Group("/api/v1")

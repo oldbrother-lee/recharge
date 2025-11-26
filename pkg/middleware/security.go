@@ -14,7 +14,7 @@ import (
 	"golang.org/x/time/rate"
 
 	appErrors "recharge-go/pkg/errors"
-	loggerV2 "recharge-go/pkg/logger"
+	log "recharge-go/pkg/log"
 )
 
 // SecurityConfig 安全配置
@@ -62,7 +62,6 @@ type JWTClaims struct {
 // SecurityMiddleware 安全中间件管理器
 type SecurityMiddleware struct {
 	config   *SecurityConfig
-	logger   *loggerV2.LoggerV2
 	limiters map[string]*rate.Limiter
 	mu       sync.RWMutex // 保护limiters map的并发访问
 	stopCh   chan struct{}
@@ -71,10 +70,9 @@ type SecurityMiddleware struct {
 }
 
 // NewSecurityMiddleware 创建安全中间件
-func NewSecurityMiddleware(config *SecurityConfig, logger *loggerV2.LoggerV2) *SecurityMiddleware {
+func NewSecurityMiddleware(config *SecurityConfig) *SecurityMiddleware {
 	sm := &SecurityMiddleware{
 		config:   config,
-		logger:   logger,
 		limiters: make(map[string]*rate.Limiter),
 		stopCh:   make(chan struct{}),
 	}
@@ -105,9 +103,9 @@ func (sm *SecurityMiddleware) JWTAuth() gin.HandlerFunc {
 		// 验证token
 		claims, err := sm.validateToken(token)
 		if err != nil {
-			sm.logger.WithContext(c.Request.Context()).Warn("JWT validation failed",
-				loggerV2.String("token", token),
-				loggerV2.ErrorV2(err),
+			log.WithContext(c.Request.Context()).Warn("JWT validation failed",
+				log.String("token", token),
+				log.ErrorV2(err),
 			)
 			appErrors.HandleError(c, appErrors.ErrUnauthorized.WithDetails("Invalid token"))
 			return
@@ -157,9 +155,9 @@ func (sm *SecurityMiddleware) RateLimit() gin.HandlerFunc {
 
 		// 检查是否允许请求
 		if !limiter.Allow() {
-			sm.logger.WithContext(c.Request.Context()).Warn("Rate limit exceeded",
-				loggerV2.String("client_id", clientID),
-				loggerV2.String("path", c.Request.URL.Path),
+			log.WithContext(c.Request.Context()).Warn("Rate limit exceeded",
+				log.String("client_id", clientID),
+				log.String("path", c.Request.URL.Path),
 			)
 			appErrors.HandleError(c, appErrors.New(appErrors.TooManyRequests, "Rate limit exceeded"))
 			return
@@ -335,7 +333,7 @@ func (sm *SecurityMiddleware) startCleanupRoutine() {
 	ticker := time.NewTicker(time.Hour) // 每小时清理一次
 	defer ticker.Stop()
 	defer sm.wg.Done()
-	
+
 	for {
 		select {
 		case <-ticker.C:
@@ -352,15 +350,15 @@ func (sm *SecurityMiddleware) cleanupLimiters() {
 	// 实际应用中可以使用更复杂的LRU或TTL策略
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	
+
 	// 记录清理前的限流器数量
 	oldCount := len(sm.limiters)
 	sm.limiters = make(map[string]*rate.Limiter)
-	
+
 	// 记录清理日志
 	if oldCount > 0 {
-		sm.logger.Info("Rate limiters cleaned up",
-			loggerV2.Int("cleaned_count", oldCount),
+		log.L().Info("Rate limiters cleaned up",
+			log.Int("cleaned_count", oldCount),
 		)
 	}
 }
@@ -422,9 +420,9 @@ func (sm *SecurityMiddleware) RequireRole(roles ...string) gin.HandlerFunc {
 			}
 		}
 
-		sm.logger.WithContext(c.Request.Context()).Warn("Insufficient permissions",
-			loggerV2.String("user_role", userRoleStr),
-			loggerV2.Any("required_roles", roles),
+		log.WithContext(c.Request.Context()).Warn("Insufficient permissions",
+			log.String("user_role", userRoleStr),
+			log.Any("required_roles", roles),
 		)
 
 		appErrors.HandleError(c, appErrors.ErrForbidden.WithDetails("Insufficient permissions"))

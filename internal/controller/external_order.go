@@ -8,7 +8,8 @@ import (
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
-	"recharge-go/pkg/logger"
+	"recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 	"strconv"
 	"strings"
 	"time"
@@ -107,7 +108,7 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		logData.ErrorMsg = fmt.Sprintf("请求参数错误 %v", err)
 		c.respondError(ctx, http.StatusBadRequest, "请求参数错误", &logData, startTime)
-		logger.Error(fmt.Sprintf("请求参数错误: %v", err))
+		log.Error(ctx, "external_order_create_bind_error", log.Err(err))
 		return
 	}
 
@@ -128,7 +129,7 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 	if err != nil && err != gorm.ErrRecordNotFound {
 		logData.ErrorMsg = fmt.Sprintf("Database error: %v", err)
 		c.respondError(ctx, http.StatusInternalServerError, "Database error！！！", &logData, startTime)
-		logger.Error(fmt.Sprintf("Database error: %v", err))
+		log.Error(ctx, "external_order_query_db_error", log.Err(err))
 		return
 	}
 	if existingOrder != nil {
@@ -162,7 +163,7 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 		// 记录日志到数据库，但只有当order_id不为空时才插入
 		if logData.OrderID != "" {
 			if err := c.logRepo.Create(ctx, &logData); err != nil {
-				logger.Error("Failed to create external order log", "error", err)
+				logger.ErrorLogV2("external_order_log_create_failed", logger.ErrorV2(err))
 			}
 		}
 
@@ -196,8 +197,10 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 	// 从商品名称中提取面值
 	denom, err := utils.ExtractNumberFromProductName(product.Product.Name)
 	if err != nil {
-		logger.Warn("Failed to extract denom from product name", "product_name", product.Product.Name, "error", err)
-		// 如果提取失败，使用商品价格作为面值
+		logger.WarnV2("extract_denom_failed",
+			logger.StringV2("product_name", product.Product.Name),
+			logger.ErrorV2(err),
+		)
 		denom = productPrice
 	}
 
@@ -252,7 +255,7 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 	// 记录成功日志到数据库，但只有当order_id不为空时才插入
 	if logData.OrderID != "" {
 		if err := c.logRepo.Create(ctx, &logData); err != nil {
-			logger.Error("Failed to create external order log", "error", err)
+			logger.ErrorLogV2("external_order_log_create_failed", logger.ErrorV2(err))
 		}
 	}
 
@@ -345,7 +348,7 @@ func (c *ExternalOrderController) GetOrder(ctx *gin.Context) {
 	// 记录成功日志到数据库，但只有当order_id不为空时才插入
 	if logData.OrderID != "" {
 		if err := c.logRepo.Create(ctx, &logData); err != nil {
-			logger.Error("Failed to create external order log", "error", err)
+			logger.ErrorLogV2("external_order_log_create_failed", logger.ErrorV2(err))
 		}
 	}
 
@@ -373,37 +376,37 @@ func (c *ExternalOrderController) GetOrder(ctx *gin.Context) {
 
 // respondError 统一错误响应
 func (c *ExternalOrderController) respondError(ctx *gin.Context, statusCode int, message string, logData *model.ExternalOrderLog, startTime time.Time) {
-    logData.Status = 0
-    if logData.ErrorMsg == "" {
-        logData.ErrorMsg = message
-    }
+	logData.Status = 0
+	if logData.ErrorMsg == "" {
+		logData.ErrorMsg = message
+	}
 
-    response := &ExternalOrderCreateResponse{
-        Code:      statusCode,
-        Message:   message,
-        Timestamp: time.Now().Unix(),
-    }
+	response := &ExternalOrderCreateResponse{
+		Code:      statusCode,
+		Message:   message,
+		Timestamp: time.Now().Unix(),
+	}
 
 	// 记录错误日志到数据库，但只有当order_id不为空时才插入
 	if logData.OrderID != "" {
 		if err := c.logRepo.Create(ctx, logData); err != nil {
-			logger.Error("Failed to create external order error log", "error", err)
+			logger.ErrorLogV2("external_order_error_log_create_failed", logger.ErrorV2(err))
 		}
 	}
 
-    // 将错误附加到 gin 上下文，便于统一日志中间件输出 errors 字段
-    // 使用私有错误类型，避免污染对外响应结构
-    ctx.Error(fmt.Errorf("external_order_error: %s", logData.ErrorMsg))
+	// 将错误附加到 gin 上下文，便于统一日志中间件输出 errors 字段
+	// 使用私有错误类型，避免污染对外响应结构
+	ctx.Error(fmt.Errorf("external_order_error: %s", logData.ErrorMsg))
 
-    // 结构化错误日志，便于定位问题
-    logger.WithContextCategory(ctx.Request.Context(), "external_order").Error("外部订单接口错误",
-        logger.IntV2("status_code", statusCode),
-        logger.StringV2("message", message),
-        logger.StringV2("order_id", logData.OrderID),
-        logger.StringV2("raw_data", logData.RawData),
-    )
+	// 结构化错误日志，便于定位问题
+	logger.WithContextCategory(ctx.Request.Context(), "external_order").Error("外部订单接口错误",
+		logger.IntV2("status_code", statusCode),
+		logger.StringV2("message", message),
+		logger.StringV2("order_id", logData.OrderID),
+		logger.StringV2("raw_data", logData.RawData),
+	)
 
-    ctx.JSON(statusCode, response)
+	ctx.JSON(statusCode, response)
 }
 
 // getStatusDesc 获取状态描述

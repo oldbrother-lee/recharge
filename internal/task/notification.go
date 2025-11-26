@@ -13,8 +13,8 @@ import (
 	notificationModel "recharge-go/internal/model/notification"
 	"recharge-go/pkg/queue"
 	notificationService "recharge-go/internal/service/notification"
-	"recharge-go/internal/service"
-	"recharge-go/pkg/logger"
+    "recharge-go/internal/service"
+    logger "recharge-go/pkg/log"
 )
 
 // NotificationTask 通知任务处理器

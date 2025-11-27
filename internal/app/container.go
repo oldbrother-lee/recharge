@@ -490,12 +490,7 @@ func (c *Container) initLogger(serviceName string) error {
 	}); err != nil {
 		return fmt.Errorf("初始化日志失败: %w", err)
 	}
-
-	logger, err := zap.NewProduction(zap.AddCallerSkip(1))
-	if err != nil {
-		return fmt.Errorf("初始化zap logger失败: %w", err)
-	}
-	c.logger = logger
+	c.logger = log.L()
 	return nil
 }
 
@@ -554,23 +549,7 @@ func (c *Container) GetDatabaseManager() *database.DatabaseManager {
 
 // initOptimizedComponents 初始化优化组件
 func (c *Container) initOptimizedComponents() error {
-	outputFile := "logs/app.log"
-	if c.serviceName != "" {
-		outputFile = filepath.Join("logs", c.serviceName+".log")
-	}
-	if err := log.Init(log.Config{
-		Level:      "info",
-		Format:     "json",
-		Output:     outputFile,
-		MaxSize:    100,
-		MaxBackups: 5,
-		MaxAge:     30,
-		Compress:   true,
-		Caller:     true,
-		Stacktrace: false,
-	}); err != nil {
-		return fmt.Errorf("failed to initialize logger: %w", err)
-	}
+	// 统一在 initLogger 中完成日志初始化，避免重复初始化导致配置不一致
 
 	// 初始化指标管理器
 	c.metricsManager = metrics.NewMetricsManager()

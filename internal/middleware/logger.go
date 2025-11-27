@@ -2,12 +2,14 @@ package middleware
 
 import (
     "bytes"
+    "context"
     "fmt"
     "io"
     "math/rand"
     "time"
 
     "github.com/gin-gonic/gin"
+    log "recharge-go/pkg/log"
     "go.uber.org/zap"
 )
 
@@ -18,7 +20,10 @@ func Logger() gin.HandlerFunc {
         query := c.Request.URL.RawQuery
 
         reqID := time.Now().UnixNano() + int64(rand.Intn(1000))
-        c.Set("request_id", fmt.Sprintf("%d", reqID))
+        rid := fmt.Sprintf("%d", reqID)
+        c.Set("request_id", rid)
+        ctx := context.WithValue(c.Request.Context(), "request_id", rid)
+        c.Request = c.Request.WithContext(ctx)
 
         var body string
         if c.Request.Body != nil {
@@ -30,18 +35,25 @@ func Logger() gin.HandlerFunc {
         c.Next()
 
         cost := time.Since(start)
-        zap.L().Info(path,
-            zap.Int("status", c.Writer.Status()),
-            zap.String("method", c.Request.Method),
-            zap.String("path", path),
-            zap.String("query", query),
-            zap.String("ip", c.ClientIP()),
-            zap.String("user-agent", c.Request.UserAgent()),
-            zap.String("content-type", c.ContentType()),
-            zap.String("request_id", fmt.Sprintf("%d", reqID)),
-            zap.String("raw_body", body),
-            zap.String("errors", c.Errors.ByType(gin.ErrorTypePrivate).String()),
-            zap.Duration("cost", cost),
-        )
+        l := log.WithContext(c.Request.Context())
+        fields := []zap.Field{
+            log.Int("status", c.Writer.Status()),
+            log.String("method", c.Request.Method),
+            log.String("path", path),
+            log.String("query", query),
+            log.String("ip", c.ClientIP()),
+            log.String("user-agent", c.Request.UserAgent()),
+            log.String("content-type", c.ContentType()),
+            log.String("raw_body", body),
+            log.String("errors", c.Errors.ByType(gin.ErrorTypePrivate).String()),
+            log.Duration("cost", cost),
+        }
+        if c.Writer.Status() >= 500 {
+            l.Error("http_request_failed", fields...)
+        } else if c.Writer.Status() >= 400 {
+            l.Warn("http_request_error", fields...)
+        } else {
+            l.Info("http_request", fields...)
+        }
     }
 }

@@ -25,16 +25,20 @@ type Config struct {
     Compress   bool
     Caller     bool
     Stacktrace bool
+    SamplingInitial   int
+    SamplingThereafter int
 }
 
 var global *zap.Logger
 var Log *zap.Logger
+var atomicLevel zap.AtomicLevel
 
 func Init(cfg Config) error {
     lvl, err := zapcore.ParseLevel(cfg.Level)
     if err != nil {
         return err
     }
+    atomicLevel = zap.NewAtomicLevelAt(lvl)
     encCfg := zap.NewProductionEncoderConfig()
     encCfg.TimeKey = "timestamp"
     encCfg.LevelKey = "level"
@@ -64,7 +68,10 @@ func Init(cfg Config) error {
             ws = zapcore.NewMultiWriteSyncer(zapcore.AddSync(os.Stdout), zapcore.AddSync(lj))
         }
     }
-    core := zapcore.NewCore(enc, ws, lvl)
+    core := zapcore.NewCore(enc, ws, atomicLevel)
+    if cfg.SamplingInitial > 0 && cfg.SamplingThereafter > 0 {
+        core = zapcore.NewSamplerWithOptions(core, time.Second, cfg.SamplingInitial, cfg.SamplingThereafter)
+    }
     opts := []zap.Option{}
     if cfg.Caller {
         opts = append(opts, zap.AddCaller(), zap.AddCallerSkip(1))
@@ -76,6 +83,7 @@ func Init(cfg Config) error {
     }
     global = zap.New(core, opts...)
     Log = global
+    zap.ReplaceGlobals(global)
     return nil
 }
 
@@ -126,6 +134,21 @@ func WithContext(ctx context.Context) *zap.Logger {
     }
     return l.With(fields...)
 }
+
+func SetLevel(level string) error {
+    lvl, err := zapcore.ParseLevel(level)
+    if err != nil {
+        return err
+    }
+    atomicLevel.SetLevel(lvl)
+    return nil
+}
+
+func GetLevel() string { return atomicLevel.Level().String() }
+
+func Named(name string) *zap.Logger { return L().Named(name) }
+
+func With(fields ...zap.Field) *zap.Logger { return L().With(fields...) }
 
 func InjectOrderNumber(ctx context.Context, orderNumber string) context.Context {
     if ctx == nil {

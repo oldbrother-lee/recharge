@@ -1,26 +1,38 @@
 package main
 
 import (
-    "context"
-    "log"
-    "recharge-go/configs"
-    "recharge-go/internal/model"
-    "recharge-go/internal/repository"
-    "recharge-go/pkg/database"
+	"context"
+	"log"
+	"recharge-go/internal/model"
+	"recharge-go/internal/repository"
+	"recharge-go/pkg/database"
+
+	"github.com/spf13/viper"
 )
 
 func main() {
-    // 初始化数据库连接
-    cfg := configs.GetConfig()
-    err := database.Init(cfg)
+	// 加载配置并初始化数据库连接
+	viper.SetConfigFile("configs/config.yaml")
+	if err := viper.ReadInConfig(); err != nil {
+		log.Fatalf("读取配置失败: %v", err)
+	}
+	dbm, err := database.NewDatabaseManager(&database.DatabaseConfig{
+		Host:     viper.GetString("database.host"),
+		Port:     viper.GetInt("database.port"),
+		User:     viper.GetString("database.user"),
+		Password: viper.GetString("database.password"),
+		Name:     viper.GetString("database.dbname"),
+		Charset:  "utf8mb4",
+	})
 	if err != nil {
 		log.Fatalf("初始化数据库连接失败: %v", err)
 	}
 
 	// 创建仓库
-	roleRepo := repository.NewRoleRepository(database.DB)
-	permissionRepo := repository.NewPermissionRepository(database.DB)
-	userRepo := repository.NewUserRepository(database.DB)
+	db := dbm.GetDB()
+	roleRepo := repository.NewRoleRepository(db)
+	permissionRepo := repository.NewPermissionRepository(db)
+	userRepo := repository.NewUserRepository(db)
 
 	// 创建超级管理员角色
 	superAdmin := &model.Role{

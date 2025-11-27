@@ -34,13 +34,41 @@ func (s *ServerApp) Start(ctx context.Context) error {
 	s.statisticsTask.Start(ctx)
 
 	// 使用优化后的路由设置
+	ctrls := s.container.GetControllers()
 	r := router.SetupRouterV2(
 		s.container.GetSecurityMiddleware(),
 		s.container.GetMetricsManager(),
-		s.container.GetControllers(),         // 传递控制器
-		s.container.GetServices().User,       // 用户服务
-		s.container.GetControllers().UserLog, // 用户日志控制器
-		s.container.GetDB(),                  // 数据库
+		router.ControllerSet{
+			User:                   ctrls.User,
+			Permission:             ctrls.Permission,
+			Role:                   ctrls.Role,
+			Product:                ctrls.Product,
+			PhoneLocation:          ctrls.PhoneLocation,
+			ProductType:            ctrls.ProductType,
+			Platform:               ctrls.Platform,
+			PlatformAPI:            ctrls.PlatformAPI,
+			PlatformAPIParam:       ctrls.PlatformAPIParam,
+			PlatformPushStatus:     ctrls.PlatformPushStatus,
+			ProductAPIRelation:     ctrls.ProductAPIRelation,
+			UserGrade:              ctrls.UserGrade,
+			MF178Order:             ctrls.MF178Order,
+			Callback:               ctrls.Callback,
+			Credit:                 ctrls.Credit,
+			Statistics:             ctrls.Statistics,
+			SystemConfig:           ctrls.SystemConfig,
+			ExternalAPIKey:         ctrls.ExternalAPIKey,
+			PhoneQuery:             ctrls.PhoneQuery,
+			KekebangOrder:          ctrls.KekebangOrder,
+			XianyinkeOrder:         ctrls.XianyinkeOrder,
+			OrderException:         ctrls.OrderException,
+			PlatformAccount:        ctrls.PlatformAccount,
+			PlatformAccountVariant: ctrls.PlatformAccountVariant,
+			Balance:                ctrls.Balance,
+		},
+		s.container.GetServices().User,
+		ctrls.UserLog,
+		s.container.GetServices().PlatformSvc,
+		s.container.GetDB(),
 	)
 
 	// 创建HTTP服务器

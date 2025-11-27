@@ -11,13 +11,13 @@ import (
 	"recharge-go/internal/service/recharge"
 	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
-	"recharge-go/pkg/redis"
+	redisx "recharge-go/pkg/redis"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
-	redisV8 "github.com/go-redis/redis/v8"
+	redisc "github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 )
 
@@ -75,7 +75,7 @@ type rechargeService struct {
 	unifiedOrderService    *UnifiedOrderService                    // 统一订单处理服务
 	systemConfigService    *SystemConfigService                    // 系统配置服务
 	manager                *recharge.Manager
-	redisClient            *redisV8.Client
+	redisClient            *redisc.Client
 	processingOrders       map[int64]bool
 	processingOrdersMu     sync.Mutex
 	notificationRepo       notificationRepo.Repository
@@ -121,7 +121,7 @@ func NewRechargeService(
 		unifiedOrderService:    unifiedOrderService,    // 统一订单处理服务初始化
 		systemConfigService:    systemConfigService,    // 系统配置服务初始化
 		manager:                recharge.NewManager(db),
-		redisClient:            redis.GetClient(),
+		redisClient:            redisx.GetClient(),
 		processingOrders:       make(map[int64]bool),
 		notificationRepo:       notificationRepo,
 		queue:                  queue,
@@ -1542,7 +1542,7 @@ func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64
 
 	// 检查订单是否已经在队列中，避免重复推送
 	orderIDStr := strconv.FormatInt(orderID, 10)
-	exists, err := s.redisClient.LPos(ctx, "recharge_queue", orderIDStr, redisV8.LPosArgs{}).Result()
+	exists, err := s.redisClient.LPos(ctx, "recharge_queue", orderIDStr, redisc.LPosArgs{}).Result()
 	if err == nil {
 		logger.WithContextCategory(ctx, "recharge").Info("【订单已在充值队列中，跳过推送】",
 			logger.Int64V2("order_id", orderID),
@@ -1550,7 +1550,7 @@ func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64
 		return nil
 	}
 	// 如果是redis.Nil错误，说明订单不在队列中，可以继续推送
-	if err != redisV8.Nil {
+	if err != redisc.Nil {
 		logger.WithContextCategory(ctx, "recharge").Error("【检查订单是否在队列中失败】",
 			logger.ErrorV2(err),
 			logger.Int64V2("order_id", orderID))
@@ -1584,7 +1584,7 @@ func (s *rechargeService) PopFromRechargeQueue(ctx context.Context) (int64, erro
 	// 使用 BRPOPLPUSH 命令，将任务从队列中移除并放入处理中队列
 	result, err := s.redisClient.BRPopLPush(ctx, "recharge_queue", "recharge_processing", 0).Result()
 	if err != nil {
-		if err == redisV8.Nil {
+		if err == redisc.Nil {
 			logger.WithContextCategory(ctx, "recharge").Debug("【充值队列为空】",
 				logger.StringV2("stage", "dequeue"))
 			return 0, nil

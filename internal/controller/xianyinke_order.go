@@ -1,34 +1,37 @@
 package controller
 
 import (
-	"fmt"
-	"net/http"
-	"strconv"
+    "fmt"
+    "net/http"
+    "strconv"
 
-	"recharge-go/internal/model"
-	"recharge-go/internal/repository"
-	"recharge-go/internal/service"
-	"recharge-go/pkg/database"
-	"recharge-go/pkg/log"
-	logger "recharge-go/pkg/log"
+    "recharge-go/internal/model"
+    "recharge-go/internal/repository"
+    "recharge-go/internal/service"
+    "recharge-go/pkg/log"
+    logger "recharge-go/pkg/log"
 
-	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
-	"gorm.io/gorm"
+    "github.com/gin-gonic/gin"
+    "go.uber.org/zap"
+    "gorm.io/gorm"
 )
 
 // XianyinkeOrderController 闲赢客订单控制器
 type XianyinkeOrderController struct {
-	orderService    service.OrderService
-	rechargeService service.RechargeService
+    orderService    service.OrderService
+    rechargeService service.RechargeService
+    platformRepo    repository.PlatformRepository
+    productRepo     repository.ProductRepository
 }
 
 // NewXianyinkeOrderController 创建闲赢客订单控制器
-func NewXianyinkeOrderController(orderService service.OrderService, rechargeService service.RechargeService) *XianyinkeOrderController {
-	return &XianyinkeOrderController{
-		orderService:    orderService,
-		rechargeService: rechargeService,
-	}
+func NewXianyinkeOrderController(orderService service.OrderService, rechargeService service.RechargeService, platformRepo repository.PlatformRepository, productRepo repository.ProductRepository) *XianyinkeOrderController {
+    return &XianyinkeOrderController{
+        orderService:    orderService,
+        rechargeService: rechargeService,
+        platformRepo:    platformRepo,
+        productRepo:     productRepo,
+    }
 }
 
 // CreateOrder 接收闲赢客推送订单
@@ -39,14 +42,13 @@ func (c *XianyinkeOrderController) CreateOrder(ctx *gin.Context) {
 	userid := ctx.Param("userid")
 
 	// 1) 通过 userid 查询平台账号与平台信息
-	accountRepo := repository.NewPlatformRepository(database.DB)
-	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
+    account, err := c.platformRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
 		log.Log.Error("[xianyinke] 查询平台账号失败", zap.Error(err), zap.String("userid", userid))
 		ctx.JSON(http.StatusOK, gin.H{"result": "fail"})
 		return
 	}
-	platform, err := accountRepo.GetPlatformByID(account.PlatformID)
+    platform, err := c.platformRepo.GetPlatformByID(account.PlatformID)
 	if err != nil || platform == nil {
 		ctx.JSON(http.StatusOK, gin.H{"result": "fail"})
 		return
@@ -93,12 +95,12 @@ func (c *XianyinkeOrderController) CreateOrder(ctx *gin.Context) {
 	}
 
 	// 6) 校验商品存在并获取价格
-	var product model.Product
-	if err := database.DB.Model(&model.Product{}).Where("id = ?", productID).First(&product).Error; err != nil {
-		logger.Log.Error("[xianyinke] 商品不存在", zap.Error(err), zap.Int64("product_id", productID))
-		ctx.JSON(http.StatusOK, gin.H{"result": "fail"})
-		return
-	}
+    product, err := c.productRepo.GetByID(ctx, productID)
+    if err != nil {
+        logger.Log.Error("[xianyinke] 商品不存在", zap.Error(err), zap.Int64("product_id", productID))
+        ctx.JSON(http.StatusOK, gin.H{"result": "fail"})
+        return
+    }
 
 	// 6.1) 校验平台账号是否已绑定用户，避免空指针
 	if account.BindUserID == nil {
@@ -122,7 +124,7 @@ func (c *XianyinkeOrderController) CreateOrder(ctx *gin.Context) {
 	order := &model.Order{
 		Mobile:            req.Account,
 		Denom:             denom,
-		Price:             product.Price,
+        Price:             product.Price,
 		ProductID:         productID,
 		Status:            model.OrderStatusPendingRecharge,
 		Client:            3,

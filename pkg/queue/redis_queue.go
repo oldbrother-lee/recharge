@@ -4,23 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-    "recharge-go/pkg/redis"
+	redisx "recharge-go/pkg/redis"
 	"time"
 
-    logger "recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 
-	redisV8 "github.com/go-redis/redis/v8"
+	redis "github.com/redis/go-redis/v9"
 )
 
 // RedisQueue Redis队列实现
 type RedisQueue struct {
-	client *redisV8.Client
+	client *redis.Client
 }
 
 // NewRedisQueue 创建Redis队列实例
 func NewRedisQueue() *RedisQueue {
 	return &RedisQueue{
-		client: redis.GetClient(),
+		client: redisx.GetClient(),
 	}
 }
 
@@ -63,7 +63,7 @@ func (q *RedisQueue) Peek(ctx context.Context, key string) (interface{}, error) 
 func (q *RedisQueue) Pop(ctx context.Context, key string) (interface{}, error) {
 	result, err := q.client.BRPop(ctx, 1*time.Second, key).Result()
 	if err != nil {
-		if err == redisV8.Nil {
+		if err == redis.Nil {
 			// 超时未取到，视为队列为空
 			return nil, nil
 		}
@@ -87,7 +87,7 @@ func (q *RedisQueue) PushWithDelay(ctx context.Context, key string, value interf
 	if err != nil {
 		return fmt.Errorf("marshal value failed: %v", err)
 	}
-	return q.client.ZAdd(ctx, key, &redisV8.Z{
+	return q.client.ZAdd(ctx, key, redis.Z{
 		Score:  float64(time.Now().Add(delay).Unix()),
 		Member: data,
 	}).Err()

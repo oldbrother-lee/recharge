@@ -4,29 +4,28 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"recharge-go/configs"
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
 	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 type RetryTask struct {
 	retryService *service.RetryService
 	stopChan     chan struct{}
-	config       *configs.Config
 	queue        queue.Queue
 	ctx          context.Context
 	cancel       context.CancelFunc
 }
 
-func NewRetryTask(retryService *service.RetryService, config *configs.Config, queue queue.Queue) *RetryTask {
+func NewRetryTask(retryService *service.RetryService, queue queue.Queue) *RetryTask {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RetryTask{
 		retryService: retryService,
 		stopChan:     make(chan struct{}),
-		config:       config,
 		queue:        queue,
 		ctx:          ctx,
 		cancel:       cancel,
@@ -34,11 +33,11 @@ func NewRetryTask(retryService *service.RetryService, config *configs.Config, qu
 }
 
 func (t *RetryTask) Start() {
-	queueName := t.config.RetryTask.QueueName
+	queueName := viper.GetString("retry_task.queue_name")
 	if queueName == "" {
 		queueName = "retry_queue" // 默认队列名称
 	}
-	pollInterval := time.Duration(t.config.RetryTask.PollInterval) * time.Second
+	pollInterval := time.Duration(viper.GetInt("retry_task.poll_interval")) * time.Second
 	if pollInterval <= 0 {
 		pollInterval = 1 * time.Second // 默认轮询间隔
 		logger.WarnV2("retry_task_invalid_poll_interval", logger.DurationV2("poll_interval", pollInterval))
@@ -47,7 +46,7 @@ func (t *RetryTask) Start() {
 	logger.InfoV2("retry_task_started", logger.StringV2("queue_name", queueName), logger.DurationV2("poll_interval", pollInterval))
 
 	// 启动多个消费者
-	consumerCount := t.config.RetryTask.ConsumerCount
+	consumerCount := viper.GetInt("retry_task.consumer_count")
 	if consumerCount <= 0 {
 		consumerCount = 1 // 默认1个消费者
 	}
@@ -156,7 +155,7 @@ func (t *RetryTask) startConsumer(consumerID int, queueName string, pollInterval
 
 // startPeriodicRetry 启动定时重试（作为备用机制）
 func (t *RetryTask) startPeriodicRetry() {
-	interval := time.Duration(t.config.RetryTask.Interval) * time.Second
+	interval := time.Duration(viper.GetInt("retry_task.interval")) * time.Second
 	// 如果配置的间隔为0或负数，使用默认值30秒
 	if interval <= 0 {
 		interval = 30 * time.Second

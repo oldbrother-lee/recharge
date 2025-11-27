@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"time"
 
-    "github.com/go-redis/redis/v8"
-    logger "recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // DistributedLock 分布式锁接口
@@ -62,13 +63,13 @@ func (r *RedisDistributedLock) Unlock(ctx context.Context, key string, value str
 			logger.ErrorV2(err))
 		return err
 	}
-	
+
 	if result.(int64) == 0 {
 		logger.WarnV2("锁已被其他客户端释放或已过期",
 			logger.StringV2("key", key))
 		return errors.New("锁已被其他客户端释放或已过期")
 	}
-	
+
 	logger.InfoV2("成功释放分布式锁",
 		logger.StringV2("key", key))
 	return nil
@@ -77,7 +78,7 @@ func (r *RedisDistributedLock) Unlock(ctx context.Context, key string, value str
 // LockWithRetry 带重试的获取锁
 func (r *RedisDistributedLock) LockWithRetry(ctx context.Context, key string, expiration time.Duration, maxRetries int, retryInterval time.Duration) (string, error) {
 	value := fmt.Sprintf("%d", time.Now().UnixNano())
-	
+
 	for i := 0; i <= maxRetries; i++ {
 		result, err := r.client.SetNX(ctx, key, value, expiration).Result()
 		if err != nil {
@@ -87,7 +88,7 @@ func (r *RedisDistributedLock) LockWithRetry(ctx context.Context, key string, ex
 				logger.ErrorV2(err))
 			continue
 		}
-		
+
 		if result {
 			logger.InfoV2("成功获取分布式锁",
 				logger.StringV2("key", key),
@@ -95,7 +96,7 @@ func (r *RedisDistributedLock) LockWithRetry(ctx context.Context, key string, ex
 				logger.StringV2("value", value))
 			return value, nil
 		}
-		
+
 		if i < maxRetries {
 			logger.InfoV2("获取锁失败，等待重试",
 				logger.StringV2("key", key),
@@ -109,7 +110,7 @@ func (r *RedisDistributedLock) LockWithRetry(ctx context.Context, key string, ex
 			}
 		}
 	}
-	
+
 	return "", errors.New("获取分布式锁超时")
 }
 

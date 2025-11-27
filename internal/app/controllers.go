@@ -7,27 +7,33 @@ import (
 
 // Controllers 控制器集合
 type Controllers struct {
-	User               *controller.UserController
-	Permission         *controller.PermissionController
-	Role               *controller.RoleController
-	Product            *controller.ProductController
-	PhoneLocation      *controller.PhoneLocationController
-	ProductType        *controller.ProductTypeController
-	Platform           *controller.PlatformController
-	PlatformAPI        *controller.PlatformAPIController
-	PlatformAPIParam   *controller.PlatformAPIParamController
-	PlatformPushStatus *controller.PlatformPushStatusController
-	ProductAPIRelation *controller.ProductAPIRelationController
-	UserLog            *controller.UserLogController
-	UserGrade          *controller.UserGradeController
-	Statistics         *controller.StatisticsController
-	Callback           *controller.CallbackController
-	MF178Order         *controller.MF178OrderController
-	Order              *controller.OrderController
-	Credit             *controller.CreditController
-	SystemConfig       *controller.SystemConfigController
-	ExternalAPIKey     *controller.ExternalAPIKeyController
-	PhoneQuery         *controller.PhoneQueryController
+	User                   *controller.UserController
+	Permission             *controller.PermissionController
+	Role                   *controller.RoleController
+	Product                *controller.ProductController
+	PhoneLocation          *controller.PhoneLocationController
+	ProductType            *controller.ProductTypeController
+	Platform               *controller.PlatformController
+	PlatformAPI            *controller.PlatformAPIController
+	PlatformAPIParam       *controller.PlatformAPIParamController
+	PlatformPushStatus     *controller.PlatformPushStatusController
+	ProductAPIRelation     *controller.ProductAPIRelationController
+	UserLog                *controller.UserLogController
+	UserGrade              *controller.UserGradeController
+	Statistics             *controller.StatisticsController
+	Callback               *controller.CallbackController
+	MF178Order             *controller.MF178OrderController
+	Order                  *controller.OrderController
+	Credit                 *controller.CreditController
+	SystemConfig           *controller.SystemConfigController
+	ExternalAPIKey         *controller.ExternalAPIKeyController
+	PhoneQuery             *controller.PhoneQueryController
+	KekebangOrder          *controller.KekebangOrderController
+	XianyinkeOrder         *controller.XianyinkeOrderController
+	OrderException         *controller.OrderExceptionController
+	PlatformAccount        *controller.PlatformAccountController
+	PlatformAccountVariant *controller.PlatformAccountVariantController
+	Balance                *controller.BalanceController
 
 	// Handlers
 	Recharge     *handler.RechargeHandler
@@ -41,7 +47,7 @@ func (c *Container) initControllers() {
 		PhoneLocation: controller.NewPhoneLocationController(c.services.PhoneLocation),
 		Statistics:    controller.NewStatisticsController(c.services.Statistics),
 		Callback:      controller.NewCallbackController(c.services.Recharge, c.repositories.Platform, c.repositories.Order),
-		MF178Order:    controller.NewMF178OrderController(c.services.Order, c.services.Recharge),
+		MF178Order:    controller.NewMF178OrderController(c.services.Order, c.services.Recharge, c.repositories.Platform, c.repositories.Product),
 		Order:         controller.NewOrderController(c.services.Order),
 		Platform:      controller.NewPlatformController(c.services.Platform, c.services.PlatformSvc),
 		UserGrade:     controller.NewUserGradeController(c.services.UserGrade),
@@ -53,14 +59,20 @@ func (c *Container) initControllers() {
 		ProductType: controller.NewProductTypeController(c.services.ProductType),
 		PlatformAPI: controller.NewPlatformAPIController(c.services.PlatformAPI, c.services.Platform),
 		// 恢复以下控制器
-		PlatformAPIParam:   controller.NewPlatformAPIParamController(c.services.PlatformAPIParam),
-		PlatformPushStatus: controller.NewPlatformPushStatusController(c.services.PlatformPushStatus),
-		ProductAPIRelation: controller.NewProductAPIRelationController(c.services.ProductAPIRelation),
-		UserLog:            controller.NewUserLogController(c.services.UserLog),
-		Credit:             controller.NewCreditController(c.services.Credit),
-		SystemConfig:       controller.NewSystemConfigController(c.services.SystemConfig),
-		ExternalAPIKey:     controller.NewExternalAPIKeyController(c.repositories.ExternalAPIKey, c.repositories.User),
-		PhoneQuery:         controller.NewPhoneQueryController(c.services.PhoneQuery),
+		PlatformAPIParam:       controller.NewPlatformAPIParamController(c.services.PlatformAPIParam),
+		PlatformPushStatus:     controller.NewPlatformPushStatusController(c.services.PlatformPushStatus),
+		ProductAPIRelation:     controller.NewProductAPIRelationController(c.services.ProductAPIRelation),
+		UserLog:                controller.NewUserLogController(c.services.UserLog),
+		Credit:                 controller.NewCreditController(c.services.Credit),
+		SystemConfig:           controller.NewSystemConfigController(c.services.SystemConfig),
+		ExternalAPIKey:         controller.NewExternalAPIKeyController(c.repositories.ExternalAPIKey, c.repositories.User),
+		PhoneQuery:             controller.NewPhoneQueryController(c.services.PhoneQuery),
+		KekebangOrder:          controller.NewKekebangOrderController(c.services.Order, c.services.Recharge, c.repositories.Platform, c.repositories.Product),
+		XianyinkeOrder:         controller.NewXianyinkeOrderController(c.services.Order, c.services.Recharge, c.repositories.Platform, c.repositories.Product),
+		OrderException:         controller.NewOrderExceptionController(c.services.OrderException, c.logger),
+		PlatformAccount:        controller.NewPlatformAccountController(c.services.PlatformAccount),
+		PlatformAccountVariant: controller.NewPlatformAccountVariantController(c.services.PlatformAccountVariant),
+		Balance:                controller.NewBalanceController(c.services.Balance),
 
 		// Handlers
 		Recharge:     handler.NewRechargeHandler(c.services.Recharge),

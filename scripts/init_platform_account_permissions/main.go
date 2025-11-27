@@ -1,24 +1,33 @@
 package main
 
 import (
-    "log"
-    "recharge-go/configs"
-    "recharge-go/internal/model"
-    "recharge-go/internal/repository"
-    "recharge-go/pkg/database"
-    "time"
+	"log"
+	"recharge-go/internal/model"
+	"recharge-go/internal/repository"
+	"recharge-go/pkg/database"
+	"time"
+
+	"github.com/spf13/viper"
 )
 
 func main() {
-    // 初始化数据库连接
-    cfg := configs.GetConfig()
-    err := database.Init(cfg)
+	// 初始化数据库连接
+	viper.SetConfigFile("configs/config.yaml")
+	if err := viper.ReadInConfig(); err != nil {
+		log.Fatalf("读取配置失败: %v", err)
+	}
+	dbm, err := database.NewDatabaseManager(&database.DatabaseConfig{
+		Host:     viper.GetString("database.host"),
+		Port:     viper.GetInt("database.port"),
+		User:     viper.GetString("database.user"),
+		Password: viper.GetString("database.password"),
+		Name:     viper.GetString("database.dbname"),
+		Charset:  "utf8mb4",
+	})
 	if err != nil {
 		log.Fatalf("初始化数据库失败: %v", err)
 	}
-
-	// 获取数据库实例
-	db := database.DB
+	db := dbm.GetDB()
 
 	// 创建权限仓库
 	permissionRepo := repository.NewPermissionRepository(db)

@@ -7,7 +7,6 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
-	"recharge-go/pkg/database"
 	"recharge-go/pkg/log"
 	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/signature"
@@ -26,46 +25,43 @@ import (
 type KekebangOrderController struct {
 	orderService    service.OrderService
 	rechargeService service.RechargeService
+	platformRepo    repository.PlatformRepository
+	productRepo     repository.ProductRepository
 }
 
 // NewKekebangOrderController 创建可客帮订单控制器
-func NewKekebangOrderController(orderService service.OrderService, rechargeService service.RechargeService) *KekebangOrderController {
+func NewKekebangOrderController(orderService service.OrderService, rechargeService service.RechargeService, platformRepo repository.PlatformRepository, productRepo repository.ProductRepository) *KekebangOrderController {
 	return &KekebangOrderController{
 		orderService:    orderService,
 		rechargeService: rechargeService,
+		platformRepo:    platformRepo,
+		productRepo:     productRepo,
 	}
 }
 
-func (c *KekebangOrderController) verifyProductExists(productID int64) (*model.Product, error) {
+func (c *KekebangOrderController) verifyProductExists(ctx *gin.Context, productID int64) (*model.Product, error) {
 	log.Log.Info("开始验证产品是否存在", zap.Int64("product_id", productID))
-
-	var product model.Product
-	err := database.DB.Model(&model.Product{}).
-		Where("id = ?", productID).
-		First(&product).Error
-
+	product, err := c.productRepo.GetByID(ctx, productID)
 	if err != nil {
 		log.Log.Error("验证产品失败", zap.Error(err), zap.Int64("product_id", productID))
 		return nil, err
 	}
-
 	log.Log.Info("产品验证通过", zap.Int64("product_id", productID))
-	return &product, nil
+	return product, nil
 }
 
 // CreateOrder 创建订单
 func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 	userid := ctx.Param("userid")
 	// 1. 查询 platform_accounts 表，找到 account_name = userid 的账号
-	accountRepo := repository.NewPlatformRepository(database.DB)
-	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
+	account, err := c.platformRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
 		resp.Error(ctx, http.StatusBadRequest, "无效的账号标识")
 		return
 	}
 
 	// 2. 可通过 account.PlatformID 查询平台信息
-	platform, err := accountRepo.GetPlatformByID(account.PlatformID)
+	platform, err := c.platformRepo.GetPlatformByID(account.PlatformID)
 	if err != nil || platform == nil {
 		resp.Error(ctx, http.StatusBadRequest, "无效的平台")
 		return
@@ -119,7 +115,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 		resp.Error(ctx, 500, "产品编码转换失败")
 		return
 	}
-	product, err := c.verifyProductExists(productID)
+	product, err := c.verifyProductExists(ctx, productID)
 	if err != nil {
 		logger.Log.Error("产品验证失败",
 			zap.Error(err),
@@ -256,8 +252,7 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 	logger.Log.Info("收到可客帮订单查询请求", zap.Any("request", req))
 	userid := ctx.Param("userid")
 	// 1. 查询 platform_accounts 表，找到 account_name = userid 的账号
-	accountRepo := repository.NewPlatformRepository(database.DB)
-	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
+	account, err := c.platformRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
 		logger.Log.Error("无效的账号标识", zap.String("userid", userid))
 		resp.Error(ctx, http.StatusBadRequest, "无效的账号标识")

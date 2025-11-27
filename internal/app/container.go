@@ -18,11 +18,11 @@ import (
 	"recharge-go/pkg/metrics"
 	pkgMiddleware "recharge-go/pkg/middleware"
 	"recharge-go/pkg/queue"
-	"recharge-go/pkg/redis"
+	redisx "recharge-go/pkg/redis"
 	"time"
 
-	redisV8 "github.com/go-redis/redis/v8"
 	"github.com/hibiken/asynq"
+	redisc "github.com/redis/go-redis/v9"
 	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -32,9 +32,10 @@ import (
 type Container struct {
 	config             *configs.Config
 	db                 *gorm.DB
-	redis              *redisV8.Client
-	redisClient        *redisV8.Client
+	redis              *redisc.Client
+	redisClient        *redisc.Client
 	queue              *asynq.Client
+	taskQueue          queue.Queue
 	repositories       *Repositories
 	services           *Services
 	controllers        *Controllers
@@ -47,33 +48,34 @@ type Container struct {
 
 // Repositories 仓储集合
 type Repositories struct {
-	User                *repository.UserRepository
-	Order               repository.OrderRepository
-	OrderStatistics     repository.OrderStatisticsRepository
-	Platform            repository.PlatformRepository
-	PlatformAPI         repository.PlatformAPIRepository
-	PlatformAPIParam    repository.PlatformAPIParamRepository
-	PlatformAccount     *repository.PlatformAccountRepository
-	Product             repository.ProductRepository
-	ProductType         *repository.ProductTypeRepository         // 添加ProductType repository
-	ProductTypeCategory *repository.ProductTypeCategoryRepository // 添加ProductTypeCategory repository
-	ProductAPIRelation  repository.ProductAPIRelationRepository
-	Retry               repository.RetryRepository
-	CallbackLog         repository.CallbackLogRepository
-	BalanceLog          *repository.BalanceLogRepository
-	BalanceQueryRecord  repository.BalanceQueryRecordRepository // 添加余额查询记录 repository
-	Notification        notificationRepo.Repository
-	TaskConfig          *repository.TaskConfigRepository
-	TaskOrder           *repository.TaskOrderRepository
-	DaichongOrder       *repository.DaichongOrderRepository
-	PhoneLocation       *repository.PhoneLocationRepository
-	Permission          *repository.PermissionRepository    // 添加Permission repository
-	Role                *repository.RoleRepository          // 添加Role repository
-	UserLog             *repository.UserLogRepository       // 添加UserLog repository
-	CreditLog           *repository.CreditLogRepository     // 添加CreditLog repository
-	SystemConfig        *repository.SystemConfigRepository  // 添加SystemConfig repository
-	ExternalAPIKey      repository.ExternalAPIKeyRepository // 添加ExternalAPIKey repository
-	OrderException      repository.OrderExceptionRepository // 添加OrderException repository
+	User                   *repository.UserRepository
+	Order                  repository.OrderRepository
+	OrderStatistics        repository.OrderStatisticsRepository
+	Platform               repository.PlatformRepository
+	PlatformAPI            repository.PlatformAPIRepository
+	PlatformAPIParam       repository.PlatformAPIParamRepository
+	PlatformAccount        *repository.PlatformAccountRepository
+	PlatformAccountVariant repository.PlatformAccountVariantRepository
+	Product                repository.ProductRepository
+	ProductType            *repository.ProductTypeRepository         // 添加ProductType repository
+	ProductTypeCategory    *repository.ProductTypeCategoryRepository // 添加ProductTypeCategory repository
+	ProductAPIRelation     repository.ProductAPIRelationRepository
+	Retry                  repository.RetryRepository
+	CallbackLog            repository.CallbackLogRepository
+	BalanceLog             *repository.BalanceLogRepository
+	BalanceQueryRecord     repository.BalanceQueryRecordRepository // 添加余额查询记录 repository
+	Notification           notificationRepo.Repository
+	TaskConfig             *repository.TaskConfigRepository
+	TaskOrder              *repository.TaskOrderRepository
+	DaichongOrder          *repository.DaichongOrderRepository
+	PhoneLocation          *repository.PhoneLocationRepository
+	Permission             *repository.PermissionRepository    // 添加Permission repository
+	Role                   *repository.RoleRepository          // 添加Role repository
+	UserLog                *repository.UserLogRepository       // 添加UserLog repository
+	CreditLog              *repository.CreditLogRepository     // 添加CreditLog repository
+	SystemConfig           *repository.SystemConfigRepository  // 添加SystemConfig repository
+	ExternalAPIKey         repository.ExternalAPIKeyRepository // 添加ExternalAPIKey repository
+	OrderException         repository.OrderExceptionRepository // 添加OrderException repository
 
 }
 
@@ -108,9 +110,11 @@ type Services struct {
 	Credit                 *service.CreditService            // 添加Credit服务
 	PlatformPushStatus     *platform.PushStatusService       // 添加PlatformPushStatus服务
 	PlatformSvc            *platform.Service                 // 添加platform.Service
-	SystemConfig           *service.SystemConfigService      // 添加SystemConfig服务
-	PhoneQuery             service.PhoneQueryService         // 添加PhoneQuery服务
-	OrderException         service.OrderExceptionService     // 添加OrderException服务
+	PlatformAccount        *service.PlatformAccountService
+	PlatformAccountVariant *service.PlatformAccountVariantService
+	SystemConfig           *service.SystemConfigService  // 添加SystemConfig服务
+	PhoneQuery             service.PhoneQueryService     // 添加PhoneQuery服务
+	OrderException         service.OrderExceptionService // 添加OrderException服务
 
 }
 
@@ -129,11 +133,17 @@ func NewContainerWithConfigAndService(configPath, serviceName string) (*Containe
 	c := &Container{serviceName: serviceName}
 
 	// 加载指定的配置文件
-	var err error
-	c.config, err = configs.LoadConfig(configPath)
-	if err != nil {
+	viper.SetConfigFile(configPath)
+	viper.AutomaticEnv()
+	if err := viper.ReadInConfig(); err != nil {
 		return nil, err
 	}
+	// 为兼容已有服务构造，仍保留一次性 Unmarshal 快照
+	var cfg configs.Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, err
+	}
+	c.config = &cfg
 
 	// 初始化logger
 	if err := c.initLogger(serviceName); err != nil {
@@ -177,32 +187,67 @@ func NewContainerWithConfigAndService(configPath, serviceName string) (*Containe
 
 // 初始化数据库
 func (c *Container) initDB() error {
-	if database.DB == nil {
-		if err := database.Init(c.config); err != nil {
-			return err
-		}
+	dbConfig := &database.DatabaseConfig{
+		Host:            viper.GetString("database.host"),
+		Port:            viper.GetInt("database.port"),
+		User:            viper.GetString("database.user"),
+		Password:        viper.GetString("database.password"),
+		Name:            viper.GetString("database.dbname"),
+		Charset:         "utf8mb4",
+		MaxIdleConns:    viper.GetInt("database.max_idle_conns"),
+		MaxOpenConns:    viper.GetInt("database.max_open_conns"),
+		ConnMaxLifetime: time.Duration(viper.GetInt("database.conn_max_lifetime")) * time.Second,
+		SlowThreshold:   time.Second,
+		LogLevel:        viper.GetString("log.level"),
 	}
-	c.db = database.DB
+
+	dm, err := database.NewDatabaseManager(dbConfig)
+	if err != nil {
+		return err
+	}
+	c.databaseManager = dm
+	c.db = dm.GetDB()
+
+	if err := database.AutoMigrateDB(c.db); err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := c.databaseManager.Ping(ctx); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
 	return nil
 }
 
 // 初始化Redis
 func (c *Container) initRedis() error {
-	err := redis.InitRedis(c.config.Redis.Host, c.config.Redis.Port, c.config.Redis.Password, c.config.Redis.DB)
+	err := redisx.InitRedis(
+		viper.GetString("redis.host"),
+		viper.GetInt("redis.port"),
+		viper.GetString("redis.password"),
+		viper.GetInt("redis.db"),
+	)
 	if err != nil {
 		return err
 	}
-	c.redisClient = redis.GetClient()
+	c.redisClient = redisx.GetClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, pingErr := c.redisClient.Ping(ctx).Result(); pingErr != nil {
+		return fmt.Errorf("redis ping failed: %w", pingErr)
+	}
 	return nil
 }
 
 // 初始化队列
 func (c *Container) initQueue() error {
-	redisAddr := fmt.Sprintf("%s:%d", c.config.Redis.Host, c.config.Redis.Port)
+	redisAddr := fmt.Sprintf("%s:%d", viper.GetString("redis.host"), viper.GetInt("redis.port"))
 	client := asynq.NewClient(asynq.RedisClientOpt{
 		Addr:     redisAddr,
-		Password: c.config.Redis.Password,
-		DB:       c.config.Redis.DB,
+		Password: viper.GetString("redis.password"),
+		DB:       viper.GetInt("redis.db"),
 	})
 	c.queue = client
 	return nil
@@ -219,33 +264,34 @@ func (c *Container) initMiddleware() {
 // 初始化仓储
 func (c *Container) initRepositories() {
 	c.repositories = &Repositories{
-		User:                repository.NewUserRepository(c.db),
-		Order:               repository.NewOrderRepository(c.db),
-		OrderStatistics:     repository.NewOrderStatisticsRepository(c.db),
-		Platform:            repository.NewPlatformRepository(c.db),
-		PlatformAPI:         repository.NewPlatformAPIRepository(c.db),
-		PlatformAPIParam:    repository.NewPlatformAPIParamRepository(c.db),
-		PlatformAccount:     repository.NewPlatformAccountRepository(c.db),
-		Product:             repository.NewProductRepository(c.db),
-		ProductType:         repository.NewProductTypeRepository(c.db),
-		ProductTypeCategory: repository.NewProductTypeCategoryRepository(c.db),
-		ProductAPIRelation:  repository.NewProductAPIRelationRepository(c.db),
-		Retry:               repository.NewRetryRepository(c.db),
-		CallbackLog:         repository.NewCallbackLogRepository(c.db),
-		BalanceLog:          repository.NewBalanceLogRepository(c.db),
-		BalanceQueryRecord:  repository.NewBalanceQueryRecordRepository(c.db),
-		Notification:        notificationRepo.NewRepository(c.db),
-		TaskConfig:          repository.NewTaskConfigRepository(c.db),
-		TaskOrder:           repository.NewTaskOrderRepository(c.db),
-		DaichongOrder:       repository.NewDaichongOrderRepository(c.db),
-		PhoneLocation:       repository.NewPhoneLocationRepository(c.db),
-		Permission:          repository.NewPermissionRepository(c.db),
-		Role:                repository.NewRoleRepository(c.db),
-		UserLog:             repository.NewUserLogRepository(c.db),
-		CreditLog:           repository.NewCreditLogRepository(c.db),
-		SystemConfig:        repository.NewSystemConfigRepository(c.db),
-		ExternalAPIKey:      repository.NewExternalAPIKeyRepository(c.db),
-		OrderException:      repository.NewOrderExceptionRepository(c.db),
+		User:                   repository.NewUserRepository(c.db),
+		Order:                  repository.NewOrderRepository(c.db),
+		OrderStatistics:        repository.NewOrderStatisticsRepository(c.db),
+		Platform:               repository.NewPlatformRepository(c.db),
+		PlatformAPI:            repository.NewPlatformAPIRepository(c.db),
+		PlatformAPIParam:       repository.NewPlatformAPIParamRepository(c.db),
+		PlatformAccount:        repository.NewPlatformAccountRepository(c.db),
+		PlatformAccountVariant: repository.NewPlatformAccountVariantRepository(c.db),
+		Product:                repository.NewProductRepository(c.db),
+		ProductType:            repository.NewProductTypeRepository(c.db),
+		ProductTypeCategory:    repository.NewProductTypeCategoryRepository(c.db),
+		ProductAPIRelation:     repository.NewProductAPIRelationRepository(c.db),
+		Retry:                  repository.NewRetryRepository(c.db),
+		CallbackLog:            repository.NewCallbackLogRepository(c.db),
+		BalanceLog:             repository.NewBalanceLogRepository(c.db),
+		BalanceQueryRecord:     repository.NewBalanceQueryRecordRepository(c.db),
+		Notification:           notificationRepo.NewRepository(c.db),
+		TaskConfig:             repository.NewTaskConfigRepository(c.db),
+		TaskOrder:              repository.NewTaskOrderRepository(c.db),
+		DaichongOrder:          repository.NewDaichongOrderRepository(c.db),
+		PhoneLocation:          repository.NewPhoneLocationRepository(c.db),
+		Permission:             repository.NewPermissionRepository(c.db),
+		Role:                   repository.NewRoleRepository(c.db),
+		UserLog:                repository.NewUserLogRepository(c.db),
+		CreditLog:              repository.NewCreditLogRepository(c.db),
+		SystemConfig:           repository.NewSystemConfigRepository(c.db),
+		ExternalAPIKey:         repository.NewExternalAPIKeyRepository(c.db),
+		OrderException:         repository.NewOrderExceptionRepository(c.db),
 	}
 }
 
@@ -253,6 +299,7 @@ func (c *Container) initRepositories() {
 func (c *Container) initServices() error {
 	// 创建队列实例
 	queueInstance := queue.NewRedisQueue()
+	c.taskQueue = queueInstance
 
 	// 创建平台账号余额服务
 	c.services = &Services{}
@@ -310,7 +357,7 @@ func (c *Container) initServices() error {
 	c.services.Notification = notificationService.NewNotificationService(c.repositories.Notification, queueInstance)
 
 	// 初始化PhoneQuery服务（需要在充值服务之前创建）
-	c.services.PhoneQuery = service.NewPhoneQueryService(c.config)
+	c.services.PhoneQuery = service.NewPhoneQueryService()
 
 	// 初始化SystemConfig服务（需要在其他服务之前创建）
 	c.services.SystemConfig = service.NewSystemConfigService(c.repositories.SystemConfig)
@@ -406,14 +453,14 @@ func (c *Container) initServices() error {
 
 	// 初始化TaskService
 	taskConfig := &configs.TaskConfig{
-		Interval:             c.config.Task.Interval,
-		OrderDetailsInterval: c.config.Task.OrderDetailsInterval,
-		MaxRetries:           c.config.Task.MaxRetries,
-		RetryDelay:           c.config.Task.RetryDelay,
-		MaxConcurrent:        c.config.Task.MaxConcurrent,
-		BatchSize:            c.config.Task.BatchSize,
-		SuspendThreshold:     c.config.Task.SuspendThreshold,
-		ResumeThreshold:      c.config.Task.ResumeThreshold,
+		Interval:             viper.GetInt("task.interval"),
+		OrderDetailsInterval: viper.GetInt("task.order_details_interval"),
+		MaxRetries:           viper.GetInt("task.max_retries"),
+		RetryDelay:           viper.GetInt("task.retry_delay"),
+		MaxConcurrent:        viper.GetInt("task.max_concurrent"),
+		BatchSize:            viper.GetInt("task.batch_size"),
+		SuspendThreshold:     viper.GetInt("task.suspend_threshold"),
+		ResumeThreshold:      viper.GetInt("task.resume_threshold"),
 	}
 	c.services.Task = service.NewTaskService(
 		c.repositories.TaskConfig,
@@ -461,6 +508,8 @@ func (c *Container) initServices() error {
 
 	// 初始化PlatformPushStatus服务
 	c.services.PlatformPushStatus = platform.NewPushStatusService(c.repositories.PlatformAccount)
+	c.services.PlatformAccount = service.NewPlatformAccountService(c.repositories.PlatformAccount)
+	c.services.PlatformAccountVariant = service.NewPlatformAccountVariantService(c.repositories.PlatformAccountVariant, c.repositories.PlatformAccount)
 
 	// 初始化系统配置数据
 	if err := c.services.SystemConfig.InitSystemConfigs(context.Background()); err != nil {
@@ -510,7 +559,7 @@ func (c *Container) GetSQLDB() (*sql.DB, error) {
 }
 
 // GetRedis 获取Redis客户端
-func (c *Container) GetRedis() *redisV8.Client {
+func (c *Container) GetRedis() *redisc.Client {
 	return c.redisClient
 }
 
@@ -554,26 +603,27 @@ func (c *Container) initOptimizedComponents() error {
 	// 初始化指标管理器
 	c.metricsManager = metrics.NewMetricsManager()
 
-	// 初始化数据库管理器
-	dbConfig := &database.DatabaseConfig{
-		Host:            c.config.DB.Host,
-		Port:            c.config.DB.Port,
-		User:            c.config.DB.User,
-		Password:        c.config.DB.Password,
-		Name:            c.config.DB.Name,
-		Charset:         "utf8mb4",
-		MaxIdleConns:    10,
-		MaxOpenConns:    100,
-		ConnMaxLifetime: time.Hour,
-		SlowThreshold:   time.Second,
-		LogLevel:        "info",
-	}
+	if c.databaseManager == nil {
+		dbConfig := &database.DatabaseConfig{
+			Host:            viper.GetString("database.host"),
+			Port:            viper.GetInt("database.port"),
+			User:            viper.GetString("database.user"),
+			Password:        viper.GetString("database.password"),
+			Name:            viper.GetString("database.dbname"),
+			Charset:         "utf8mb4",
+			MaxIdleConns:    viper.GetInt("database.max_idle_conns"),
+			MaxOpenConns:    viper.GetInt("database.max_open_conns"),
+			ConnMaxLifetime: time.Hour,
+			SlowThreshold:   time.Second,
+			LogLevel:        viper.GetString("log.level"),
+		}
 
-	dm, err := database.NewDatabaseManager(dbConfig)
-	if err != nil {
-		return fmt.Errorf("failed to initialize database manager: %w", err)
+		dm, err := database.NewDatabaseManager(dbConfig)
+		if err != nil {
+			return fmt.Errorf("failed to initialize database manager: %w", err)
+		}
+		c.databaseManager = dm
 	}
-	c.databaseManager = dm
 
 	// 初始化安全中间件：优先读取 configs/config.yaml 的 security.* 配置，缺省时采用合理默认
 	jwtSkip := viper.GetStringSlice("security.jwt.skip_paths")
@@ -612,8 +662,8 @@ func (c *Container) initOptimizedComponents() error {
 
 	securityConfig := &pkgMiddleware.SecurityConfig{
 		JWT: pkgMiddleware.JWTConfig{
-			Secret:     c.config.JWT.Secret,
-			Expiration: time.Duration(c.config.JWT.Expire) * time.Hour,
+			Secret:     viper.GetString("jwt.secret"),
+			Expiration: time.Duration(viper.GetInt("jwt.expire")) * time.Hour,
 			Issuer:     "recharge-system",
 			SkipPaths:  jwtSkip,
 		},
@@ -662,5 +712,15 @@ func (c *Container) Close() error {
 			return err
 		}
 	}
+	if c.databaseManager != nil {
+		if err := c.databaseManager.Close(); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// GetTaskQueue 获取业务队列（Redis 列表实现）
+func (c *Container) GetTaskQueue() queue.Queue {
+	return c.taskQueue
 }

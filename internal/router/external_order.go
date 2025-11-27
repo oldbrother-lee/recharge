@@ -1,15 +1,14 @@
 package router
 
 import (
-	"recharge-go/configs"
 	"recharge-go/internal/controller"
 	"recharge-go/internal/middleware"
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
 	"recharge-go/internal/signature"
-    "recharge-go/pkg/lock"
-    "recharge-go/pkg/log"
+	"recharge-go/pkg/lock"
+	"recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
 	"recharge-go/pkg/redis"
 
@@ -46,19 +45,19 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 
 	balanceService := service.NewBalanceService(balanceLogRepo, userRepo)
 
-	// 创建手机查询服务
-	phoneQueryService := service.NewPhoneQueryService(configs.GetConfig())
-	
+	// 创建手机查询服务（使用 viper 配置快照）
+	phoneQueryService := service.NewPhoneQueryService()
+
 	// 创建余额查询记录仓库
 	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
-	
+
 	// 创建系统配置服务
 	systemConfigRepo := repository.NewSystemConfigRepository(db)
 	systemConfigService := service.NewSystemConfigService(systemConfigRepo)
 
 	// 创建订单异常服务
 	orderExceptionRepo := repository.NewOrderExceptionRepository(db)
-    orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
+	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
 
 	// 创建统一订单服务（暂时不传入retryService）
 	unifiedOrderService := service.NewUnifiedOrderService(
@@ -69,13 +68,13 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		notificationRepo,
 		queueInstance,
 		db,
-        log.Log,
+		log.Log,
 		systemConfigService,
 		productRepo,
 		nil, // retryService 稍后设置
 		orderExceptionService,
 	)
-	
+
 	// 先创建充值服务（因为订单服务需要它）
 	rechargeService := service.NewRechargeService(
 		db,
@@ -89,10 +88,10 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		platformAPIParamRepo,
 		platformAccountBalanceService,
 		balanceService,
-		phoneQueryService, // 添加手机查询服务
+		phoneQueryService,      // 添加手机查询服务
 		balanceQueryRecordRepo, // 添加余额查询记录仓库
-		unifiedOrderService, // 添加统一订单服务
-		systemConfigService, // 添加系统配置服务
+		unifiedOrderService,    // 添加统一订单服务
+		systemConfigService,    // 添加系统配置服务
 		notificationRepo,
 		queueInstance,
 	)
@@ -159,12 +158,12 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	externalOrderController := controller.NewExternalOrderController(orderService, productService, externalOrderLogRepo)
 	// 创建统一订单处理服务
 	// 统一订单服务已在上面创建
-	
+
 	// 创建签名验证器（使用基础处理器）
 	signValidator := signature.NewBaseSignatureHandler(&signature.Config{})
-	
+
 	// 重用之前创建的队列实例
-	
+
 	externalCallbackController := controller.NewExternalCallbackController(orderService, unifiedOrderService, apiKeyRepo, externalOrderLogRepo, signValidator, retryService, productRepo, queueInstance)
 	externalRefundController := controller.NewExternalRefundController(orderService)
 

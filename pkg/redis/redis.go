@@ -1,12 +1,12 @@
 package redis
 
 import (
-    "context"
-    "fmt"
-    logger "recharge-go/pkg/log"
-    "time"
+	"context"
+	"fmt"
+	logger "recharge-go/pkg/log"
+	"time"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 var (

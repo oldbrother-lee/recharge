@@ -3,21 +3,13 @@ package router
 import (
 	"recharge-go/internal/controller"
 	"recharge-go/internal/middleware"
-	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
-	"recharge-go/pkg/database"
-	"recharge-go/pkg/log"
 
 	"github.com/gin-gonic/gin"
 )
 
 // RegisterOrderExceptionRoutes 注册订单异常路由
-func RegisterOrderExceptionRoutes(r *gin.RouterGroup, userService *service.UserService) {
-	// 初始化依赖
-	orderExceptionRepo := repository.NewOrderExceptionRepository(database.DB)
-	orderRepo := repository.NewOrderRepository(database.DB)
-	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
-	orderExceptionController := controller.NewOrderExceptionController(orderExceptionService, log.Log)
+func RegisterOrderExceptionRoutes(r *gin.RouterGroup, orderExceptionController *controller.OrderExceptionController, userService *service.UserService) {
 
 	// 订单异常管理路由组 - 需要管理员权限
 	exceptions := r.Group("/order-exceptions")

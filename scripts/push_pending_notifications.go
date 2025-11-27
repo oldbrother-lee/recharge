@@ -1,14 +1,14 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
-	"log"
+    "context"
+    "encoding/json"
+    "fmt"
+    "log"
 
-	"github.com/go-redis/redis/v8"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
+    "github.com/redis/go-redis/v9"
+    "gorm.io/driver/mysql"
+    "gorm.io/gorm"
 
 	"recharge-go/internal/model/notification"
 )
@@ -22,11 +22,11 @@ func main() {
 	}
 
 	// Redis连接
-	rdb := redis.NewClient(&redis.Options{
-		Addr:     "localhost:6379",
-		Password: "",
-		DB:       0,
-	})
+    rdb := redis.NewClient(&redis.Options{
+        Addr:     "localhost:6379",
+        Password: "",
+        DB:       0,
+    })
 
 	ctx := context.Background()
 

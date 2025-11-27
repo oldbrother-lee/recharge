@@ -1,22 +1,21 @@
 package router
 
 import (
-	"recharge-go/internal/controller"
-	"recharge-go/internal/handler"
-	"recharge-go/internal/repository"
-	"recharge-go/internal/service"
-	"recharge-go/internal/service/platform"
-	"recharge-go/pkg/database"
-	"recharge-go/pkg/redis"
+    "recharge-go/internal/controller"
+    "recharge-go/internal/handler"
+    "recharge-go/internal/repository"
+    "recharge-go/internal/service"
+    "recharge-go/internal/service/platform"
+    "recharge-go/pkg/redis"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
+    "gorm.io/gorm"
 )
 
 // RegisterTaskRoutes 依赖注入 platformSvc
-func RegisterTaskRoutes(r *gin.RouterGroup, platformSvc *platform.Service) {
-	db := database.DB
-	taskConfigRepo := repository.NewTaskConfigRepository(db)
-	taskOrderRepo := repository.NewTaskOrderRepository(db)
+func RegisterTaskRoutes(r *gin.RouterGroup, db *gorm.DB, platformSvc *platform.Service) {
+    taskConfigRepo := repository.NewTaskConfigRepository(db)
+    taskOrderRepo := repository.NewTaskOrderRepository(db)
 
 	taskOrderHandler := handler.NewTaskOrderHandler(taskOrderRepo)
 	taskConfigService := service.NewTaskConfigService(taskConfigRepo)

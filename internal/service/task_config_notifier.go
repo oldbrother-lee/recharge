@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"time"
 
-    "github.com/go-redis/redis/v8"
-    logger "recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // TaskConfigNotifier 任务配置变更通知器

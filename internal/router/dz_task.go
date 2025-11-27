@@ -1,20 +1,19 @@
 package router
 
 import (
-	"recharge-go/internal/controller"
-	"recharge-go/internal/repository"
-	"recharge-go/internal/service"
-	"recharge-go/pkg/database"
-	"recharge-go/pkg/redis"
+    "recharge-go/internal/controller"
+    "recharge-go/internal/repository"
+    "recharge-go/internal/service"
+    "recharge-go/pkg/redis"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
+    "gorm.io/gorm"
 )
 
 // RegisterDzTaskRoutes 注册得众平台任务配置路由
-func RegisterDzTaskRoutes(r *gin.RouterGroup) {
-	db := database.DB
-	dzTaskConfigRepo := repository.NewDzTaskConfigRepository(db)
-	dzTaskConfigService := service.NewDzTaskConfigService(dzTaskConfigRepo)
+func RegisterDzTaskRoutes(r *gin.RouterGroup, db *gorm.DB) {
+    dzTaskConfigRepo := repository.NewDzTaskConfigRepository(db)
+    dzTaskConfigService := service.NewDzTaskConfigService(dzTaskConfigRepo)
 
 	// 创建TaskConfigNotifier
 	redisClient := redis.GetClient()

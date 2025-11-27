@@ -2,12 +2,10 @@ package app
 
 import (
 	"context"
-	"log"
 
 	"recharge-go/internal/handler"
 	"recharge-go/internal/task"
-    logger "recharge-go/pkg/log"
-	"recharge-go/pkg/queue"
+	logger "recharge-go/pkg/log"
 )
 
 // NotificationApp 通知应用
@@ -38,7 +36,7 @@ func (n *NotificationApp) Initialize() error {
 	}
 
 	// 创建通知任务处理器
-	queueInstance := queue.NewRedisQueue()
+	queueInstance := n.container.GetTaskQueue()
 	n.notificationTask = task.NewNotificationTask(
 		n.container.GetServices().Notification,
 		n.container.GetServices().Order,
@@ -58,10 +56,10 @@ func (n *NotificationApp) Start(ctx context.Context) error {
 	}
 
 	// 启动通知任务处理器
-	log.Println("启动通知任务处理器...")
+	logger.Log.Info("启动通知任务处理器...")
 	go func() {
 		if err := n.notificationTask.Start(ctx); err != nil {
-			log.Printf("通知任务处理器启动失败: %v", err)
+			logger.Log.Error("通知任务处理器启动失败", logger.ErrorV2(err))
 		}
 	}()
 
@@ -70,7 +68,7 @@ func (n *NotificationApp) Start(ctx context.Context) error {
 
 // Stop 停止通知应用
 func (n *NotificationApp) Stop(ctx context.Context) error {
-	log.Println("正在停止通知处理器...")
+	logger.Log.Info("正在停止通知处理器...")
 
 	// 停止通知任务处理器
 	if n.notificationTask != nil {

@@ -10,10 +10,10 @@ import (
 	"net/http"
 	"time"
 
-	"recharge-go/configs"
 	"recharge-go/internal/model"
 	"recharge-go/pkg/log"
 
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 )
 
@@ -30,17 +30,22 @@ type PhoneQueryService interface {
 }
 
 type phoneQueryService struct {
-	config *configs.ThirdPartyAPIConfig
-	client *http.Client
+	merch   string
+	token   string
+	baseURL string
+	timeout time.Duration
+	client  *http.Client
 }
 
 // NewPhoneQueryService 创建手机查询服务
-func NewPhoneQueryService(cfg *configs.Config) PhoneQueryService {
+func NewPhoneQueryService() PhoneQueryService {
+	timeout := time.Duration(viper.GetInt("third_party_api.timeout")) * time.Second
 	return &phoneQueryService{
-		config: &cfg.ThirdPartyAPI,
-		client: &http.Client{
-			Timeout: time.Duration(cfg.ThirdPartyAPI.Timeout) * time.Second,
-		},
+		merch:   viper.GetString("third_party_api.merchant_id"),
+		token:   viper.GetString("third_party_api.token"),
+		baseURL: viper.GetString("third_party_api.base_url"),
+		timeout: timeout,
+		client:  &http.Client{Timeout: timeout},
 	}
 }
 
@@ -52,8 +57,8 @@ func (s *phoneQueryService) QueryBalance(ctx context.Context, phone, ispType str
 	)
 
 	params := map[string]string{
-		"merch": s.config.MerchantID,
-		"token": s.config.Token,
+		"merch": s.merch,
+		"token": s.token,
 		"type":  ispType,
 		"phone": phone,
 	}
@@ -106,8 +111,8 @@ func (s *phoneQueryService) QueryPaymentRecords(ctx context.Context, phone, ispT
 	}
 
 	params := map[string]string{
-		"merch": s.config.MerchantID,
-		"token": s.config.Token,
+		"merch": s.merch,
+		"token": s.token,
 		"type":  ispType,
 		"phone": phone,
 	}
@@ -236,7 +241,7 @@ func (s *phoneQueryService) sendFormRequest(ctx context.Context, endpoint string
 	}
 
 	// 构建完整URL
-	url := s.config.BaseURL + endpoint
+	url := s.baseURL + endpoint
 
 	// 创建HTTP请求
 	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)

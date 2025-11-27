@@ -8,15 +8,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"recharge-go/configs"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
-    logger "recharge-go/pkg/log"
+	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/redis"
 	"recharge-go/pkg/signature"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 // MilliTime 支持毫秒时间戳自动转 time.Time
@@ -102,11 +103,10 @@ type Service struct {
 }
 
 func NewService(tokenRepo *repository.PlatformTokenRepository, platformRepo repository.PlatformRepository) *Service {
-	cfg := configs.GetConfig()
 	return &Service{
-		apiKey:       cfg.API.Key,
-		userID:       cfg.API.UserID,
-		baseURL:      strings.TrimRight(cfg.API.BaseURL, "/"),
+		apiKey:       viper.GetString("api.key"),
+		userID:       viper.GetString("api.user_id"),
+		baseURL:      strings.TrimRight(viper.GetString("api.base_url"), "/"),
 		tokenRepo:    tokenRepo,
 		platformRepo: platformRepo,
 	}
@@ -775,10 +775,10 @@ func (s *Service) submitTaskWithRetryContext(ctx context.Context, channelID int,
 			logger.Int64V2("channel_id", int64(channelID)),
 			logger.StringV2("product_id", productID),
 			logger.ErrorV2(err))
-		
+
 		// 在等待期间也要检查context取消
 		select {
-			case <-ctx.Done():
+		case <-ctx.Done():
 			logger.InfoV2("Token申请在等待期间被取消",
 				logger.Int64V2("channel_id", int64(channelID)),
 				logger.StringV2("product_id", productID),

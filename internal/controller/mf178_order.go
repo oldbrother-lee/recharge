@@ -1,19 +1,18 @@
 package controller
 
 import (
-	"bytes"
-	"encoding/json"
-	"io"
-	"net/http"
-	"recharge-go/internal/model"
-	"recharge-go/internal/repository"
-	"recharge-go/internal/service"
-	"recharge-go/pkg/database"
-	"recharge-go/pkg/log"
-	logger "recharge-go/pkg/log"
-	resp "recharge-go/pkg/utils/response"
-	"strconv"
-	"time"
+    "bytes"
+    "encoding/json"
+    "io"
+    "net/http"
+    "recharge-go/internal/model"
+    "recharge-go/internal/repository"
+    "recharge-go/internal/service"
+    "recharge-go/pkg/log"
+    logger "recharge-go/pkg/log"
+    resp "recharge-go/pkg/utils/response"
+    "strconv"
+    "time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -21,18 +20,24 @@ import (
 )
 
 type MF178OrderController struct {
-	orderService    service.OrderService
-	rechargeService service.RechargeService
+    orderService    service.OrderService
+    rechargeService service.RechargeService
+    platformRepo    repository.PlatformRepository
+    productRepo     repository.ProductRepository
 }
 
 func NewMF178OrderController(
-	orderService service.OrderService,
-	rechargeService service.RechargeService,
+    orderService service.OrderService,
+    rechargeService service.RechargeService,
+    platformRepo repository.PlatformRepository,
+    productRepo repository.ProductRepository,
 ) *MF178OrderController {
-	return &MF178OrderController{
-		orderService:    orderService,
-		rechargeService: rechargeService,
-	}
+    return &MF178OrderController{
+        orderService:    orderService,
+        rechargeService: rechargeService,
+        platformRepo:    platformRepo,
+        productRepo:     productRepo,
+    }
 }
 
 // Int64String 支持字符串和数字类型的互转
@@ -98,15 +103,14 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 
 	userid := ctx.Param("userid")
 	// 1. 查询 platform_accounts 表，找到 account_name = userid 的账号
-	accountRepo := repository.NewPlatformRepository(database.DB)
-	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
+    account, err := c.platformRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
 		resp.Error(ctx, http.StatusBadRequest, "无效的账号标识")
 		return
 	}
 
 	// 2. 可通过 account.PlatformID 查询平台信息
-	platform, err := accountRepo.GetPlatformByID(account.PlatformID)
+    platform, err := c.platformRepo.GetPlatformByID(account.PlatformID)
 	if err != nil || platform == nil {
 		resp.Error(ctx, http.StatusBadRequest, "无效的平台")
 		return
@@ -249,7 +253,7 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 		zap.String("request_id", ctx.GetString("request_id")))
 
 	// 7. 验证产品是否存在
-	product, err := c.verifyProductExists(productID)
+    product, err := c.verifyProductExists(ctx, productID)
 	if err != nil {
 		log.Log.Error("产品验证失败",
 			zap.Error(err),
@@ -493,21 +497,15 @@ func (c *MF178OrderController) QueryOrder(ctx *gin.Context) {
 }
 
 // verifyProductExists 验证产品是否存在
-func (c *MF178OrderController) verifyProductExists(productID int64) (*model.Product, error) {
-	logger.Log.Info("开始验证产品是否存在", zap.Int64("product_id", productID))
-
-	var product model.Product
-	err := database.DB.Model(&model.Product{}).
-		Where("id = ?", productID).
-		First(&product).Error
-
-	if err != nil {
-		logger.Log.Error("验证产品失败", zap.Error(err), zap.Int64("product_id", productID))
-		return nil, err
-	}
-
-	logger.Log.Info("产品验证通过", zap.Int64("product_id", productID))
-	return &product, nil
+func (c *MF178OrderController) verifyProductExists(ctx *gin.Context, productID int64) (*model.Product, error) {
+    logger.Log.Info("开始验证产品是否存在", zap.Int64("product_id", productID))
+    product, err := c.productRepo.GetByID(ctx, productID)
+    if err != nil {
+        logger.Log.Error("验证产品失败", zap.Error(err), zap.Int64("product_id", productID))
+        return nil, err
+    }
+    logger.Log.Info("产品验证通过", zap.Int64("product_id", productID))
+    return product, nil
 }
 
 // getOrderStatusAndInfo 根据订单状态获取状态码和描述

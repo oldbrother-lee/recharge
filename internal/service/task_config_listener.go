@@ -8,7 +8,7 @@ import (
 
 	logger "recharge-go/pkg/log"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 )
 
 // TaskConfigListener 任务配置变更监听器

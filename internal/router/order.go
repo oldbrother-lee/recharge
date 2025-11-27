@@ -1,25 +1,22 @@
 package router
 
 import (
-	"recharge-go/configs"
 	"recharge-go/internal/controller"
 	"recharge-go/internal/middleware"
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
-	"recharge-go/pkg/database"
 	"recharge-go/pkg/lock"
 	"recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
 	"recharge-go/pkg/redis"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // RegisterOrderRoutes 注册订单相关路由
-func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
-	// 获取数据库连接
-	db := database.DB
+func RegisterOrderRoutes(r *gin.RouterGroup, db *gorm.DB, userService *service.UserService) {
 
 	// 创建服务实例
 	orderRepo := repository.NewOrderRepository(db)
@@ -56,7 +53,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 	creditService := service.NewCreditService(userRepo, creditLogRepo)
 
 	// 创建余额查询记录仓库
-	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(database.DB)
+	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
 
 	// 创建订单服务
 	orderService := service.NewOrderService(
@@ -68,7 +65,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		refundLockManager,
 		notificationRepo,
 		queueInstance,
-		database.DB,
+		db,
 		productRepo,
 		creditService,
 		balanceQueryRecordRepo,
@@ -76,20 +73,20 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 
 	userBalanceService := service.NewBalanceService(balanceLogRepo, userRepo)
 
-	platformAPIRepo := repository.NewPlatformAPIRepository(database.DB)
-	productAPIRelationRepo := repository.NewProductAPIRelationRepository(database.DB)
-	platformAPIParamRepo := repository.NewPlatformAPIParamRepository(database.DB)
-	retryRepo := repository.NewRetryRepository(database.DB)
+	platformAPIRepo := repository.NewPlatformAPIRepository(db)
+	productAPIRelationRepo := repository.NewProductAPIRelationRepository(db)
+	platformAPIParamRepo := repository.NewPlatformAPIParamRepository(db)
+	retryRepo := repository.NewRetryRepository(db)
 
 	// 创建手机查询服务
-	phoneQueryService := service.NewPhoneQueryService(configs.GetConfig())
+	phoneQueryService := service.NewPhoneQueryService()
 
 	// 创建系统配置服务
-	systemConfigRepo := repository.NewSystemConfigRepository(database.DB)
+	systemConfigRepo := repository.NewSystemConfigRepository(db)
 	systemConfigService := service.NewSystemConfigService(systemConfigRepo)
 
 	// 创建订单异常服务
-	orderExceptionRepo := repository.NewOrderExceptionRepository(database.DB)
+	orderExceptionRepo := repository.NewOrderExceptionRepository(db)
 	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
 
 	// 创建统一订单处理服务（暂时不传入retryService）
@@ -100,7 +97,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 		userBalanceService,
 		notificationRepo,
 		queueInstance,
-		database.DB,
+		db,
 		log.Log,
 		systemConfigService,
 		productRepo,
@@ -109,7 +106,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, userService *service.UserService) {
 	)
 
 	rechargeService := service.NewRechargeService(
-		database.DB,
+		db,
 		orderRepo,
 		platformRepo,
 		platformAPIRepo,

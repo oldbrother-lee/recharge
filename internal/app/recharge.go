@@ -8,7 +8,8 @@ import (
 	"recharge-go/internal/handler"
 	"recharge-go/internal/service"
 	"recharge-go/internal/task"
-	"recharge-go/pkg/queue"
+
+	"github.com/spf13/viper"
 )
 
 // RechargeApp 充值应用
@@ -41,13 +42,12 @@ func (r *RechargeApp) Initialize() error {
 		r.container.GetServices().Recharge,
 	)
 
-	// 创建队列实例
-	queueInstance := queue.NewRedisQueue()
-	
+	// 使用容器队列实例
+	queueInstance := r.container.GetTaskQueue()
+
 	// 创建重试任务
 	r.retryTask = task.NewRetryTask(
 		r.container.GetServices().Retry,
-		r.container.GetConfig(),
 		queueInstance,
 	)
 
@@ -61,7 +61,7 @@ func (r *RechargeApp) Start(ctx context.Context) error {
 	}
 
 	// 获取配置中的批量处理数量，如果未配置或为0则使用默认值10
-	batchSize := r.container.GetConfig().Task.BatchSize
+	batchSize := viper.GetInt("task.batch_size")
 	if batchSize <= 0 {
 		batchSize = 10
 	}

@@ -8,6 +8,9 @@ database:
   user: root
   password: qynfqepwq
   dbname: recharge-new
+  max_idle_conns: 10
+  max_open_conns: 100
+  conn_max_lifetime: 3600
 
 jwt:
   secret: recharge-new
@@ -64,3 +67,25 @@ third_party_api:
   merchant_id: "250705SY"         # 商户号（需要替换为实际值）
   token: "5eb38f73b40f4b6aa48da3cc7027a0c1"                     # 访问令牌（需要替换为实际值）
   timeout: 30                             # 请求超时时间（秒）
+
+security:
+  jwt:
+    skip_paths:
+      - /api/v1/user/login
+      - /health
+  rate_limit:
+    enabled: true
+    rps: 1
+    burst: 1
+    include_paths:
+      - /api/v1/user/login
+      - /api/v1/user/register
+  cors:
+    allow_origins: ["*"]
+    allow_methods: ["GET","POST","OPTIONS"]
+    allow_headers: ["Authorization","Content-Type","X-Request-ID"]
+    expose_headers: []
+    allow_credentials: false
+    max_age: 600
+    skip_paths:
+      - /health  

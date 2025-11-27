@@ -1,16 +1,18 @@
 package main
 
 import (
-	"log"
-	"recharge-go/internal/model"
-	"recharge-go/internal/repository"
-	"recharge-go/pkg/database"
-	"time"
+    "log"
+    "recharge-go/configs"
+    "recharge-go/internal/model"
+    "recharge-go/internal/repository"
+    "recharge-go/pkg/database"
+    "time"
 )
 
 func main() {
-	// 初始化数据库连接
-	err := database.InitDB()
+    // 初始化数据库连接
+    cfg := configs.GetConfig()
+    err := database.Init(cfg)
 	if err != nil {
 		log.Fatalf("初始化数据库失败: %v", err)
 	}

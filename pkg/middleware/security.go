@@ -13,8 +13,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/time/rate"
 
-	appErrors "recharge-go/pkg/errors"
 	log "recharge-go/pkg/log"
+	resp "recharge-go/pkg/utils/response"
 )
 
 // SecurityConfig 安全配置
@@ -34,11 +34,12 @@ type JWTConfig struct {
 
 // RateLimitConfig 限流配置
 type RateLimitConfig struct {
-	Enabled   bool          `yaml:"enabled"`
-	RPS       int           `yaml:"rps"`
-	Burst     int           `yaml:"burst"`
-	Window    time.Duration `yaml:"window"`
-	SkipPaths []string      `yaml:"skip_paths"`
+	Enabled      bool          `yaml:"enabled"`
+	RPS          int           `yaml:"rps"`
+	Burst        int           `yaml:"burst"`
+	Window       time.Duration `yaml:"window"`
+	SkipPaths    []string      `yaml:"skip_paths"`
+	IncludePaths []string      `yaml:"include_paths"`
 }
 
 // CORSConfig CORS配置
@@ -49,6 +50,7 @@ type CORSConfig struct {
 	ExposeHeaders    []string `yaml:"expose_headers"`
 	AllowCredentials bool     `yaml:"allow_credentials"`
 	MaxAge           int      `yaml:"max_age"`
+	SkipPaths        []string `yaml:"skip_paths"`
 }
 
 // JWTClaims JWT声明
@@ -96,7 +98,12 @@ func (sm *SecurityMiddleware) JWTAuth() gin.HandlerFunc {
 		// 获取token
 		token := sm.extractToken(c)
 		if token == "" {
-			appErrors.HandleError(c, appErrors.ErrUnauthorized.WithDetails("Missing authorization token"))
+			log.WithContext(c.Request.Context()).Warn("JWT missing token",
+				log.String("path", c.Request.URL.Path),
+				log.String("method", c.Request.Method),
+			)
+			resp.ErrorWithCode(c, http.StatusUnauthorized, 1002, "Unauthorized", nil)
+			c.Abort()
 			return
 		}
 
@@ -107,7 +114,8 @@ func (sm *SecurityMiddleware) JWTAuth() gin.HandlerFunc {
 				log.String("token", token),
 				log.ErrorV2(err),
 			)
-			appErrors.HandleError(c, appErrors.ErrUnauthorized.WithDetails("Invalid token"))
+			resp.ErrorWithCode(c, http.StatusUnauthorized, 1002, "Unauthorized", nil)
+			c.Abort()
 			return
 		}
 
@@ -141,8 +149,7 @@ func (sm *SecurityMiddleware) RateLimit() gin.HandlerFunc {
 			return
 		}
 
-		// 检查是否跳过限流
-		if sm.shouldSkipRateLimit(c.Request.URL.Path) {
+		if !sm.shouldApplyRateLimit(c.Request.URL.Path) {
 			c.Next()
 			return
 		}
@@ -159,7 +166,8 @@ func (sm *SecurityMiddleware) RateLimit() gin.HandlerFunc {
 				log.String("client_id", clientID),
 				log.String("path", c.Request.URL.Path),
 			)
-			appErrors.HandleError(c, appErrors.New(appErrors.TooManyRequests, "Rate limit exceeded"))
+			resp.ErrorWithCode(c, http.StatusTooManyRequests, 1006, "Too Many Requests", nil)
+			c.Abort()
 			return
 		}
 
@@ -170,6 +178,10 @@ func (sm *SecurityMiddleware) RateLimit() gin.HandlerFunc {
 // CORS CORS中间件
 func (sm *SecurityMiddleware) CORS() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if matchPath(c.Request.URL.Path, sm.config.CORS.SkipPaths) {
+			c.Next()
+			return
+		}
 		origin := c.Request.Header.Get("Origin")
 
 		// 检查是否允许的源
@@ -273,32 +285,35 @@ func (sm *SecurityMiddleware) validateToken(tokenString string) (*JWTClaims, err
 
 // shouldSkipJWT 检查是否跳过JWT认证
 func (sm *SecurityMiddleware) shouldSkipJWT(path string) bool {
-	for _, skipPath := range sm.config.JWT.SkipPaths {
-		if strings.HasPrefix(path, skipPath) {
-			return true
-		}
-	}
-	return false
+	return matchPath(path, sm.config.JWT.SkipPaths)
 }
 
 // shouldSkipRateLimit 检查是否跳过限流
 func (sm *SecurityMiddleware) shouldSkipRateLimit(path string) bool {
-	for _, skipPath := range sm.config.RateLimit.SkipPaths {
-		if strings.HasPrefix(path, skipPath) {
-			return true
-		}
+	return matchPath(path, sm.config.RateLimit.SkipPaths)
+}
+
+func (sm *SecurityMiddleware) shouldApplyRateLimit(path string) bool {
+	if len(sm.config.RateLimit.IncludePaths) > 0 {
+		return matchPath(path, sm.config.RateLimit.IncludePaths)
 	}
-	return false
+	return !matchPath(path, sm.config.RateLimit.SkipPaths)
 }
 
 // getClientID 获取客户端标识
 func (sm *SecurityMiddleware) getClientID(c *gin.Context) string {
-	// 优先使用用户ID
+	// 优先从 Authorization 解析用户ID（即使 JWTAuth 尚未运行）
+	token := sm.extractToken(c)
+	if token != "" {
+		if claims, err := sm.validateToken(token); err == nil {
+			return fmt.Sprintf("user:%d", claims.UserID)
+		}
+	}
+	// 回退：如果上下文已有 user_id（例如其他中间件已设置）
 	if userID, exists := c.Get("user_id"); exists {
 		return fmt.Sprintf("user:%s", userID)
 	}
-
-	// 使用IP地址
+	// 最后回退到 IP 维度限流
 	return fmt.Sprintf("ip:%s", c.ClientIP())
 }
 
@@ -403,12 +418,31 @@ func (sm *SecurityMiddleware) GenerateToken(userID, username, role string) (stri
 	return token.SignedString([]byte(sm.config.JWT.Secret))
 }
 
+func matchPath(path string, patterns []string) bool {
+	for _, p := range patterns {
+		if p == path {
+			return true
+		}
+		if strings.HasSuffix(p, "*") {
+			prefix := strings.TrimSuffix(p, "*")
+			if strings.HasPrefix(path, prefix) {
+				return true
+			}
+		}
+		if strings.HasPrefix(path, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // RequireRole 角色权限中间件
 func (sm *SecurityMiddleware) RequireRole(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		userRole, exists := c.Get("role")
 		if !exists {
-			appErrors.HandleError(c, appErrors.ErrUnauthorized.WithDetails("No role information"))
+			resp.ErrorWithCode(c, http.StatusUnauthorized, 1002, "Unauthorized", nil)
+			c.Abort()
 			return
 		}
 
@@ -425,7 +459,8 @@ func (sm *SecurityMiddleware) RequireRole(roles ...string) gin.HandlerFunc {
 			log.Any("required_roles", roles),
 		)
 
-		appErrors.HandleError(c, appErrors.ErrForbidden.WithDetails("Insufficient permissions"))
+		resp.ErrorWithCode(c, http.StatusForbidden, 1003, "Forbidden", nil)
+		c.Abort()
 	}
 }
 

@@ -1,14 +1,14 @@
 package controller
 
 import (
-	"net/http"
-	"strconv"
+    "net/http"
+    "strconv"
 
-	"recharge-go/internal/model"
-	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
+    "recharge-go/internal/model"
+    "recharge-go/internal/service"
+    resp "recharge-go/pkg/utils/response"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
 )
 
 // ProductAPIRelationController 商品接口关联控制器
@@ -24,80 +24,80 @@ func NewProductAPIRelationController(svc service.ProductAPIRelationService) *Pro
 // Create 创建商品接口关联
 func (c *ProductAPIRelationController) Create(ctx *gin.Context) {
 	var req model.ProductAPIRelationCreateRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
-		return
-	}
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, err.Error())
+        return
+    }
 
-	if err := c.svc.Create(ctx, &req); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    if err := c.svc.Create(ctx, &req); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // Update 更新商品接口关联
 func (c *ProductAPIRelationController) Update(ctx *gin.Context) {
 	var req model.ProductAPIRelationUpdateRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
-		return
-	}
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, err.Error())
+        return
+    }
 
-	if err := c.svc.Update(ctx, &req); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    if err := c.svc.Update(ctx, &req); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // Delete 删除商品接口关联
 func (c *ProductAPIRelationController) Delete(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid id")
-		return
-	}
+    id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "invalid id")
+        return
+    }
 
-	if err := c.svc.Delete(ctx, id); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    if err := c.svc.Delete(ctx, id); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // GetByID 根据ID获取商品接口关联
 func (c *ProductAPIRelationController) GetByID(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid id")
-		return
-	}
+    id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "invalid id")
+        return
+    }
 
-	relation, err := c.svc.GetByID(ctx, id)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    relation, err := c.svc.GetByID(ctx, id)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	if relation == nil {
-		utils.Error(ctx, http.StatusNotFound, "not found")
-		return
-	}
+    if relation == nil {
+        resp.Error(ctx, http.StatusNotFound, "not found")
+        return
+    }
 
-	utils.Success(ctx, relation)
+    resp.Success(ctx, relation)
 }
 
 // GetList 获取商品接口关联列表
 func (c *ProductAPIRelationController) GetList(ctx *gin.Context) {
 	var req model.ProductAPIRelationListRequest
-	if err := ctx.ShouldBindQuery(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
-		return
-	}
+    if err := ctx.ShouldBindQuery(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, err.Error())
+        return
+    }
 
 	// 处理可选参数
 	if productID := ctx.Query("product_id"); productID != "" {
@@ -127,11 +127,11 @@ func (c *ProductAPIRelationController) GetList(ctx *gin.Context) {
 		req.Status = &s
 	}
 
-	resp, err := c.svc.List(ctx, &req)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    data, err := c.svc.List(ctx, &req)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, resp)
+    resp.Success(ctx, data)
 }

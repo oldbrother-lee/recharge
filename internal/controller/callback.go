@@ -8,10 +8,10 @@ import (
 	"net/url"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
 	"recharge-go/pkg/log"
 	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/signature"
+	resp "recharge-go/pkg/utils/response"
 	"strconv"
 	"strings"
 
@@ -129,7 +129,7 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 	// 1. 获取userid
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
-		utils.ErrorWithStatus(ctx, 500, 400, "缺少userid")
+		resp.ErrorWithCode(ctx, http.StatusInternalServerError, 400, "缺少userid", nil)
 		return
 	}
 
@@ -137,21 +137,21 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 	account, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("返回：401 平台账号不存在", logger.ErrorV2(err))
-		utils.ErrorWithStatus(ctx, 401, 400, "平台账号不存在")
+		resp.ErrorWithCode(ctx, http.StatusUnauthorized, 400, "平台账号不存在", nil)
 		return
 	}
 
 	// 读取原始请求体
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
-		utils.Error(ctx, 400, "读取请求体失败")
+		resp.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
 	// 解析参数
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
-		utils.Error(ctx, 400, "参数解析失败")
+		resp.Error(ctx, 400, "参数解析失败")
 		return
 	}
 	params := make(map[string]string)
@@ -242,7 +242,7 @@ func (c *CallbackController) HandleMishiCallback(ctx *gin.Context) {
 			logger.StringV2("received_sign", receivedSign),
 			logger.StringV2("expected_sign", activeSignMD5),
 		)
-		utils.ErrorWithStatus(ctx, 401, 401, "签名校验失败")
+		resp.ErrorWithCode(ctx, http.StatusUnauthorized, 401, "签名校验失败", nil)
 		return
 	}
 
@@ -263,7 +263,7 @@ func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理充值平台回调 返回：400 缺少userid")
-		utils.Error(ctx, 400, "缺少userid")
+		resp.Error(ctx, 400, "缺少userid")
 		return
 	}
 
@@ -271,7 +271,7 @@ func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理充值平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "平台账号不存在")
+		resp.Error(ctx, 400, "平台账号不存在")
 		return
 	}
 
@@ -279,7 +279,7 @@ func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理充值平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "读取请求体失败")
+		resp.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
@@ -295,7 +295,7 @@ func (c *CallbackController) HandleChongzhiCallback(ctx *gin.Context) {
 	err = c.rechargeService.HandleCallback(ctx, "chongzhi", body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理充值平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
-		utils.Error(ctx, 500, err.Error())
+		resp.Error(ctx, 500, err.Error())
 		return
 	}
 
@@ -311,7 +311,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：400 缺少userid")
-		utils.Error(ctx, 400, "缺少userid")
+		resp.Error(ctx, 400, "缺少userid")
 		return
 	}
 
@@ -319,7 +319,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	account, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "平台账号不存在")
+		resp.Error(ctx, 400, "平台账号不存在")
 		return
 	}
 	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("平台账号加载成功", logger.StringV2("userid", userIDStr), logger.AnyV2("account", account))
@@ -328,7 +328,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "读取请求体失败")
+		resp.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
@@ -336,7 +336,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：400 解析参数失败", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "解析参数失败")
+		resp.Error(ctx, 400, "解析参数失败")
 		return
 	}
 	params := make(map[string]string)
@@ -357,7 +357,7 @@ func (c *CallbackController) HandleDayuanrenCallback(ctx *gin.Context) {
 	err = c.rechargeService.HandleCallback(ctx, "dayuanren", body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理大猿人平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
-		utils.Error(ctx, 500, err.Error())
+		resp.Error(ctx, 500, err.Error())
 		return
 	}
 
@@ -373,7 +373,7 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：400 缺少userid")
-		utils.Error(ctx, 400, "缺少userid")
+		resp.Error(ctx, 400, "缺少userid")
 		return
 	}
 
@@ -381,7 +381,7 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "平台账号不存在")
+		resp.Error(ctx, 400, "平台账号不存在")
 		return
 	}
 
@@ -389,7 +389,7 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "读取请求体失败")
+		resp.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
@@ -397,7 +397,7 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：400 解析参数失败", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "解析参数失败")
+		resp.Error(ctx, 400, "解析参数失败")
 		return
 	}
 	params := make(map[string]string)
@@ -419,7 +419,7 @@ func (c *CallbackController) HandlePayc2Callback(ctx *gin.Context) {
 	err = c.rechargeService.HandleCallback(ctx, "payc2", body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理 payc2 平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
-		utils.Error(ctx, 500, err.Error())
+		resp.Error(ctx, 500, err.Error())
 		return
 	}
 
@@ -435,7 +435,7 @@ func (c *CallbackController) HandleLingshiCallback(ctx *gin.Context) {
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理灵石平台回调 返回：400 缺少userid")
-		utils.Error(ctx, 400, "缺少userid")
+		resp.Error(ctx, 400, "缺少userid")
 		return
 	}
 
@@ -443,7 +443,7 @@ func (c *CallbackController) HandleLingshiCallback(ctx *gin.Context) {
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理灵石平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "平台账号不存在")
+		resp.Error(ctx, 400, "平台账号不存在")
 		return
 	}
 
@@ -451,7 +451,7 @@ func (c *CallbackController) HandleLingshiCallback(ctx *gin.Context) {
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理灵石平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "读取请求体失败")
+		resp.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
@@ -467,7 +467,7 @@ func (c *CallbackController) HandleLingshiCallback(ctx *gin.Context) {
 	err = c.rechargeService.HandleCallback(ctx, "lingshi", body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理灵石平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
-		utils.Error(ctx, 500, err.Error())
+		resp.Error(ctx, 500, err.Error())
 		return
 	}
 
@@ -483,7 +483,7 @@ func (c *CallbackController) HandleKasushouCallback(ctx *gin.Context) {
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理卡速售平台回调 返回：400 缺少userid")
-		utils.Error(ctx, 400, "缺少userid")
+		resp.Error(ctx, 400, "缺少userid")
 		return
 	}
 
@@ -491,7 +491,7 @@ func (c *CallbackController) HandleKasushouCallback(ctx *gin.Context) {
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理卡速售平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "平台账号不存在")
+		resp.Error(ctx, 400, "平台账号不存在")
 		return
 	}
 
@@ -499,7 +499,7 @@ func (c *CallbackController) HandleKasushouCallback(ctx *gin.Context) {
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理卡速售平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "读取请求体失败")
+		resp.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
@@ -515,7 +515,7 @@ func (c *CallbackController) HandleKasushouCallback(ctx *gin.Context) {
 	err = c.rechargeService.HandleCallback(ctx, "kasushou", body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理卡速售平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
-		utils.Error(ctx, 500, err.Error())
+		resp.Error(ctx, 500, err.Error())
 		return
 	}
 
@@ -531,7 +531,7 @@ func (c *CallbackController) HandleShangtengCallback(ctx *gin.Context) {
 	userIDStr := ctx.Param("userid")
 	if userIDStr == "" {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理商腾科技平台回调 返回：400 缺少userid")
-		utils.Error(ctx, 400, "缺少userid")
+		resp.Error(ctx, 400, "缺少userid")
 		return
 	}
 
@@ -539,7 +539,7 @@ func (c *CallbackController) HandleShangtengCallback(ctx *gin.Context) {
 	_, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理商腾科技平台回调 返回：400 平台账号不存在", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "平台账号不存在")
+		resp.Error(ctx, 400, "平台账号不存在")
 		return
 	}
 
@@ -547,7 +547,7 @@ func (c *CallbackController) HandleShangtengCallback(ctx *gin.Context) {
 	body, err := io.ReadAll(ctx.Request.Body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理商腾科技平台回调 返回：400 读取请求体失败", logger.ErrorV2(err))
-		utils.Error(ctx, 400, "读取请求体失败")
+		resp.Error(ctx, 400, "读取请求体失败")
 		return
 	}
 
@@ -563,11 +563,11 @@ func (c *CallbackController) HandleShangtengCallback(ctx *gin.Context) {
 	err = c.rechargeService.HandleCallback(ctx, "shangteng", body)
 	if err != nil {
 		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("处理商腾科技平台回调 返回：500 处理回调失败", logger.ErrorV2(err))
-		utils.Error(ctx, 500, err.Error())
+		resp.Error(ctx, 500, err.Error())
 		return
 	}
 
 	// 5. 返回成功（统一响应）
 	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理商腾科技平台回调 返回：200 成功")
-	utils.Success(ctx, "ok")
+	resp.Success(ctx, "ok")
 }

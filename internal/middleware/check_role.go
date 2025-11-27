@@ -1,11 +1,11 @@
 package middleware
 
 import (
-	"fmt"
-	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
+    "fmt"
+    "recharge-go/internal/service"
+    resp "recharge-go/pkg/utils/response"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
 )
 
 func CheckSuperAdmin(userService *service.UserService) gin.HandlerFunc {
@@ -13,12 +13,12 @@ func CheckSuperAdmin(userService *service.UserService) gin.HandlerFunc {
 		userID := ctx.GetInt64("user_id")
 		fmt.Println(userID, "userID")
 		// 获取用户角色
-		userWithRoles, err := userService.GetUserWithRoles(ctx, userID)
-		if err != nil {
-			utils.Error(ctx, 500, "Failed to get user roles")
-			ctx.Abort()
-			return
-		}
+        userWithRoles, err := userService.GetUserWithRoles(ctx, userID)
+        if err != nil {
+            resp.Error(ctx, 500, "Failed to get user roles")
+            ctx.Abort()
+            return
+        }
 		fmt.Println(userWithRoles, "ttttttt")
 		// 检查是否是超级管理员
 		isSuperAdmin := false
@@ -29,11 +29,11 @@ func CheckSuperAdmin(userService *service.UserService) gin.HandlerFunc {
 			}
 		}
 
-		if !isSuperAdmin {
-			utils.Error(ctx, 403, "Permission denied")
-			ctx.Abort()
-			return
-		}
+        if !isSuperAdmin {
+            resp.Error(ctx, 403, "Permission denied")
+            ctx.Abort()
+            return
+        }
 
 		ctx.Next()
 	}

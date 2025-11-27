@@ -6,6 +6,7 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/model/notification"
 	"recharge-go/pkg/database/migrations"
+	"time"
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -13,9 +14,7 @@ import (
 
 var DB *gorm.DB
 
-// InitDB 初始化数据库连接
-func InitDB() error {
-	cfg := configs.GetConfig()
+func Init(cfg *configs.Config) error {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		cfg.DB.User,
 		cfg.DB.Password,
@@ -30,20 +29,30 @@ func InitDB() error {
 		return fmt.Errorf("failed to connect to database: %v", err)
 	}
 
-	// 设置数据库连接池
 	sqlDB, err := DB.DB()
 	if err != nil {
 		return fmt.Errorf("failed to get database instance: %v", err)
 	}
-	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(100)
+	if cfg.DB.MaxIdleConns > 0 {
+		sqlDB.SetMaxIdleConns(cfg.DB.MaxIdleConns)
+	} else {
+		sqlDB.SetMaxIdleConns(10)
+	}
+	if cfg.DB.MaxOpenConns > 0 {
+		sqlDB.SetMaxOpenConns(cfg.DB.MaxOpenConns)
+	} else {
+		sqlDB.SetMaxOpenConns(100)
+	}
+	if cfg.DB.ConnMaxLifetime > 0 {
+		sqlDB.SetConnMaxLifetime(time.Duration(cfg.DB.ConnMaxLifetime) * time.Second)
+	} else {
+		sqlDB.SetConnMaxLifetime(time.Hour)
+	}
 
-	// 禁用外键检查
 	if err := DB.Exec("SET FOREIGN_KEY_CHECKS = 0").Error; err != nil {
 		return fmt.Errorf("failed to disable foreign key checks: %v", err)
 	}
 
-	// 创建所有表
 	if err := DB.AutoMigrate(
 		&model.User{},
 		&model.Role{},
@@ -93,27 +102,22 @@ func InitDB() error {
 		&model.OrderException{},
 		&model.BalanceQueryRecord{},
 		&model.OrderRetryRecord{},
-		// 新增：平台账号相关表
 		&model.Platform{},
 		&model.PlatformAccount{},
 		&model.PlatformAccountVariant{},
-		// 统一拉单配置表（章鱼/得众等平台共用）
 		&model.PullTaskConfig{},
 	); err != nil {
 		return fmt.Errorf("failed to migrate tables: %v", err)
 	}
 
-	// 启用外键检查
 	if err := DB.Exec("SET FOREIGN_KEY_CHECKS = 1").Error; err != nil {
 		return fmt.Errorf("failed to enable foreign key checks: %v", err)
 	}
 
-	// 初始化角色和权限
 	if err := migrations.InitRoles(DB); err != nil {
 		return fmt.Errorf("failed to init roles: %v", err)
 	}
 
-	// 初始化管理员账号
 	if err := migrations.InitAdmin(DB); err != nil {
 		return fmt.Errorf("failed to init admin: %v", err)
 	}

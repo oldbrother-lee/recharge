@@ -8,10 +8,10 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
 	"recharge-go/pkg/database"
 	"recharge-go/pkg/log"
 	logger "recharge-go/pkg/log"
+	resp "recharge-go/pkg/utils/response"
 	"strconv"
 	"time"
 
@@ -101,14 +101,14 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 	accountRepo := repository.NewPlatformRepository(database.DB)
 	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的账号标识")
+		resp.Error(ctx, http.StatusBadRequest, "无效的账号标识")
 		return
 	}
 
 	// 2. 可通过 account.PlatformID 查询平台信息
 	platform, err := accountRepo.GetPlatformByID(account.PlatformID)
 	if err != nil || platform == nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的平台")
+		resp.Error(ctx, http.StatusBadRequest, "无效的平台")
 		return
 	}
 
@@ -160,7 +160,7 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 		log.Log.Error("查询订单失败",
 			zap.Error(err),
 			zap.String("order_id", strconv.FormatInt(req.UserOrderID, 10)))
-		utils.Error(ctx, http.StatusInternalServerError, "查询订单失败1")
+		resp.Error(ctx, http.StatusInternalServerError, "查询订单失败1")
 		return
 	}
 
@@ -241,7 +241,7 @@ func (c *MF178OrderController) CreateOrder(ctx *gin.Context) {
 			zap.Error(err),
 			zap.String("original_code", req.OuterGoodsCode),
 			zap.String("request_id", ctx.GetString("request_id")))
-		utils.Error(ctx, http.StatusBadRequest, "无效的产品编码")
+		resp.Error(ctx, http.StatusBadRequest, "无效的产品编码")
 		return
 	}
 	log.Log.Info("产品编码转换成功",

@@ -1,19 +1,19 @@
 package middleware
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"recharge-go/internal/repository"
-	"recharge-go/internal/utils"
-	"recharge-go/pkg/signature"
-	"strings"
-	"time"
+    "encoding/json"
+    "fmt"
+    "io"
+    "net"
+    "net/http"
+    "recharge-go/internal/repository"
+    resp "recharge-go/pkg/utils/response"
+    "recharge-go/pkg/signature"
+    "strings"
+    "time"
 
-	"github.com/gin-gonic/gin"
-	"gorm.io/gorm"
+    "github.com/gin-gonic/gin"
+    "gorm.io/gorm"
 )
 
 // ExternalAuthMiddleware 外部认证中间件结构体
@@ -47,51 +47,51 @@ func (m *ExternalAuthMiddleware) ExternalAuth() gin.HandlerFunc {
 
 		// 2. 获取API Key
 		apiKey := c.GetHeader("X-API-Key")
-		if apiKey == "" {
-			utils.Error(c, http.StatusUnauthorized, "API Key is required")
-			c.Abort()
-			return
-		}
+        if apiKey == "" {
+            resp.Error(c, http.StatusUnauthorized, "API Key is required")
+            c.Abort()
+            return
+        }
 
 		// 3. 验证API Key
 		apiKeyInfo, err := m.apiKeyRepo.GetByAppKey(apiKey)
 		if err != nil {
-			if err == gorm.ErrRecordNotFound {
-				utils.Error(c, http.StatusUnauthorized, "Invalid API Key")
-			} else {
-				utils.Error(c, http.StatusInternalServerError, "API Key validation failed")
-			}
-			c.Abort()
-			return
-		}
+            if err == gorm.ErrRecordNotFound {
+                resp.Error(c, http.StatusUnauthorized, "Invalid API Key")
+            } else {
+                resp.Error(c, http.StatusInternalServerError, "API Key validation failed")
+            }
+            c.Abort()
+            return
+        }
 
 		// 4. 检查API Key状态
-		if !apiKeyInfo.IsActive() {
-			utils.Error(c, http.StatusUnauthorized, "API Key is inactive or expired")
-			c.Abort()
-			return
-		}
+        if !apiKeyInfo.IsActive() {
+            resp.Error(c, http.StatusUnauthorized, "API Key is inactive or expired")
+            c.Abort()
+            return
+        }
 
 		// 5. 检查IP白名单
-		if !apiKeyInfo.IsIPAllowed(clientIP) {
-			utils.Error(c, http.StatusForbidden, "IP not allowed")
-			c.Abort()
-			return
-		}
+        if !apiKeyInfo.IsIPAllowed(clientIP) {
+            resp.Error(c, http.StatusForbidden, "IP not allowed")
+            c.Abort()
+            return
+        }
 
 		// 6. 检查请求频率限制
-		if !m.checkRateLimit(apiKeyInfo.AppID, apiKeyInfo.RateLimit) {
-			utils.Error(c, http.StatusTooManyRequests, "Rate limit exceeded")
-			c.Abort()
-			return
-		}
+        if !m.checkRateLimit(apiKeyInfo.AppID, apiKeyInfo.RateLimit) {
+            resp.Error(c, http.StatusTooManyRequests, "Rate limit exceeded")
+            c.Abort()
+            return
+        }
 
 		// 7. 验证签名
-		if err := m.validateSignature(c, apiKeyInfo.AppSecret); err != nil {
-			utils.Error(c, http.StatusUnauthorized, fmt.Sprintf("Signature validation failed: %v", err))
-			c.Abort()
-			return
-		}
+        if err := m.validateSignature(c, apiKeyInfo.AppSecret); err != nil {
+            resp.Error(c, http.StatusUnauthorized, fmt.Sprintf("Signature validation failed: %v", err))
+            c.Abort()
+            return
+        }
 
 		// 8. 将API Key信息存储到上下文中
 		c.Set("api_key_info", apiKeyInfo)

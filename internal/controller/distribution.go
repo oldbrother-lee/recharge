@@ -1,13 +1,13 @@
 package controller
 
 import (
-	"net/http"
-	"recharge-go/internal/model"
-	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
-	"strconv"
+    "net/http"
+    "recharge-go/internal/model"
+    "recharge-go/internal/service"
+    resp "recharge-go/pkg/utils/response"
+    "strconv"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
 )
 
 type DistributionController struct {
@@ -29,17 +29,17 @@ func NewDistributionController(service *service.DistributionService) *Distributi
 // @Router /distribution/grades [post]
 func (c *DistributionController) CreateGrade(ctx *gin.Context) {
 	var grade model.DistributionGrade
-	if err := ctx.ShouldBindJSON(&grade); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    if err := ctx.ShouldBindJSON(&grade); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 
-	if err := c.service.CreateGrade(&grade); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "创建分销等级失败")
-		return
-	}
+    if err := c.service.CreateGrade(&grade); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "创建分销等级失败")
+        return
+    }
 
-	utils.Success(ctx, grade)
+    resp.Success(ctx, grade)
 }
 
 // UpdateGrade 更新分销等级
@@ -53,25 +53,25 @@ func (c *DistributionController) CreateGrade(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/grades/{id} [put]
 func (c *DistributionController) UpdateGrade(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的分销等级ID")
-		return
-	}
+    id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的分销等级ID")
+        return
+    }
 
 	var grade model.DistributionGrade
-	if err := ctx.ShouldBindJSON(&grade); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    if err := ctx.ShouldBindJSON(&grade); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 	grade.ID = id
 
-	if err := c.service.UpdateGrade(&grade); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "更新分销等级失败")
-		return
-	}
+    if err := c.service.UpdateGrade(&grade); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "更新分销等级失败")
+        return
+    }
 
-	utils.Success(ctx, grade)
+    resp.Success(ctx, grade)
 }
 
 // ListGrades 获取分销等级列表
@@ -82,13 +82,13 @@ func (c *DistributionController) UpdateGrade(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/grades [get]
 func (c *DistributionController) ListGrades(ctx *gin.Context) {
-	grades, err := c.service.ListGrades()
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取分销等级列表失败")
-		return
-	}
+    grades, err := c.service.ListGrades()
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取分销等级列表失败")
+        return
+    }
 
-	utils.Success(ctx, grades)
+    resp.Success(ctx, grades)
 }
 
 // CreateRule 创建分销规则
@@ -101,18 +101,18 @@ func (c *DistributionController) ListGrades(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/rules [post]
 func (c *DistributionController) CreateRule(ctx *gin.Context) {
-	var rule model.DistributionRule
-	if err := ctx.ShouldBindJSON(&rule); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    var rule model.DistributionRule
+    if err := ctx.ShouldBindJSON(&rule); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 
-	if err := c.service.CreateRule(&rule); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "创建分销规则失败")
-		return
-	}
+    if err := c.service.CreateRule(&rule); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "创建分销规则失败")
+        return
+    }
 
-	utils.Success(ctx, rule)
+    resp.Success(ctx, rule)
 }
 
 // ListRules 获取分销规则列表
@@ -124,19 +124,19 @@ func (c *DistributionController) CreateRule(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/rules [get]
 func (c *DistributionController) ListRules(ctx *gin.Context) {
-	gradeID, err := strconv.ParseInt(ctx.Query("grade_id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的分销等级ID")
-		return
-	}
+    gradeID, err := strconv.ParseInt(ctx.Query("grade_id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的分销等级ID")
+        return
+    }
 
-	rules, err := c.service.ListRules(gradeID)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取分销规则列表失败")
-		return
-	}
+    rules, err := c.service.ListRules(gradeID)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取分销规则列表失败")
+        return
+    }
 
-	utils.Success(ctx, rules)
+    resp.Success(ctx, rules)
 }
 
 // CreateWithdrawal 创建提现申请
@@ -149,18 +149,18 @@ func (c *DistributionController) ListRules(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/withdrawals [post]
 func (c *DistributionController) CreateWithdrawal(ctx *gin.Context) {
-	var withdrawal model.DistributionWithdrawal
-	if err := ctx.ShouldBindJSON(&withdrawal); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    var withdrawal model.DistributionWithdrawal
+    if err := ctx.ShouldBindJSON(&withdrawal); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 
-	if err := c.service.CreateWithdrawal(&withdrawal); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "创建提现申请失败")
-		return
-	}
+    if err := c.service.CreateWithdrawal(&withdrawal); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "创建提现申请失败")
+        return
+    }
 
-	utils.Success(ctx, withdrawal)
+    resp.Success(ctx, withdrawal)
 }
 
 // ListWithdrawals 获取提现记录列表
@@ -173,28 +173,28 @@ func (c *DistributionController) CreateWithdrawal(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/withdrawals [get]
 func (c *DistributionController) ListWithdrawals(ctx *gin.Context) {
-	userID, err := strconv.ParseInt(ctx.Query("user_id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的用户ID")
-		return
-	}
+    userID, err := strconv.ParseInt(ctx.Query("user_id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的用户ID")
+        return
+    }
 
-	status := -1
-	if statusStr := ctx.Query("status"); statusStr != "" {
-		status, err = strconv.Atoi(statusStr)
-		if err != nil {
-			utils.Error(ctx, http.StatusBadRequest, "无效的状态值")
-			return
-		}
-	}
+    status := -1
+    if statusStr := ctx.Query("status"); statusStr != "" {
+        status, err = strconv.Atoi(statusStr)
+        if err != nil {
+            resp.Error(ctx, http.StatusBadRequest, "无效的状态值")
+            return
+        }
+    }
 
-	withdrawals, err := c.service.ListWithdrawals(userID, status)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取提现记录列表失败")
-		return
-	}
+    withdrawals, err := c.service.ListWithdrawals(userID, status)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取提现记录列表失败")
+        return
+    }
 
-	utils.Success(ctx, withdrawals)
+    resp.Success(ctx, withdrawals)
 }
 
 // GetStatistics 获取分销统计
@@ -206,19 +206,19 @@ func (c *DistributionController) ListWithdrawals(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/statistics [get]
 func (c *DistributionController) GetStatistics(ctx *gin.Context) {
-	userID, err := strconv.ParseInt(ctx.Query("user_id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的用户ID")
-		return
-	}
+    userID, err := strconv.ParseInt(ctx.Query("user_id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的用户ID")
+        return
+    }
 
-	statistics, err := c.service.GetStatistics(userID)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取分销统计数据失败")
-		return
-	}
+    statistics, err := c.service.GetStatistics(userID)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取分销统计数据失败")
+        return
+    }
 
-	utils.Success(ctx, statistics)
+    resp.Success(ctx, statistics)
 }
 
 // CreateDistributor 创建分销商
@@ -231,18 +231,18 @@ func (c *DistributionController) GetStatistics(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/distributors [post]
 func (c *DistributionController) CreateDistributor(ctx *gin.Context) {
-	var req model.DistributorRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    var req model.DistributorRequest
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 
-	if err := c.service.CreateDistributor(&req); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "创建分销商失败")
-		return
-	}
+    if err := c.service.CreateDistributor(&req); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "创建分销商失败")
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // GetDistributor 获取分销商详情
@@ -254,19 +254,19 @@ func (c *DistributionController) CreateDistributor(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/distributors/{id} [get]
 func (c *DistributionController) GetDistributor(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的分销商ID")
-		return
-	}
+    id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的分销商ID")
+        return
+    }
 
-	distributor, err := c.service.GetDistributor(id)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取分销商详情失败")
-		return
-	}
+    distributor, err := c.service.GetDistributor(id)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取分销商详情失败")
+        return
+    }
 
-	utils.Success(ctx, distributor)
+    resp.Success(ctx, distributor)
 }
 
 // UpdateDistributor 更新分销商信息
@@ -280,24 +280,24 @@ func (c *DistributionController) GetDistributor(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/distributors/{id} [put]
 func (c *DistributionController) UpdateDistributor(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的分销商ID")
-		return
-	}
+    id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的分销商ID")
+        return
+    }
 
-	var req model.DistributorRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    var req model.DistributorRequest
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 
-	if err := c.service.UpdateDistributor(id, &req); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "更新分销商失败")
-		return
-	}
+    if err := c.service.UpdateDistributor(id, &req); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "更新分销商失败")
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // DeleteDistributor 删除分销商
@@ -308,18 +308,18 @@ func (c *DistributionController) UpdateDistributor(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/distributors/{id} [delete]
 func (c *DistributionController) DeleteDistributor(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的分销商ID")
-		return
-	}
+    id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的分销商ID")
+        return
+    }
 
-	if err := c.service.DeleteDistributor(id); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "删除分销商失败")
-		return
-	}
+    if err := c.service.DeleteDistributor(id); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "删除分销商失败")
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // ListDistributors 获取分销商列表
@@ -333,19 +333,19 @@ func (c *DistributionController) DeleteDistributor(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/distributors [get]
 func (c *DistributionController) ListDistributors(ctx *gin.Context) {
-	var req model.DistributorListRequest
-	if err := ctx.ShouldBindQuery(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    var req model.DistributorListRequest
+    if err := ctx.ShouldBindQuery(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 
-	resp, err := c.service.ListDistributors(&req)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取分销商列表失败")
-		return
-	}
+    data, err := c.service.ListDistributors(&req)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取分销商列表失败")
+        return
+    }
 
-	utils.Success(ctx, resp)
+    resp.Success(ctx, data)
 }
 
 // GetDistributorStatistics 获取分销商统计信息
@@ -357,17 +357,17 @@ func (c *DistributionController) ListDistributors(ctx *gin.Context) {
 // @Success 200 {object} response.Response
 // @Router /distribution/distributors/{id}/statistics [get]
 func (c *DistributionController) GetDistributorStatistics(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的分销商ID")
-		return
-	}
+    id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的分销商ID")
+        return
+    }
 
-	statistics, err := c.service.GetDistributorStatistics(id)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取分销商统计信息失败")
-		return
-	}
+    statistics, err := c.service.GetDistributorStatistics(id)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取分销商统计信息失败")
+        return
+    }
 
-	utils.Success(ctx, statistics)
+    resp.Success(ctx, statistics)
 }

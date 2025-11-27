@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"recharge-go/internal/controller"
-	"recharge-go/internal/middleware"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
 	"recharge-go/internal/service/platform"
@@ -86,6 +85,11 @@ func SetupRouterV2(
 	r.Use(log.GinLogger())
 	r.Use(log.GinRecovery())
 
+	// 404 handler
+	r.NoRoute(func(c *gin.Context) {
+		c.JSON(404, gin.H{"code": 1004, "message": "Not Found", "data": nil})
+	})
+
 	// API routes
 	v1 := r.Group("/api/v1")
 	{
@@ -137,11 +141,9 @@ func SetupRouterV2(
 			}
 		}
 
-		// Protected routes
-		// 创建新的认证中间件实例
-		authMiddleware := middleware.NewAuthMiddleware(db)
+		// Protected routes（在受保护分组挂载 JWTAuth）
 		auth := v1.Group("")
-		auth.Use(authMiddleware.Auth())
+		auth.Use(securityMiddleware.JWTAuth())
 		{
 			// Protected user routes
 			if uc := assertUserController(userController); uc != nil {

@@ -8,9 +8,9 @@ import (
 
 // Response 标准响应结构
 type Response struct {
-	Code    int         `json:"code"`    // 业务码
-	Message string      `json:"message"` // 提示信息
-	Data    interface{} `json:"data"`    // 数据
+    Code    int         `json:"code"`    // 业务码
+    Message string      `json:"message"` // 提示信息
+    Data    interface{} `json:"data"`    // 数据
 }
 
 // Success 成功响应
@@ -24,11 +24,19 @@ func Success(c *gin.Context, data interface{}) {
 
 // Error 错误响应
 func Error(c *gin.Context, code int, message string) {
-	c.JSON(code, Response{
-		Code:    code,
-		Message: message,
-		Data:    nil,
-	})
+    c.JSON(code, Response{
+        Code:    code,
+        Message: message,
+        Data:    nil,
+    })
+}
+
+func ErrorWithCode(c *gin.Context, httpStatus int, bizCode int, message string, data interface{}) {
+    c.JSON(httpStatus, Response{
+        Code:    bizCode,
+        Message: message,
+        Data:    data,
+    })
 }
 
 // Page 分页数据

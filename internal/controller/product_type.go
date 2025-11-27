@@ -1,13 +1,13 @@
 package controller
 
 import (
-	"net/http"
-	"recharge-go/internal/model"
-	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
-	"strconv"
+    "net/http"
+    "recharge-go/internal/model"
+    "recharge-go/internal/service"
+    resp "recharge-go/pkg/utils/response"
+    "strconv"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
 )
 
 // ProductTypeController 产品类型控制器
@@ -38,18 +38,18 @@ func NewProductTypeController(service *service.ProductTypeService) *ProductTypeC
 // @Router /api/v1/product-type/list [get]
 func (c *ProductTypeController) List(ctx *gin.Context) {
 	var req model.ProductTypeListRequest
-	if err := ctx.ShouldBindQuery(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
-		return
-	}
+    if err := ctx.ShouldBindQuery(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, err.Error())
+        return
+    }
 
-	resp, err := c.service.List(&req)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    data, err := c.service.List(&req)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, resp)
+    resp.Success(ctx, data)
 }
 
 // Create 创建产品类型
@@ -63,26 +63,26 @@ func (c *ProductTypeController) List(ctx *gin.Context) {
 // @Router /api/v1/product-type [post]
 func (c *ProductTypeController) Create(ctx *gin.Context) {
 	var req model.ProductTypeCreateRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
-		return
-	}
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, err.Error())
+        return
+    }
 
 	err := c.service.Create(&req)
-	if err != nil {
-		if err == service.ErrProductTypeNameExists {
-			utils.Error(ctx, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err == service.ErrProductTypeCategoryNotFound {
-			utils.Error(ctx, http.StatusBadRequest, err.Error())
-			return
-		}
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    if err != nil {
+        if err == service.ErrProductTypeNameExists {
+            resp.Error(ctx, http.StatusBadRequest, err.Error())
+            return
+        }
+        if err == service.ErrProductTypeCategoryNotFound {
+            resp.Error(ctx, http.StatusBadRequest, err.Error())
+            return
+        }
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // Update 更新产品类型
@@ -97,37 +97,37 @@ func (c *ProductTypeController) Create(ctx *gin.Context) {
 // @Router /api/v1/product-type/{id} [put]
 func (c *ProductTypeController) Update(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的ID")
-		return
-	}
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的ID")
+        return
+    }
 
 	var req model.ProductTypeUpdateRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
-		return
-	}
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, err.Error())
+        return
+    }
 	req.ID = id
 
-	err = c.service.Update(&req)
-	if err != nil {
-		if err == service.ErrProductTypeNotFound {
-			utils.Error(ctx, http.StatusNotFound, err.Error())
-			return
-		}
-		if err == service.ErrProductTypeNameExists {
-			utils.Error(ctx, http.StatusBadRequest, err.Error())
-			return
-		}
-		if err == service.ErrProductTypeCategoryNotFound {
-			utils.Error(ctx, http.StatusBadRequest, err.Error())
-			return
-		}
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    err = c.service.Update(&req)
+    if err != nil {
+        if err == service.ErrProductTypeNotFound {
+            resp.Error(ctx, http.StatusNotFound, err.Error())
+            return
+        }
+        if err == service.ErrProductTypeNameExists {
+            resp.Error(ctx, http.StatusBadRequest, err.Error())
+            return
+        }
+        if err == service.ErrProductTypeCategoryNotFound {
+            resp.Error(ctx, http.StatusBadRequest, err.Error())
+            return
+        }
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // Delete 删除产品类型
@@ -141,22 +141,22 @@ func (c *ProductTypeController) Update(ctx *gin.Context) {
 // @Router /api/v1/product-type/{id} [delete]
 func (c *ProductTypeController) Delete(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的ID")
-		return
-	}
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的ID")
+        return
+    }
 
-	err = c.service.Delete(id)
-	if err != nil {
-		if err == service.ErrProductTypeNotFound {
-			utils.Error(ctx, http.StatusNotFound, err.Error())
-			return
-		}
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    err = c.service.Delete(id)
+    if err != nil {
+        if err == service.ErrProductTypeNotFound {
+            resp.Error(ctx, http.StatusNotFound, err.Error())
+            return
+        }
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, nil)
+    resp.Success(ctx, nil)
 }
 
 // GetByID 获取产品类型详情
@@ -170,22 +170,22 @@ func (c *ProductTypeController) Delete(ctx *gin.Context) {
 // @Router /api/v1/product-type/{id} [get]
 func (c *ProductTypeController) GetByID(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的ID")
-		return
-	}
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的ID")
+        return
+    }
 
-	productType, err := c.service.GetByID(id)
-	if err != nil {
-		if err == service.ErrProductTypeNotFound {
-			utils.Error(ctx, http.StatusNotFound, err.Error())
-			return
-		}
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    productType, err := c.service.GetByID(id)
+    if err != nil {
+        if err == service.ErrProductTypeNotFound {
+            resp.Error(ctx, http.StatusNotFound, err.Error())
+            return
+        }
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, productType)
+    resp.Success(ctx, productType)
 }
 
 // ListCategories 获取产品类型分类列表
@@ -201,16 +201,16 @@ func (c *ProductTypeController) GetByID(ctx *gin.Context) {
 // @Router /api/v1/product-type/categories [get]
 func (c *ProductTypeController) ListCategories(ctx *gin.Context) {
 	var req model.ProductTypeCategoryListRequest
-	if err := ctx.ShouldBindQuery(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
-		return
-	}
+    if err := ctx.ShouldBindQuery(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, err.Error())
+        return
+    }
 
-	resp, err := c.service.ListCategories(&req)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    data, err := c.service.ListCategories(&req)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, resp)
+    resp.Success(ctx, data)
 }

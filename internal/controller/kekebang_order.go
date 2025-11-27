@@ -7,12 +7,12 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
 	"recharge-go/pkg/database"
 	"recharge-go/pkg/log"
 	logger "recharge-go/pkg/log"
 	"recharge-go/pkg/signature"
-	"recharge-go/pkg/utils/response"
+	resp "recharge-go/pkg/utils/response"
+	response "recharge-go/pkg/utils/response"
 	"strconv"
 	"strings"
 	"time"
@@ -60,14 +60,14 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 	accountRepo := repository.NewPlatformRepository(database.DB)
 	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的账号标识")
+		resp.Error(ctx, http.StatusBadRequest, "无效的账号标识")
 		return
 	}
 
 	// 2. 可通过 account.PlatformID 查询平台信息
 	platform, err := accountRepo.GetPlatformByID(account.PlatformID)
 	if err != nil || platform == nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的平台")
+		resp.Error(ctx, http.StatusBadRequest, "无效的平台")
 		return
 	}
 
@@ -116,7 +116,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 	productID, err := strconv.ParseInt(req.OuterGoodsCode, 10, 64)
 	if err != nil {
 		log.Error(ctx, "【产品编码转换失败】", log.Err(err))
-		utils.Error(ctx, 500, "产品编码转换失败")
+		resp.Error(ctx, 500, "产品编码转换失败")
 		return
 	}
 	product, err := c.verifyProductExists(productID)
@@ -177,7 +177,7 @@ func (c *KekebangOrderController) CreateOrder(ctx *gin.Context) {
 	// 创建充值任务
 	if err := c.rechargeService.CreateRechargeTask(ctx, order.ID); err != nil {
 		logger.Log.Error("创建充值任务失败", zap.Error(err))
-		utils.Error(ctx, 500, "创建充值任务失败")
+		resp.Error(ctx, 500, "创建充值任务失败")
 		return
 	}
 	response := gin.H{
@@ -260,7 +260,7 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 	account, err := accountRepo.GetPlatformAccountByAccountName(userid)
 	if err != nil || account == nil {
 		logger.Log.Error("无效的账号标识", zap.String("userid", userid))
-		utils.Error(ctx, http.StatusBadRequest, "无效的账号标识")
+		resp.Error(ctx, http.StatusBadRequest, "无效的账号标识")
 		return
 	}
 	// 验证签名
@@ -275,7 +275,7 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 
 	if !signature.VerifyKekebangSign(params, req.Sign, secretKey) {
 		logger.Log.Error("签名验证失败", zap.Any("request", req))
-		utils.Error(ctx, 400, "签名验证失败")
+		resp.Error(ctx, 400, "签名验证失败")
 		return
 	}
 
@@ -299,7 +299,7 @@ func (c *KekebangOrderController) QueryOrder(ctx *gin.Context) {
 		}
 		// 其他数据库错误
 		logger.Log.Error("查询订单失败", zap.Error(err))
-		utils.Error(ctx, 500, "查询订单失败")
+		resp.Error(ctx, 500, "查询订单失败")
 		return
 	}
 

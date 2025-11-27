@@ -32,11 +32,14 @@ type ServerConfig struct {
 }
 
 type DBConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	Name     string `mapstructure:"dbname"`
+    Host     string `mapstructure:"host"`
+    Port     int    `mapstructure:"port"`
+    User     string `mapstructure:"user"`
+    Password string `mapstructure:"password"`
+    Name     string `mapstructure:"dbname"`
+    MaxIdleConns    int `mapstructure:"max_idle_conns"`
+    MaxOpenConns    int `mapstructure:"max_open_conns"`
+    ConnMaxLifetime int `mapstructure:"conn_max_lifetime"`
 }
 
 type JWTConfig struct {

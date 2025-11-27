@@ -15,7 +15,7 @@ func RegisterDzTaskRoutes(r *gin.RouterGroup) {
 	db := database.DB
 	dzTaskConfigRepo := repository.NewDzTaskConfigRepository(db)
 	dzTaskConfigService := service.NewDzTaskConfigService(dzTaskConfigRepo)
-	
+
 	// 创建TaskConfigNotifier
 	redisClient := redis.GetClient()
 	taskConfigNotifier := service.NewTaskConfigNotifier(redisClient)

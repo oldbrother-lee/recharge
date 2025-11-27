@@ -1,12 +1,13 @@
 package controller
 
 import (
-	"net/http"
-	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
-	"time"
+    "net/http"
+    "recharge-go/internal/service"
+    "recharge-go/internal/utils"
+    resp "recharge-go/pkg/utils/response"
+    "time"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
 )
 
 type StatisticsController struct {
@@ -28,12 +29,12 @@ func NewStatisticsController(statisticsSvc service.StatisticsService) *Statistic
 // @Success 200 {object} model.OrderStatisticsOverview
 // @Router /api/v1/statistics/order/overview [get]
 func (c *StatisticsController) GetOrderOverview(ctx *gin.Context) {
-	result, err := c.statisticsSvc.GetOrderOverview(ctx)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
-	utils.Success(ctx, result)
+    result, err := c.statisticsSvc.GetOrderOverview(ctx)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
+    resp.Success(ctx, result)
 }
 
 // GetOperatorStatistics 获取运营商统计
@@ -63,11 +64,11 @@ func (c *StatisticsController) GetOperatorStatistics(ctx *gin.Context) {
 		result, err = c.statisticsSvc.GetOperatorStatisticsByUser(ctx, start, end, userId)
 	}
 
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
-	utils.Success(ctx, result)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
+    resp.Success(ctx, result)
 }
 
 // GetDailyStatistics 获取每日统计
@@ -84,24 +85,24 @@ func (c *StatisticsController) GetDailyStatistics(ctx *gin.Context) {
 	startDate := ctx.Query("startDate")
 	endDate := ctx.Query("endDate")
 
-	start, err := time.Parse("2006-01-02", startDate)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "Invalid start date format")
-		return
-	}
+    start, err := time.Parse("2006-01-02", startDate)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "Invalid start date format")
+        return
+    }
 
-	end, err := time.Parse("2006-01-02", endDate)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "Invalid end date format")
-		return
-	}
+    end, err := time.Parse("2006-01-02", endDate)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "Invalid end date format")
+        return
+    }
 
-	result, err := c.statisticsSvc.GetDailyStatistics(ctx, start, end)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
-	utils.Success(ctx, result)
+    result, err := c.statisticsSvc.GetDailyStatistics(ctx, start, end)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
+    resp.Success(ctx, result)
 }
 
 // GetTrendStatistics 获取趋势统计
@@ -120,36 +121,36 @@ func (c *StatisticsController) GetTrendStatistics(ctx *gin.Context) {
 	endDate := ctx.Query("endDate")
 	operator := ctx.Query("operator")
 
-	start, err := time.Parse("2006-01-02", startDate)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "Invalid start date format")
-		return
-	}
+    start, err := time.Parse("2006-01-02", startDate)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "Invalid start date format")
+        return
+    }
 
-	end, err := time.Parse("2006-01-02", endDate)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "Invalid end date format")
-		return
-	}
+    end, err := time.Parse("2006-01-02", endDate)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "Invalid end date format")
+        return
+    }
 
-	result, err := c.statisticsSvc.GetTrendStatistics(ctx, start, end, operator)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
-	utils.Success(ctx, result)
+    result, err := c.statisticsSvc.GetTrendStatistics(ctx, start, end, operator)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
+    resp.Success(ctx, result)
 }
 
 // TriggerStatistics 手动触发统计任务
 func (c *StatisticsController) TriggerStatistics(ctx *gin.Context) {
-	if err := c.statisticsSvc.UpdateStatistics(ctx); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "Failed to update statistics: "+err.Error())
-		return
-	}
+    if err := c.statisticsSvc.UpdateStatistics(ctx); err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "Failed to update statistics: "+err.Error())
+        return
+    }
 
-	utils.Success(ctx, gin.H{
-		"message": "Statistics update triggered successfully",
-	})
+    resp.Success(ctx, gin.H{
+        "message": "Statistics update triggered successfully",
+    })
 }
 
 // GetOrderRealtimeStatistics 获取实时订单统计
@@ -175,12 +176,12 @@ func (c *StatisticsController) GetOrderRealtimeStatistics(ctx *gin.Context) {
 		result, err = c.statisticsSvc.GetOrderRealtimeStatistics(ctx, userId)
 	}
 
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
 
-	utils.Success(ctx, result)
+    resp.Success(ctx, result)
 }
 
 // GetOperatorOrderCount 获取各运营商订单总数
@@ -196,10 +197,10 @@ func (c *StatisticsController) GetOperatorOrderCount(ctx *gin.Context) {
 	start := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, today.Location())
 	end := start.Add(24 * time.Hour).Add(-time.Nanosecond)
 
-	result, err := c.statisticsSvc.GetOperatorOrderCount(ctx, start, end)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
-		return
-	}
-	utils.Success(ctx, result)
+    result, err := c.statisticsSvc.GetOperatorOrderCount(ctx, start, end)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, err.Error())
+        return
+    }
+    resp.Success(ctx, result)
 }

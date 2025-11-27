@@ -1,15 +1,15 @@
 package handler
 
 import (
-	"net/http"
+    "net/http"
     "recharge-go/internal/model/notification"
     notificationService "recharge-go/internal/service/notification"
-    "recharge-go/internal/utils"
+    resp "recharge-go/pkg/utils/response"
     logger "recharge-go/pkg/log"
 
-	"strconv"
+    "strconv"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
 )
 
 // NotificationHandler 通知处理器
@@ -42,7 +42,7 @@ func (h *NotificationHandler) CreateNotification(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "invalid request parameters")
+        resp.Error(c, http.StatusBadRequest, "invalid request parameters")
 		return
 	}
 
@@ -56,11 +56,11 @@ func (h *NotificationHandler) CreateNotification(c *gin.Context) {
 
     if err := h.notificationService.CreateNotification(c.Request.Context(), record); err != nil {
         logger.ErrorLogV2("create_notification_failed", logger.ErrorV2(err))
-		utils.Error(c, http.StatusInternalServerError, "create notification failed")
+        resp.Error(c, http.StatusInternalServerError, "create notification failed")
 		return
 	}
 
-	utils.Success(c, nil)
+    resp.Success(c, nil)
 }
 
 // GetNotificationStatus 获取通知状态
@@ -68,18 +68,18 @@ func (h *NotificationHandler) GetNotificationStatus(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "invalid notification id")
+        resp.Error(c, http.StatusBadRequest, "invalid notification id")
 		return
 	}
 
     record, err := h.notificationService.GetNotificationStatus(c.Request.Context(), id)
     if err != nil {
         logger.ErrorLogV2("get_notification_status_failed", logger.ErrorV2(err))
-		utils.Error(c, http.StatusInternalServerError, "get notification status failed")
+        resp.Error(c, http.StatusInternalServerError, "get notification status failed")
 		return
 	}
 
-	utils.Success(c, record)
+    resp.Success(c, record)
 }
 
 // ListNotifications 获取通知列表
@@ -94,7 +94,7 @@ func (h *NotificationHandler) ListNotifications(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindQuery(&req); err != nil {
-		utils.Error(c, http.StatusBadRequest, "invalid request parameters")
+        resp.Error(c, http.StatusBadRequest, "invalid request parameters")
 		return
 	}
 
@@ -115,16 +115,16 @@ func (h *NotificationHandler) ListNotifications(c *gin.Context) {
     records, total, err := h.notificationService.ListNotifications(c.Request.Context(), params, req.Page, req.PageSize)
     if err != nil {
         logger.ErrorLogV2("list_notifications_failed", logger.ErrorV2(err))
-		utils.Error(c, http.StatusInternalServerError, "list notifications failed")
+        resp.Error(c, http.StatusInternalServerError, "list notifications failed")
 		return
 	}
 
-	utils.Success(c, gin.H{
-		"total":     total,
-		"records":   records,
-		"page":      req.Page,
-		"page_size": req.PageSize,
-	})
+    resp.Success(c, gin.H{
+        "total":     total,
+        "records":   records,
+        "page":      req.Page,
+        "page_size": req.PageSize,
+    })
 }
 
 // RetryFailedNotification 重试失败的通知
@@ -132,17 +132,17 @@ func (h *NotificationHandler) RetryFailedNotification(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		utils.Error(c, http.StatusBadRequest, "invalid notification id")
+        resp.Error(c, http.StatusBadRequest, "invalid notification id")
 		return
 	}
 
     if err := h.notificationService.RetryFailedNotification(c.Request.Context(), id); err != nil {
         logger.ErrorLogV2("retry_failed_notification_failed", logger.ErrorV2(err))
-		utils.Error(c, http.StatusInternalServerError, "retry failed notification failed")
+        resp.Error(c, http.StatusInternalServerError, "retry failed notification failed")
 		return
 	}
 
-	utils.Success(c, nil)
+    resp.Success(c, nil)
 }
 
 // RegisterRoutes 注册路由

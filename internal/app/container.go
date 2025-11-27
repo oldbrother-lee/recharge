@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"recharge-go/configs"
 	"recharge-go/internal/middleware"
-	"recharge-go/internal/pkg/db"
 	"recharge-go/internal/repository"
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
@@ -24,6 +23,7 @@ import (
 
 	redisV8 "github.com/go-redis/redis/v8"
 	"github.com/hibiken/asynq"
+	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -177,19 +177,12 @@ func NewContainerWithConfigAndService(configPath, serviceName string) (*Containe
 
 // 初始化数据库
 func (c *Container) initDB() error {
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		c.config.DB.User,
-		c.config.DB.Password,
-		c.config.DB.Host,
-		c.config.DB.Port,
-		c.config.DB.Name,
-	)
-
-	dbInstance, err := db.NewDB(dsn)
-	if err != nil {
-		return err
+	if database.DB == nil {
+		if err := database.Init(c.config); err != nil {
+			return err
+		}
 	}
-	c.db = dbInstance.DB
+	c.db = database.DB
 	return nil
 }
 
@@ -603,31 +596,75 @@ func (c *Container) initOptimizedComponents() error {
 	}
 	c.databaseManager = dm
 
-	// 初始化安全中间件
+	// 初始化安全中间件：优先读取 configs/config.yaml 的 security.* 配置，缺省时采用合理默认
+	jwtSkip := viper.GetStringSlice("security.jwt.skip_paths")
+	rlEnabled := viper.GetBool("security.rate_limit.enabled")
+	rlRPS := viper.GetInt("security.rate_limit.rps")
+	rlBurst := viper.GetInt("security.rate_limit.burst")
+	rlWindow := viper.GetDuration("security.rate_limit.window")
+	rlSkip := viper.GetStringSlice("security.rate_limit.skip_paths")
+	rlInclude := viper.GetStringSlice("security.rate_limit.include_paths")
+	corsAllowOrigins := viper.GetStringSlice("security.cors.allow_origins")
+	corsAllowMethods := viper.GetStringSlice("security.cors.allow_methods")
+	corsAllowHeaders := viper.GetStringSlice("security.cors.allow_headers")
+	corsExposeHeaders := viper.GetStringSlice("security.cors.expose_headers")
+	corsAllowCredentials := viper.GetBool("security.cors.allow_credentials")
+	corsMaxAge := viper.GetInt("security.cors.max_age")
+	corsSkip := viper.GetStringSlice("security.cors.skip_paths")
+
+	if rlWindow == 0 {
+		rlWindow = time.Minute
+	}
+	if rlRPS == 0 {
+		rlRPS = 100
+	}
+	if rlBurst == 0 {
+		rlBurst = 200
+	}
+	if len(corsAllowOrigins) == 0 {
+		corsAllowOrigins = []string{"*"}
+	}
+	if len(corsAllowMethods) == 0 {
+		corsAllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	}
+	if len(corsAllowHeaders) == 0 {
+		corsAllowHeaders = []string{"Authorization", "Content-Type", "X-Request-ID"}
+	}
+
 	securityConfig := &pkgMiddleware.SecurityConfig{
 		JWT: pkgMiddleware.JWTConfig{
 			Secret:     c.config.JWT.Secret,
 			Expiration: time.Duration(c.config.JWT.Expire) * time.Hour,
 			Issuer:     "recharge-system",
-			SkipPaths:  []string{"/api/v1/auth/login", "/api/v1/health"},
+			SkipPaths:  jwtSkip,
 		},
 		RateLimit: pkgMiddleware.RateLimitConfig{
-			Enabled:   true,
-			RPS:       100,
-			Burst:     200,
-			Window:    time.Minute,
-			SkipPaths: []string{"/api/v1/health"},
+			Enabled:      rlEnabled,
+			RPS:          rlRPS,
+			Burst:        rlBurst,
+			Window:       rlWindow,
+			SkipPaths:    rlSkip,
+			IncludePaths: rlInclude,
 		},
 		CORS: pkgMiddleware.CORSConfig{
-			AllowOrigins:     []string{"*"},
-			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-			AllowHeaders:     []string{"*"},
-			AllowCredentials: true,
-			MaxAge:           86400,
+			AllowOrigins:     corsAllowOrigins,
+			AllowMethods:     corsAllowMethods,
+			AllowHeaders:     corsAllowHeaders,
+			ExposeHeaders:    corsExposeHeaders,
+			AllowCredentials: corsAllowCredentials,
+			MaxAge:           corsMaxAge,
+			SkipPaths:        corsSkip,
 		},
 	}
 
 	c.securityMiddleware = pkgMiddleware.NewSecurityMiddleware(securityConfig)
+
+	log.L().Info("Security policies",
+		log.Any("jwt_skip_paths", securityConfig.JWT.SkipPaths),
+		log.Any("ratelimit_enabled", securityConfig.RateLimit.Enabled),
+		log.Any("ratelimit_skip_paths", securityConfig.RateLimit.SkipPaths),
+		log.Any("cors_skip_paths", securityConfig.CORS.SkipPaths),
+	)
 
 	return nil
 }

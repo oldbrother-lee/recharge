@@ -29,7 +29,6 @@ type Controllers struct {
 	ExternalAPIKey     *controller.ExternalAPIKeyController
 	PhoneQuery         *controller.PhoneQueryController
 
-
 	// Handlers
 	Recharge     *handler.RechargeHandler
 	Notification *handler.NotificationHandler
@@ -62,7 +61,6 @@ func (c *Container) initControllers() {
 		SystemConfig:       controller.NewSystemConfigController(c.services.SystemConfig),
 		ExternalAPIKey:     controller.NewExternalAPIKeyController(c.repositories.ExternalAPIKey, c.repositories.User),
 		PhoneQuery:         controller.NewPhoneQueryController(c.services.PhoneQuery),
-
 
 		// Handlers
 		Recharge:     handler.NewRechargeHandler(c.services.Recharge),

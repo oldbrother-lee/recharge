@@ -7,8 +7,8 @@ import (
 	notificationRepo "recharge-go/internal/repository/notification"
 	"recharge-go/internal/service"
 	"recharge-go/pkg/database"
-    "recharge-go/pkg/lock"
-    "recharge-go/pkg/log"
+	"recharge-go/pkg/lock"
+	"recharge-go/pkg/log"
 	"recharge-go/pkg/queue"
 	"recharge-go/pkg/redis"
 
@@ -19,7 +19,7 @@ import (
 func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 	// 获取数据库连接
 	db := database.DB
-	
+
 	// 初始化仓库
 	orderRepo := repository.NewOrderRepository(db)
 	platformRepo := repository.NewPlatformRepository(db)
@@ -82,14 +82,14 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 
 	// 创建手机查询服务
 	phoneQueryService := service.NewPhoneQueryService(configs.GetConfig())
-	
+
 	// 创建系统配置服务
 	systemConfigRepo := repository.NewSystemConfigRepository(database.DB)
 	systemConfigService := service.NewSystemConfigService(systemConfigRepo)
 
 	// 创建订单异常服务
 	orderExceptionRepo := repository.NewOrderExceptionRepository(database.DB)
-    orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
+	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
 
 	// 创建统一订单处理服务（暂时不传入retryService）
 	unifiedOrderService := service.NewUnifiedOrderService(
@@ -100,13 +100,13 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 		notificationRepo,
 		queueInstance,
 		database.DB,
-        log.Log,
+		log.Log,
 		systemConfigService,
 		productRepo,
 		nil, // retryService 稍后设置
 		orderExceptionService,
 	)
-	
+
 	rechargeService := service.NewRechargeService(
 		database.DB,
 		orderRepo,
@@ -119,10 +119,10 @@ func RegisterKekebangOrderRoutes(r *gin.RouterGroup) {
 		platformAPIParamRepo,
 		platformAccountBalanceService,
 		balanceService,
-		phoneQueryService, // 添加手机查询服务
+		phoneQueryService,      // 添加手机查询服务
 		balanceQueryRecordRepo, // 添加余额查询记录仓库
-		unifiedOrderService, // 添加统一订单处理服务
-		systemConfigService, // 添加系统配置服务
+		unifiedOrderService,    // 添加统一订单处理服务
+		systemConfigService,    // 添加系统配置服务
 		notificationRepo,
 		queueInstance,
 	)

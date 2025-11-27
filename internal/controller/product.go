@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
+	resp "recharge-go/pkg/utils/response"
 	"strconv"
 
 	"recharge-go/pkg/log"
@@ -41,7 +41,7 @@ func (c *ProductController) List(ctx *gin.Context) {
 	var req model.ProductListRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
 		log.WithContextCategory(ctx.Request.Context(), "product_controller").Error("参数绑定错误", log.ErrorV2(err))
-		utils.Error(ctx, http.StatusBadRequest, fmt.Sprintf("参数错误: %v", err))
+		resp.Error(ctx, http.StatusBadRequest, fmt.Sprintf("参数错误: %v", err))
 		return
 	}
 
@@ -54,15 +54,15 @@ func (c *ProductController) List(ctx *gin.Context) {
 		log.IntV2("status", req.Status),
 	)
 
-	resp, err := c.productService.List(ctx.Request.Context(), &req)
+	respData, err := c.productService.List(ctx.Request.Context(), &req)
 	if err != nil {
 		log.WithContextCategory(ctx.Request.Context(), "product_controller").Error("服务调用错误", log.ErrorV2(err))
-		utils.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("服务错误: %v", err))
+		resp.Error(ctx, http.StatusInternalServerError, fmt.Sprintf("服务错误: %v", err))
 		return
 	}
 
 	log.WithContextCategory(ctx.Request.Context(), "product_controller").Info("请求处理成功")
-	utils.Success(ctx, resp)
+	resp.Success(ctx, respData)
 }
 
 // GetByID 获取商品详情
@@ -77,17 +77,17 @@ func (c *ProductController) List(ctx *gin.Context) {
 func (c *ProductController) GetByID(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid id")
+		resp.Error(ctx, http.StatusBadRequest, "invalid id")
 		return
 	}
 
-	resp, err := c.productService.GetByID(ctx.Request.Context(), id)
+	respData, err := c.productService.GetByID(ctx.Request.Context(), id)
 	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, resp)
+	resp.Success(ctx, respData)
 }
 
 // Create 创建商品
@@ -102,17 +102,17 @@ func (c *ProductController) GetByID(ctx *gin.Context) {
 func (c *ProductController) Create(ctx *gin.Context) {
 	var req model.ProductCreateRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		resp.Error(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	product, err := c.productService.Create(ctx.Request.Context(), &req)
 	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, product)
+	resp.Success(ctx, product)
 }
 
 // Update 更新商品
@@ -128,24 +128,24 @@ func (c *ProductController) Create(ctx *gin.Context) {
 func (c *ProductController) Update(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid id")
+		resp.Error(ctx, http.StatusBadRequest, "invalid id")
 		return
 	}
 
 	var req model.ProductUpdateRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		resp.Error(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	req.ID = id
 	product, err := c.productService.Update(ctx.Request.Context(), &req)
 	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, product)
+	resp.Success(ctx, product)
 }
 
 // Delete 删除商品
@@ -160,17 +160,17 @@ func (c *ProductController) Update(ctx *gin.Context) {
 func (c *ProductController) Delete(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid id")
+		resp.Error(ctx, http.StatusBadRequest, "invalid id")
 		return
 	}
 
 	err = c.productService.Delete(ctx.Request.Context(), id)
 	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, nil)
+	resp.Success(ctx, nil)
 }
 
 // ListCategories 获取商品分类列表
@@ -182,13 +182,13 @@ func (c *ProductController) Delete(ctx *gin.Context) {
 // @Success 200 {object} response.Response{data=model.ProductCategoryListResponse}
 // @Router /api/v1/product/categories [get]
 func (c *ProductController) ListCategories(ctx *gin.Context) {
-	resp, err := c.productService.ListCategories(ctx.Request.Context())
+	respData, err := c.productService.ListCategories(ctx.Request.Context())
 	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, resp)
+	resp.Success(ctx, respData)
 }
 
 // CreateCategory 创建商品分类
@@ -203,16 +203,16 @@ func (c *ProductController) ListCategories(ctx *gin.Context) {
 func (c *ProductController) CreateCategory(ctx *gin.Context) {
 	var category model.ProductCategory
 	if err := ctx.ShouldBindJSON(&category); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		resp.Error(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if err := c.productService.CreateCategory(ctx.Request.Context(), &category); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, nil)
+	resp.Success(ctx, nil)
 }
 
 // UpdateCategory 更新商品分类
@@ -228,23 +228,23 @@ func (c *ProductController) CreateCategory(ctx *gin.Context) {
 func (c *ProductController) UpdateCategory(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid id")
+		resp.Error(ctx, http.StatusBadRequest, "invalid id")
 		return
 	}
 
 	var category model.ProductCategory
 	if err := ctx.ShouldBindJSON(&category); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		resp.Error(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	category.ID = id
 	if err := c.productService.UpdateCategory(ctx.Request.Context(), &category); err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, nil)
+	resp.Success(ctx, nil)
 }
 
 // DeleteCategory 删除商品分类
@@ -259,17 +259,17 @@ func (c *ProductController) UpdateCategory(ctx *gin.Context) {
 func (c *ProductController) DeleteCategory(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid id")
+		resp.Error(ctx, http.StatusBadRequest, "invalid id")
 		return
 	}
 
 	err = c.productService.DeleteCategory(ctx.Request.Context(), id)
 	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, nil)
+	resp.Success(ctx, nil)
 }
 
 // ListTypes 获取商品类型列表
@@ -283,11 +283,11 @@ func (c *ProductController) DeleteCategory(ctx *gin.Context) {
 func (c *ProductController) ListTypes(ctx *gin.Context) {
 	types, err := c.productService.ListTypes(ctx.Request.Context())
 	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, types)
+	resp.Success(ctx, types)
 }
 
 // UpdateDuplicateCheck 更新商品重复检查开关
@@ -303,21 +303,21 @@ func (c *ProductController) ListTypes(ctx *gin.Context) {
 func (c *ProductController) UpdateDuplicateCheck(ctx *gin.Context) {
 	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "invalid id")
+		resp.Error(ctx, http.StatusBadRequest, "invalid id")
 		return
 	}
 
 	var req model.ProductDuplicateCheckRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, err.Error())
+		resp.Error(ctx, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	err = c.productService.UpdateDuplicateCheck(ctx.Request.Context(), id, req.DuplicateCheck)
 	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, err.Error())
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	utils.Success(ctx, gin.H{"message": "重复检查开关更新成功"})
+	resp.Success(ctx, gin.H{"message": "重复检查开关更新成功"})
 }

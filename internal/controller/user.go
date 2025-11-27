@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
 	"recharge-go/pkg/log"
 	"recharge-go/pkg/utils/response"
 	"strconv"
@@ -631,7 +630,7 @@ func (c *UserController) GetProfile(ctx *gin.Context) {
 		"credit":   user.Credit,
 	}
 
-	utils.Success(ctx, resp)
+	response.Success(ctx, resp)
 
 	// ctx.JSON(200, gin.H{
 	// 	"userId":   fmt.Sprintf("%d", user.ID),

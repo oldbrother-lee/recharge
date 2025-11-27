@@ -1,13 +1,13 @@
 package controller
 
 import (
-	"net/http"
-	"recharge-go/internal/model"
-	"recharge-go/internal/service"
-	"recharge-go/internal/utils"
-	"strconv"
+    "net/http"
+    "recharge-go/internal/model"
+    "recharge-go/internal/service"
+    resp "recharge-go/pkg/utils/response"
+    "strconv"
 
-	"github.com/gin-gonic/gin"
+    "github.com/gin-gonic/gin"
 )
 
 // UserLogController 用户日志控制器
@@ -32,19 +32,19 @@ func NewUserLogController(service *service.UserLogService) *UserLogController {
 // @Success 200 {object} model.UserLog
 // @Router /user/logs [post]
 func (c *UserLogController) CreateLog(ctx *gin.Context) {
-	var req model.UserLogRequest
-	if err := ctx.ShouldBindJSON(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    var req model.UserLogRequest
+    if err := ctx.ShouldBindJSON(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 
-	log, err := c.service.CreateLog(ctx, &req)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "创建日志失败")
-		return
-	}
+    log, err := c.service.CreateLog(ctx, &req)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "创建日志失败")
+        return
+    }
 
-	utils.Success(ctx, log)
+    resp.Success(ctx, log)
 }
 
 // GetLogByID 获取用户日志详情
@@ -57,19 +57,19 @@ func (c *UserLogController) CreateLog(ctx *gin.Context) {
 // @Success 200 {object} model.UserLog
 // @Router /user/logs/{id} [get]
 func (c *UserLogController) GetLogByID(ctx *gin.Context) {
-	id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
-	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的日志ID")
-		return
-	}
+    id, err := strconv.ParseInt(ctx.Param("id"), 10, 64)
+    if err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "无效的日志ID")
+        return
+    }
 
-	log, err := c.service.GetLogByID(ctx, id)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取日志失败")
-		return
-	}
+    log, err := c.service.GetLogByID(ctx, id)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取日志失败")
+        return
+    }
 
-	utils.Success(ctx, log)
+    resp.Success(ctx, log)
 }
 
 // ListLogs 获取用户日志列表
@@ -84,17 +84,17 @@ func (c *UserLogController) GetLogByID(ctx *gin.Context) {
 // @Success 200 {object} model.UserLogListResponse
 // @Router /user/logs [get]
 func (c *UserLogController) ListLogs(ctx *gin.Context) {
-	var req model.UserLogListRequest
-	if err := ctx.ShouldBindQuery(&req); err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "参数格式错误")
-		return
-	}
+    var req model.UserLogListRequest
+    if err := ctx.ShouldBindQuery(&req); err != nil {
+        resp.Error(ctx, http.StatusBadRequest, "参数格式错误")
+        return
+    }
 
-	resp, err := c.service.ListLogs(ctx, &req)
-	if err != nil {
-		utils.Error(ctx, http.StatusInternalServerError, "获取日志列表失败")
-		return
-	}
+    data, err := c.service.ListLogs(ctx, &req)
+    if err != nil {
+        resp.Error(ctx, http.StatusInternalServerError, "获取日志列表失败")
+        return
+    }
 
-	utils.Success(ctx, resp)
+    resp.Success(ctx, data)
 }

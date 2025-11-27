@@ -1,13 +1,14 @@
 package main
 
 import (
-	"flag"
-	"log"
-	"time"
+    "flag"
+    "log"
+    "time"
 
-	"recharge-go/internal/app"
-	"recharge-go/internal/utils"
-	"recharge-go/pkg/database"
+    "recharge-go/configs"
+    "recharge-go/internal/app"
+    "recharge-go/internal/utils"
+    "recharge-go/pkg/database"
 )
 
 func main() {
@@ -20,10 +21,14 @@ func main() {
 	uptimeManager.SetStartTime(time.Now())
 	log.Println("应用启动时间已记录")
 
-	// 初始化数据库
-	if err := database.InitDB(); err != nil {
-		log.Fatalf("初始化数据库失败: %v", err)
-	}
+    // 初始化数据库（使用同一配置）
+    cfg, err := configs.LoadConfig(*configPath)
+    if err != nil {
+        log.Fatalf("加载配置失败: %v", err)
+    }
+    if err := database.Init(cfg); err != nil {
+        log.Fatalf("初始化数据库失败: %v", err)
+    }
 
 	// 创建容器时传入配置文件路径和服务名
 	container, err := app.NewContainerWithConfigAndService(*configPath, "server")

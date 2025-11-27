@@ -8,6 +8,7 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
 	"recharge-go/internal/utils"
+	resp "recharge-go/pkg/utils/response"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -53,7 +54,7 @@ func (c *OrderExceptionController) List(ctx *gin.Context) {
 	// 绑定查询参数
 	if err := ctx.ShouldBindQuery(req); err != nil {
 		c.logger.Error("绑定查询参数失败", zap.Error(err))
-		utils.Error(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
+		resp.Error(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
 		return
 	}
 
@@ -61,11 +62,11 @@ func (c *OrderExceptionController) List(ctx *gin.Context) {
 	response, err := c.orderExceptionService.List(ctx.Request.Context(), req)
 	if err != nil {
 		c.logger.Error("获取订单异常列表失败", zap.Error(err))
-		utils.Error(ctx, http.StatusInternalServerError, "获取异常列表失败")
+		resp.Error(ctx, http.StatusInternalServerError, "获取异常列表失败")
 		return
 	}
 
-	utils.Success(ctx, response)
+	resp.Success(ctx, response)
 }
 
 // GetByID 根据ID获取订单异常详情
@@ -84,23 +85,23 @@ func (c *OrderExceptionController) GetByID(ctx *gin.Context) {
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的异常ID")
+		resp.Error(ctx, http.StatusBadRequest, "无效的异常ID")
 		return
 	}
 
 	exception, err := c.orderExceptionService.GetByID(ctx.Request.Context(), id)
 	if err != nil {
 		c.logger.Error("获取订单异常详情失败", zap.Int64("id", id), zap.Error(err))
-		utils.Error(ctx, http.StatusInternalServerError, "获取异常详情失败")
+		resp.Error(ctx, http.StatusInternalServerError, "获取异常详情失败")
 		return
 	}
 
 	if exception == nil {
-		utils.Error(ctx, http.StatusNotFound, "异常记录不存在")
+		resp.Error(ctx, http.StatusNotFound, "异常记录不存在")
 		return
 	}
 
-	utils.Success(ctx, exception)
+	resp.Success(ctx, exception)
 }
 
 // GetByOrderID 根据订单ID获取异常记录列表
@@ -118,18 +119,18 @@ func (c *OrderExceptionController) GetByOrderID(ctx *gin.Context) {
 	orderIDStr := ctx.Param("order_id")
 	orderID, err := strconv.ParseInt(orderIDStr, 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的订单ID")
+		resp.Error(ctx, http.StatusBadRequest, "无效的订单ID")
 		return
 	}
 
 	exceptions, err := c.orderExceptionService.GetByOrderID(ctx.Request.Context(), orderID)
 	if err != nil {
 		c.logger.Error("获取订单异常记录失败", zap.Int64("order_id", orderID), zap.Error(err))
-		utils.Error(ctx, http.StatusInternalServerError, "获取异常记录失败")
+		resp.Error(ctx, http.StatusInternalServerError, "获取异常记录失败")
 		return
 	}
 
-	utils.Success(ctx, exceptions)
+	resp.Success(ctx, exceptions)
 }
 
 // UpdateStatus 更新异常状态
@@ -149,27 +150,27 @@ func (c *OrderExceptionController) UpdateStatus(ctx *gin.Context) {
 	idStr := ctx.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "无效的异常ID")
+		resp.Error(ctx, http.StatusBadRequest, "无效的异常ID")
 		return
 	}
 
 	req := &model.UpdateOrderExceptionRequest{}
 	if err := ctx.ShouldBindJSON(req); err != nil {
 		c.logger.Error("绑定请求参数失败", zap.Error(err))
-		utils.Error(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
+		resp.Error(ctx, http.StatusBadRequest, "参数错误: "+err.Error())
 		return
 	}
 
 	// 获取操作员ID（从认证中间件中获取）
 	operatorID, exists := ctx.Get("user_id")
 	if !exists {
-		utils.Error(ctx, http.StatusUnauthorized, "未找到操作员信息")
+		resp.Error(ctx, http.StatusUnauthorized, "未找到操作员信息")
 		return
 	}
 
 	operatorIDInt64, ok := operatorID.(int64)
 	if !ok {
-		utils.Error(ctx, http.StatusUnauthorized, "操作员ID格式错误")
+		resp.Error(ctx, http.StatusUnauthorized, "操作员ID格式错误")
 		return
 	}
 
@@ -177,11 +178,11 @@ func (c *OrderExceptionController) UpdateStatus(ctx *gin.Context) {
 	err = c.orderExceptionService.UpdateStatus(ctx.Request.Context(), id, req, operatorIDInt64)
 	if err != nil {
 		c.logger.Error("更新异常状态失败", zap.Int64("id", id), zap.Error(err))
-		utils.Error(ctx, http.StatusInternalServerError, "更新状态失败")
+		resp.Error(ctx, http.StatusInternalServerError, "更新状态失败")
 		return
 	}
 
-	utils.Success(ctx, gin.H{"message": "状态更新成功"})
+	resp.Success(ctx, gin.H{"message": "状态更新成功"})
 }
 
 // GetPendingCount 获取待处理异常数量
@@ -197,11 +198,11 @@ func (c *OrderExceptionController) GetPendingCount(ctx *gin.Context) {
 	count, err := c.orderExceptionService.GetPendingCount(ctx.Request.Context())
 	if err != nil {
 		c.logger.Error("获取待处理异常数量失败", zap.Error(err))
-		utils.Error(ctx, http.StatusInternalServerError, "获取数量失败")
+		resp.Error(ctx, http.StatusInternalServerError, "获取数量失败")
 		return
 	}
 
-	utils.Success(ctx, gin.H{"pending_count": count})
+	resp.Success(ctx, gin.H{"pending_count": count})
 }
 
 // GetStatistics 获取异常统计信息
@@ -221,19 +222,19 @@ func (c *OrderExceptionController) GetStatistics(ctx *gin.Context) {
 	endDateStr := ctx.Query("end_date")
 
 	if startDateStr == "" || endDateStr == "" {
-		utils.Error(ctx, http.StatusBadRequest, "开始日期和结束日期不能为空")
+		resp.Error(ctx, http.StatusBadRequest, "开始日期和结束日期不能为空")
 		return
 	}
 
 	startDate, err := time.Parse("2006-01-02", startDateStr)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "开始日期格式错误")
+		resp.Error(ctx, http.StatusBadRequest, "开始日期格式错误")
 		return
 	}
 
 	endDate, err := time.Parse("2006-01-02", endDateStr)
 	if err != nil {
-		utils.Error(ctx, http.StatusBadRequest, "结束日期格式错误")
+		resp.Error(ctx, http.StatusBadRequest, "结束日期格式错误")
 		return
 	}
 
@@ -243,11 +244,11 @@ func (c *OrderExceptionController) GetStatistics(ctx *gin.Context) {
 	stats, err := c.orderExceptionService.GetStatistics(ctx.Request.Context(), startDate, endDate)
 	if err != nil {
 		c.logger.Error("获取异常统计信息失败", zap.Error(err))
-		utils.Error(ctx, http.StatusInternalServerError, "获取统计信息失败")
+		resp.Error(ctx, http.StatusInternalServerError, "获取统计信息失败")
 		return
 	}
 
-	utils.Success(ctx, stats)
+	resp.Success(ctx, stats)
 }
 
 // GetStatisticsByUser 获取指定用户的异常统计（认证即可）
@@ -264,49 +265,49 @@ func (c *OrderExceptionController) GetStatistics(ctx *gin.Context) {
 // @Failure 500 {object} utils.ErrorResponse
 // @Router /api/order-exceptions/user-statistics [get]
 func (c *OrderExceptionController) GetStatisticsByUser(ctx *gin.Context) {
-    startDateStr := ctx.Query("start_date")
-    endDateStr := ctx.Query("end_date")
+	startDateStr := ctx.Query("start_date")
+	endDateStr := ctx.Query("end_date")
 
-    if startDateStr == "" || endDateStr == "" {
-        utils.Error(ctx, http.StatusBadRequest, "开始日期和结束日期不能为空")
-        return
-    }
+	if startDateStr == "" || endDateStr == "" {
+		resp.Error(ctx, http.StatusBadRequest, "开始日期和结束日期不能为空")
+		return
+	}
 
-    startDate, err := time.Parse("2006-01-02", startDateStr)
-    if err != nil {
-        utils.Error(ctx, http.StatusBadRequest, "开始日期格式错误")
-        return
-    }
+	startDate, err := time.Parse("2006-01-02", startDateStr)
+	if err != nil {
+		resp.Error(ctx, http.StatusBadRequest, "开始日期格式错误")
+		return
+	}
 
-    endDate, err := time.Parse("2006-01-02", endDateStr)
-    if err != nil {
-        utils.Error(ctx, http.StatusBadRequest, "结束日期格式错误")
-        return
-    }
+	endDate, err := time.Parse("2006-01-02", endDateStr)
+	if err != nil {
+		resp.Error(ctx, http.StatusBadRequest, "结束日期格式错误")
+		return
+	}
 
-    // 结束日期加一天，包含当天的所有记录
-    endDate = endDate.AddDate(0, 0, 1)
+	// 结束日期加一天，包含当天的所有记录
+	endDate = endDate.AddDate(0, 0, 1)
 
-    // 默认取当前登录用户 ID
-    userId := ctx.GetInt64("user_id")
+	// 默认取当前登录用户 ID
+	userId := ctx.GetInt64("user_id")
 
-    // 管理员可以通过 query 参数指定 user_id
-    if rolesVal, exists := ctx.Get("roles"); exists {
-        if roles, ok := rolesVal.([]string); ok && utils.HasRole(roles, "SUPER_ADMIN") {
-            if uidStr := ctx.Query("user_id"); uidStr != "" {
-                if uid, parseErr := strconv.ParseInt(uidStr, 10, 64); parseErr == nil && uid > 0 {
-                    userId = uid
-                }
-            }
-        }
-    }
+	// 管理员可以通过 query 参数指定 user_id
+	if rolesVal, exists := ctx.Get("roles"); exists {
+		if roles, ok := rolesVal.([]string); ok && utils.HasRole(roles, "SUPER_ADMIN") {
+			if uidStr := ctx.Query("user_id"); uidStr != "" {
+				if uid, parseErr := strconv.ParseInt(uidStr, 10, 64); parseErr == nil && uid > 0 {
+					userId = uid
+				}
+			}
+		}
+	}
 
-    stats, err := c.orderExceptionService.GetStatisticsByUser(ctx.Request.Context(), startDate, endDate, userId)
-    if err != nil {
-        c.logger.Error("获取用户异常统计信息失败", zap.Error(err))
-        utils.Error(ctx, http.StatusInternalServerError, "获取统计信息失败")
-        return
-    }
+	stats, err := c.orderExceptionService.GetStatisticsByUser(ctx.Request.Context(), startDate, endDate, userId)
+	if err != nil {
+		c.logger.Error("获取用户异常统计信息失败", zap.Error(err))
+		resp.Error(ctx, http.StatusInternalServerError, "获取统计信息失败")
+		return
+	}
 
-    utils.Success(ctx, stats)
+	resp.Success(ctx, stats)
 }

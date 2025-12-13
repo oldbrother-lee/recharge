@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"recharge-go/internal/model"
 
 	"gorm.io/gorm"
@@ -120,6 +121,20 @@ func (r *PlatformAccountRepository) GetDB() *gorm.DB {
 
 // GetPullOrderAccounts 获取启用拉单的平台账号列表
 func (r *PlatformAccountRepository) GetPullOrderAccounts(ctx context.Context) ([]model.PlatformAccount, error) {
+	// Debug logic to diagnose why count is 0
+	var total, mode2, enabled, active, final int64
+	r.db.Model(&model.PlatformAccount{}).Count(&total)
+	r.db.Model(&model.PlatformAccount{}).Where("order_mode = ?", 2).Count(&mode2)
+	r.db.Model(&model.PlatformAccount{}).Where("enable_pull_order = ?", true).Count(&enabled)
+	r.db.Model(&model.PlatformAccount{}).Where("status = ?", 1).Count(&active)
+	r.db.Model(&model.PlatformAccount{}).Where("order_mode = ? AND enable_pull_order = ? AND status = ?", 2, true, 1).Count(&final)
+
+	fmt.Printf("DEBUG: Total Accounts: %d\n", total)
+	fmt.Printf("DEBUG: Accounts with OrderMode=2: %d\n", mode2)
+	fmt.Printf("DEBUG: Accounts with EnablePullOrder=true: %d\n", enabled)
+	fmt.Printf("DEBUG: Accounts with Status=1: %d\n", active)
+	fmt.Printf("DEBUG: Accounts matching ALL conditions: %d\n", final)
+
 	var accounts []model.PlatformAccount
 	err := r.db.WithContext(ctx).
 		Preload("Platform").

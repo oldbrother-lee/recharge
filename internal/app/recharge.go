@@ -60,17 +60,17 @@ func (r *RechargeApp) Start(ctx context.Context) error {
 		return err
 	}
 
-	// 获取配置中的批量处理数量，如果未配置或为0则使用默认值10
-	batchSize := viper.GetInt("task.batch_size")
-	if batchSize <= 0 {
-		batchSize = 10
+	// 获取配置中的并发数量，如果未配置或为0则使用默认值20
+	concurrency := viper.GetInt("task.concurrency")
+	if concurrency <= 0 {
+		concurrency = 20
 	}
 
 	// 创建充值工作器
 	r.rechargeWorker = service.NewRechargeWorker(
 		r.container.GetServices().Recharge,
-		time.Second*5, // 每5秒检查一次
-		batchSize,     // 从配置读取批量处理数量
+		time.Second*5, // BRPOP 超时时间
+		concurrency,   // 并发数量
 	)
 
 	// 创建上下文

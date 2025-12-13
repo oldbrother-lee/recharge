@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"time"
 
-    "recharge-go/internal/model"
-    "recharge-go/internal/repository"
-    logger "recharge-go/pkg/log"
-    "recharge-go/pkg/signature"
+	"recharge-go/internal/model"
+	"recharge-go/internal/repository"
+	logger "recharge-go/pkg/log"
+	"recharge-go/pkg/signature"
 
 	"gorm.io/gorm"
 )
@@ -202,9 +202,14 @@ func (p *ShangtengPlatform) sendRequest(ctx context.Context, url string, body ma
 		req.Header.Set(key, value)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 60 * time.Second}
+	startTime := time.Now()
 	httpResp, err := client.Do(req)
 	if err != nil {
+		logger.WithContextCategory(ctx, "recharge").Error("【商腾科技请求失败】",
+			logger.ErrorV2(err),
+			logger.DurationV2("duration", time.Since(startTime)),
+		)
 		return nil, fmt.Errorf("send request failed: %v", err)
 	}
 	defer httpResp.Body.Close()
@@ -213,7 +218,11 @@ func (p *ShangtengPlatform) sendRequest(ctx context.Context, url string, body ma
 	if err != nil {
 		return nil, fmt.Errorf("read response failed: %v", err)
 	}
-	logger.WithContextCategory(ctx, "recharge").Info("【商腾科技HTTP响应】", logger.IntV2("http_status", httpResp.StatusCode), logger.StringV2("body", string(respBody)))
+	logger.WithContextCategory(ctx, "recharge").Info("【商腾科技HTTP响应】",
+		logger.IntV2("http_status", httpResp.StatusCode),
+		logger.StringV2("body", string(respBody)),
+		logger.DurationV2("duration", time.Since(startTime)),
+	)
 
 	var resp ShangtengResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {

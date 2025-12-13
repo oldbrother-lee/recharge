@@ -19,8 +19,8 @@ func InitRedis(host string, port int, password string, db int) error {
 		Addr:         fmt.Sprintf("%s:%d", host, port),
 		Password:     password,
 		DB:           db,
-		PoolSize:     10,
-		MinIdleConns: 5,
+		PoolSize:     200, // 增加连接池大小以支持高并发阻塞操作
+		MinIdleConns: 50,  // 保持更多空闲连接
 		MaxRetries:   3,
 		DialTimeout:  5 * time.Second,
 		ReadTimeout:  3 * time.Second,

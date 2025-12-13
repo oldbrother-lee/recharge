@@ -40,10 +40,11 @@ task:
   order_details_interval: 60
   max_retries: 3
   retry_delay: 3           # 重试延迟优化为3秒
-  max_concurrent: 10
+  max_concurrent: 50
   batch_size: 100
   suspend_threshold: 1000  # 处理中订单数量达到此值时暂停拉单
   resume_threshold: 800    # 处理中订单数量降到此值时恢复拉单
+  concurrency: 10
 
 # 重试任务专用配置
 retry_task:

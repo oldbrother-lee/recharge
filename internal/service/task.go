@@ -6,9 +6,9 @@ import (
 	"recharge-go/configs"
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
-    "recharge-go/internal/service/platform"
-    "recharge-go/internal/utils"
-    logger "recharge-go/pkg/log"
+	"recharge-go/internal/service/platform"
+	"recharge-go/internal/utils"
+	logger "recharge-go/pkg/log"
 	"strings"
 	"sync"
 	"time"
@@ -111,6 +111,9 @@ func (s *TaskService) StartTask(ctx context.Context) {
 	}
 	s.isRunning = true
 	s.mu.Unlock()
+
+	fmt.Printf("TaskService StartTask: MaxConcurrent=%d\n", s.config.MaxConcurrent)
+	logger.InfoV2("启动自动取单任务", logger.Int64V2("MaxConcurrent", int64(s.config.MaxConcurrent)))
 
 	// 从传入的父上下文派生可取消上下文，确保退出时能够正确传播
 	s.ctx, s.cancel = context.WithCancel(ctx)
@@ -633,53 +636,78 @@ func (s *TaskService) processTask() {
 	if maxConcurrent <= 0 {
 		maxConcurrent = 20 // 默认最大并发数
 	}
-	sem := make(chan struct{}, maxConcurrent)
-	var wg sync.WaitGroup
 
+	// 获取当前运行的任务数量
+	s.taskMutex.RLock()
+	runningCount := len(s.taskContexts)
+	s.taskMutex.RUnlock()
+
+	logger.InfoV2("当前任务状态",
+		logger.IntV2("running_count", runningCount),
+		logger.Int64V2("max_concurrent", int64(maxConcurrent)))
+
+	newTaskCount := 0
 	for _, config := range configs {
-		// 检查任务是否已在运行（使用双重检查确保准确性）
-		s.taskMutex.Lock()
+		// 1. 检查任务是否已在运行
+		s.taskMutex.RLock()
 		taskCtx, isRunning := s.taskContexts[config.ID]
+		s.taskMutex.RUnlock()
+
 		if isRunning {
 			// 验证上下文是否仍然有效
 			select {
 			case <-taskCtx.Ctx.Done():
-				// 上下文已取消，删除无效的映射
-				delete(s.taskContexts, config.ID)
+				// 上下文已取消，清理（注意：processTaskConfig 中的 defer 也会清理，这里再次检查以防万一）
+				// 但为了安全，这里不直接删除，依赖 processTaskConfig 的 defer 或下一次循环
+				// 仅标记为未运行
 				isRunning = false
-				logger.DebugV2("清理无效的任务上下文",
-					logger.Int64V2("task_id", config.ID))
 			default:
-				// 上下文仍然有效，任务确实在运行
-				logger.DebugV2("任务已在运行，跳过",
-					logger.Int64V2("task_id", config.ID),
-					logger.Int64V2("channel_id", int64(config.ChannelID)),
-					logger.StringV2("product_id", config.ProductID))
+				// 任务正在运行，跳过
+				continue
 			}
 		}
-		s.taskMutex.Unlock()
 
-		if isRunning {
+		// 2. 检查并发限制
+		s.taskMutex.RLock()
+		currentRunning := len(s.taskContexts)
+		s.taskMutex.RUnlock()
+
+		if currentRunning >= maxConcurrent {
+			logger.WarnV2("达到最大并发限制，跳过启动新任务",
+				logger.Int64V2("task_id", config.ID),
+				logger.IntV2("current_running", currentRunning),
+				logger.Int64V2("max_concurrent", int64(maxConcurrent)))
+			// 由于是遍历列表，如果前面的任务占满了配额，后面的都无法启动
+			// 这里可以选择 continue 尝试找其他任务，或者 break
+			// 既然已满，继续遍历也无法启动，除非有优先级逻辑。当前简单处理为继续检查日志，但不启动
 			continue
 		}
 
+		// 3. 启动新任务
+		newTaskCount++
 		logger.InfoV2("启动新任务",
 			logger.Int64V2("task_id", config.ID),
 			logger.Int64V2("channel_id", int64(config.ChannelID)),
 			logger.StringV2("product_id", config.ProductID))
 
-		sem <- struct{}{} // 占用一个并发槽
-		wg.Add(1)
+		// 异步启动，不阻塞主循环
 		go func(cfg *model.TaskConfig) {
+			// 捕获 panic 防止 crash
 			defer func() {
-				<-sem // 释放并发槽
-				wg.Done()
+				if r := recover(); r != nil {
+					logger.ErrorLogV2("任务发生 panic",
+						logger.Int64V2("task_id", cfg.ID),
+						logger.AnyV2("panic", r))
+				}
 			}()
-
 			s.processTaskConfig(cfg)
 		}(&config)
 	}
-	wg.Wait()
+
+	if newTaskCount > 0 {
+		logger.InfoV2("新任务启动完成",
+			logger.Int64V2("new_task_count", int64(newTaskCount)))
+	}
 }
 
 // checkAndStopObsoleteTasks 检查并停止已删除或禁用的任务

@@ -14,6 +14,7 @@ import (
 	redisx "recharge-go/pkg/redis"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,6 +42,8 @@ type RechargeService interface {
 	PopFromRechargeQueue(ctx context.Context) (int64, error)
 	// GetOrderByID 根据ID获取订单
 	GetOrderByID(ctx context.Context, orderID int64) (*model.Order, error)
+	// PopFromRechargeQueueBlocking 从充值队列阻塞获取订单（使用 BRPOP）
+	PopFromRechargeQueueBlocking(ctx context.Context, timeout time.Duration) (int64, error)
 	// RemoveFromProcessingQueue 从处理中队列移除任务
 	RemoveFromProcessingQueue(ctx context.Context, orderID int64) error
 	// CheckRechargingOrders 检查充值中订单
@@ -773,10 +776,17 @@ func (s *rechargeService) GetPendingTasks(ctx context.Context, limit int) ([]*mo
 	}
 
 	// 获取队列中的订单ID列表
-	orderIDs, err := s.redisClient.LRange(ctx, "recharge_queue", 0, int64(limit-1)).Result()
+	// 使用负数索引从列表尾部获取（即获取最早进入队列的订单），实现FIFO
+	// LPUSH 放入头部，所以头部是最新订单，尾部是最旧订单
+	orderIDs, err := s.redisClient.LRange(ctx, "recharge_queue", -int64(limit), -1).Result()
 	if err != nil {
 		logger.WithContextCategory(ctx, "recharge").Error("【从Redis队列获取订单ID失败】", logger.ErrorV2(err))
 		return nil, fmt.Errorf("get order IDs from queue failed: %v", err)
+	}
+
+	// 反转切片，确保处理顺序是从最旧到最新
+	for i, j := 0, len(orderIDs)-1; i < j; i, j = i+1, j-1 {
+		orderIDs[i], orderIDs[j] = orderIDs[j], orderIDs[i]
 	}
 
 	logger.WithContextCategory(ctx, "recharge").Info("【调试：从Redis获取的订单ID列表】", logger.AnyV2("order_ids", orderIDs), logger.IntV2("limit", limit))
@@ -1096,6 +1106,33 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 
 	// 提交订单到平台
 	if err := s.SubmitOrder(ctx, order, api, apiParam); err != nil {
+		// 检查是否为超时错误（如尚腾平台超时），如果是则保持 Processing 状态
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "Client.Timeout") ||
+			strings.Contains(errMsg, "context deadline exceeded") ||
+			strings.Contains(strings.ToLower(errMsg), "timeout") {
+
+			logger.WithContextCategory(ctx, "recharge").Warn("【提交订单超时，保持处理中状态】",
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("order_number", order.OrderNumber),
+				logger.ErrorV2(err))
+
+			// 更新状态为 Processing
+			if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusProcessing); err != nil {
+				logger.WithContextCategory(ctx, "recharge").Error("【更新订单状态为Processing失败】",
+					logger.Int64V2("order_id", order.ID),
+					logger.ErrorV2(err))
+			}
+
+			// 从处理队列移除
+			if err := s.RemoveFromProcessingQueue(ctx, order.ID); err != nil {
+				logger.WithContextCategory(ctx, "recharge").Error("【从处理队列移除失败】",
+					logger.Int64V2("order_id", order.ID),
+					logger.ErrorV2(err))
+			}
+			return nil
+		}
+
 		logger.WithContextCategory(ctx, "recharge").Error("【提交订单到平台失败1】",
 			logger.ErrorV2(err),
 			logger.Int64V2("order_id", order.ID),
@@ -1602,6 +1639,47 @@ func (s *rechargeService) PopFromRechargeQueue(ctx context.Context) (int64, erro
 	logger.WithContextCategory(ctx, "recharge").Info("【从充值队列获取订单成功】",
 		logger.StringV2("stage", "dequeue"),
 		logger.Int64V2("order_id", orderID))
+	return orderID, nil
+}
+
+// PopFromRechargeQueueBlocking 从充值队列阻塞获取订单（使用 BRPOP）
+func (s *rechargeService) PopFromRechargeQueueBlocking(ctx context.Context, timeout time.Duration) (int64, error) {
+	if s.redisClient == nil {
+		return 0, fmt.Errorf("redis client is nil")
+	}
+
+	// 使用 BRPOP 阻塞读取，从列表尾部弹出（FIFO）
+	// "recharge_queue" 是列表 key
+	// timeout 是阻塞超时时间，0 表示无限阻塞
+	results, err := s.redisClient.BRPop(ctx, timeout, "recharge_queue").Result()
+	if err != nil {
+		if err == redisc.Nil {
+			return 0, nil // 超时未获取到
+		}
+		// 如果上下文被取消（如服务关闭），Redis 客户端会返回错误，需判别
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return 0, err
+		}
+		// Redis 连接关闭等其他错误
+		if err.Error() == "redis: client is closed" {
+			return 0, err
+		}
+		logger.WithContextCategory(ctx, "recharge").Error("【阻塞获取订单失败】", logger.ErrorV2(err))
+		return 0, err
+	}
+
+	// BRPop 返回 [key, value]，我们需要 value
+	if len(results) < 2 {
+		return 0, fmt.Errorf("invalid brpop result")
+	}
+
+	orderIDStr := results[1]
+	orderID, err := strconv.ParseInt(orderIDStr, 10, 64)
+	if err != nil {
+		logger.WithContextCategory(ctx, "recharge").Error("【解析订单ID失败】", logger.StringV2("order_id_str", orderIDStr), logger.ErrorV2(err))
+		return 0, err
+	}
+
 	return orderID, nil
 }
 

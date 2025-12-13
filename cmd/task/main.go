@@ -12,6 +12,8 @@ func main() {
 	configPath := flag.String("config", "configs/config.yaml", "配置文件路径")
 	flag.Parse()
 
+	log.Printf("正在加载配置文件: %s", *configPath)
+
 	// 创建容器时传入配置文件路径和服务名
 	container, err := app.NewContainerWithConfigAndService(*configPath, "task")
 	if err != nil {

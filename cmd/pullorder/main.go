@@ -17,6 +17,8 @@ func main() {
 	interval := flag.Int("interval", 0, "拉单间隔（秒），仅在 --watch 模式下生效；默认使用配置 Task.Interval")
 	flag.Parse()
 
+	log.Printf("PullOrder Service Starting. Config Path: %s", *configPath)
+
 	// 创建容器
 	container, err := app.NewContainerWithConfigAndService(*configPath, "pullorder")
 	if err != nil {

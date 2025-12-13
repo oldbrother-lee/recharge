@@ -182,6 +182,14 @@ func NewContainerWithConfigAndService(configPath, serviceName string) (*Containe
 	// 初始化中间件
 	c.initMiddleware()
 
+	// 打印加载的配置
+	if c.config != nil {
+		fmt.Printf("Loaded Config: MaxConcurrent=%d\n", c.config.Task.MaxConcurrent)
+		if c.logger != nil {
+			c.logger.Info("Configuration Loaded", zap.Int("MaxConcurrent", c.config.Task.MaxConcurrent))
+		}
+	}
+
 	return c, nil
 }
 

@@ -386,7 +386,7 @@ onMounted(() => {
           v-model:page="pagination.page"
           v-model:page-size="pagination.pageSize"
           :item-count="pagination.itemCount"
-          :page-sizes="[10, 20, 50, 100]"
+          :page-sizes="[10, 50, 100,500,1000]"
           show-size-picker
           show-quick-jumper
           @update:page="handlePageChange"

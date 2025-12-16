@@ -27,6 +27,10 @@ export function createStaticRoutes() {
   const authRoutes: ElegantRoute[] = [];
 
   [...customRoutes, ...generatedRoutes].forEach(item => {
+    if (item.name === 'manage') {
+      item.meta = { ...item.meta, title: item.meta?.title ?? 'manage', hideInMenu: true };
+    }
+
     if (item.meta?.constant) {
       constantRoutes.push(item);
     } else {

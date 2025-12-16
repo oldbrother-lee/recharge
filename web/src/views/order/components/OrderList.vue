@@ -1,17 +1,19 @@
 <script setup lang="tsx">
-import { ref, onMounted, watch, nextTick, computed } from 'vue';
+import { ref, onMounted, watch, computed } from 'vue';
 import OrderSearchForm from './OrderSearchForm.vue';
 import { request } from '@/service/request';
 import type { Order } from '@/typings/api';
-import { NDataTable, NCard, useMessage, NTag, NButton, NModal, NInput, NForm, NFormItem, NDatePicker } from 'naive-ui';
+import { NDataTable, NCard, useMessage, NTag, NButton, NModal, NInput, NForm, NFormItem, NDatePicker, NSpace } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
 import { useAuthStore } from '@/store/modules/auth';
 import { formatISP } from '@/utils/format';
+import { useAppStore } from '@/store/modules/app';
 // 本地定义 RowKey 类型以兼容 Naive UI DataTable 的选中键类型
 type RowKey = string | number;
 
 
 const authStore = useAuthStore();
+const appStore = useAppStore();
 
 const hasRole = (role: string) => {
   return authStore.userInfo.roles.includes(role);
@@ -24,10 +26,36 @@ const props = withDefaults(defineProps<{
   platform_code: ''
 });
 const message = useMessage();
+const columnChecks = ref<any[]>([]);
 const loading = ref(false);
 const data = ref<Order[]>([]);
-const pagination = ref({ page: 1, pageSize: 10, itemCount: 0 });
-const searchParams = ref<any>({});
+const pagination = ref({
+  page: 1,
+  pageSize: 10,
+  itemCount: 0,
+  pageSizes: [10, 50, 100, 500, 1000],
+  showSizePicker: true,
+  prefix: (info: { itemCount?: number }) => `共 ${Number(info.itemCount ?? 0)} 条`
+});
+
+const responsivePagination = computed(() => ({
+  ...pagination.value,
+  showSizePicker: true,
+  pageSlot: appStore.isMobile ? 3 : 9,
+  prefix: appStore.isMobile ? undefined : pagination.value.prefix
+}));
+
+const searchParams = ref<any>({
+  current: 1,
+  size: 10,
+  order_number: '',
+  out_trade_num: '',
+  mobile: '',
+  isp: null,
+  denom: null,
+  status: null,
+  date_range: null
+});
 // 成功统计（按运营商与面值）
 const successStatsLoading = ref(false);
 const successStats = ref<Array<{ isp: number; denom: number; successCount: number; successAmount: number }>>([]);
@@ -583,11 +611,10 @@ const fetchSuccessStats = async () => {
   }
 };
 
-const handleSearch = (params: any) => {
-  searchParams.value = params;
+const handleSearch = () => {
   pagination.value.page = 1;
   fetchOrders();
-  const dr = params?.date_range;
+  const dr = searchParams.value?.date_range;
   if (Array.isArray(dr) && dr.length === 2 && dr[0] && dr[1]) {
     // 仅在选择了时间范围时获取成功统计
     fetchSuccessStats();
@@ -604,6 +631,7 @@ const handlePageChange = (page: number) => {
 
 const handlePageSizeChange = (size: number) => {
   pagination.value.pageSize = size;
+  pagination.value.page = 1;
   fetchOrders();
 };
 
@@ -637,9 +665,9 @@ function formatLocalDatetime(ts: number | null) {
 </script>
 
 <template>
-  <div class="min-h-1200px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
+  <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
     <!-- 搜索表单 -->
-    <OrderSearchForm @search="handleSearch" />
+    <OrderSearchForm v-model:model="searchParams" @search="handleSearch" />
     <!-- 成功统计（按运营商分组展示，置于卡片中） -->
     <NCard v-if="hasSearch" size="small" class="stats-card" :class="{ 'opacity-60': successStatsLoading }">
       <template #header>成功统计</template>
@@ -659,94 +687,61 @@ function formatLocalDatetime(ts: number | null) {
       </div>
     </NCard>
     
-    <!-- 数据表格 -->
-    <NCard size="small" class="sm:flex-1-hidden card-wrapper">
-      <template #header>
-        <div class="header-wrapper">
-          <span>订单列表</span>
-          <div class="button-group">
-            <NButton
-              v-show="selectedRowKeys.length > 0"
-              type="success"
-              size="small"
-              @click="handleBatchSuccess"
-              class="batch-btn"
-            >
-              <span class="btn-text">
-                <span class="btn-text-full">批量设置成功 ({{ selectedRowKeys.length }})</span>
-                <span class="btn-text-short">成功 ({{ selectedRowKeys.length }})</span>
-              </span>
-            </NButton>
-            <NButton
-              v-show="selectedRowKeys.length > 0"
-              type="error"
-              size="small"
-              @click="handleBatchFail"
-              class="batch-btn"
-            >
-              <span class="btn-text">
-                <span class="btn-text-full">批量设置失败 ({{ selectedRowKeys.length }})</span>
-                <span class="btn-text-short">失败 ({{ selectedRowKeys.length }})</span>
-              </span>
-            </NButton>
-            <NButton
-              v-show="selectedRowKeys.length > 0"
-              type="warning"
-              size="small"
-              @click="handleBatchDelete"
-              class="batch-btn"
-            >
-              <span class="btn-text">
-                <span class="btn-text-full">批量删除 ({{ selectedRowKeys.length }})</span>
-                <span class="btn-text-short">删除 ({{ selectedRowKeys.length }})</span>
-              </span>
-            </NButton>
-            <NButton
-              v-show="selectedRowKeys.length > 0"
-              type="info"
-              size="small"
-              @click="handleBatchNotification"
-              class="batch-btn"
-            >
-              <span class="btn-text">
-                <span class="btn-text-full">批量发送回调 ({{ selectedRowKeys.length }})</span>
-                <span class="btn-text-short">回调 ({{ selectedRowKeys.length }})</span>
-              </span>
-            </NButton>
-            <NButton
-              v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
-              type="error"
-              size="small"
-              @click="showCleanupModal = true"
-              class="batch-btn"
-            >
-              <span class="btn-text">
-                <span class="btn-text-full">清理订单</span>
-                <span class="btn-text-short">清理</span>
-              </span>
-            </NButton>
-            <NButton
-              v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
-              type="primary"
-              size="small"
-              @click="toggleBalanceQuery"
-              class="batch-btn"
-            >
-              <span class="btn-text">
-                <span class="btn-text-full">{{ balanceVerificationEnabled ? '关闭查询余额' : '开启查询余额' }}</span>
-                <span class="btn-text-short">查询余额</span>
-              </span>
-            </NButton>
-          </div>
-        </div>
+    <NCard :title="'订单列表'" :bordered="false" size="small" class="card-wrapper sm:flex-1-hidden">
+      <template #header-extra>
+        <NSpace justify="end" wrap class="lt-sm:w-200px">
+          <NButton
+            v-show="selectedRowKeys.length > 0"
+            type="success"
+            size="small"
+            @click="handleBatchSuccess"
+          >
+            批量成功 ({{ selectedRowKeys.length }})
+          </NButton>
+          <NButton
+            v-show="selectedRowKeys.length > 0"
+            type="error"
+            size="small"
+            @click="handleBatchFail"
+          >
+            批量失败 ({{ selectedRowKeys.length }})
+          </NButton>
+          <NButton
+            v-show="selectedRowKeys.length > 0"
+            type="info"
+            size="small"
+            @click="handleBatchNotification"
+          >
+            批量回调 ({{ selectedRowKeys.length }})
+          </NButton>
+          <NButton
+            v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
+            type="error"
+            size="small"
+            @click="showCleanupModal = true"
+          >
+            清理订单
+          </NButton>
+          <NButton
+            v-if="props.platform === 'all' && hasRole('SUPER_ADMIN')"
+            type="primary"
+            size="small"
+            @click="toggleBalanceQuery"
+          >
+            {{ balanceVerificationEnabled ? '关闭查询余额' : '开启查询余额' }}
+          </NButton>
+        </NSpace>
       </template>
       <NDataTable
         :columns="columns"
         :data="data"
         :loading="loading"
-        :pagination="pagination"
-        :flex-height="true"
+        :pagination="responsivePagination"
+        :flex-height="!appStore.isMobile"
         :scroll-x="1800"
+        virtual-scroll
+        :min-height="appStore.isMobile ? 400 : undefined"
+        :max-height="appStore.isMobile ? 600 : undefined"
         remote
         checkable
         :row-key="row => String(row.id)"
@@ -754,7 +749,7 @@ function formatLocalDatetime(ts: number | null) {
         @update:checked-row-keys="handleRowKeysUpdate"
         @update:page="handlePageChange"
         @update:page-size="handlePageSizeChange"
-        class="h-full"
+        class="sm:h-full"
         size="small"
       />
     </NCard>
@@ -850,226 +845,4 @@ function formatLocalDatetime(ts: number | null) {
   </div>
 </template>
 
-<style scoped>
-.min-h-500px {
-  min-height: 500px;
-}
-.flex-col-stretch {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-.gap-16px {
-  gap: 16px;
-}
-.lt-sm\:overflow-auto {
-  @media (max-width: 640px) {
-    overflow: auto;
-  }
-}
-.overflow-hidden {
-  overflow: hidden;
-}
-.sm\:flex-1-hidden {
-  @media (min-width: 640px) {
-    flex: 1;
-    overflow: hidden;
-  }
-}
-.card-wrapper {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-.h-full {
-  height: 100%;
-}
-.flex-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.gap-8px {
-  gap: 8px;
-}
-/* 统计文字样式 */
-.stats-text {
-  font-size: 13px;
-  color: #666;
-}
-.stats-card {
-  /* 让统计卡片与列表保持一致的间距与视觉层级 */
-}
-.stats-summary {
-  margin-bottom: 4px;
-}
-.stats-groups {
-  margin-top: 2px;
-}
-.stats-group {
-  margin-top: 2px;
-}
-.stats-group .isp {
-  font-weight: 500;
-  color: #333;
-}
-
-/* 头部样式 */
-.header-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.button-group {
-  display: flex;
-  gap: 8px;
-  margin-left: auto;
-  flex-wrap: wrap;
-}
-
-.batch-btn .btn-text-short {
-  display: none;
-}
-
-.batch-btn .btn-text-full {
-  display: inline;
-}
-
-/* 操作按钮样式 */
-.operation-buttons {
-  display: flex;
-  gap: 8px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-.op-btn .op-btn-text-short {
-  display: none;
-}
-
-.op-btn .op-btn-text-full {
-  display: inline;
-}
-
-/* 移动端样式 */
-@media (max-width: 640px) {
-  .header-wrapper {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
-  }
-  
-  .button-group {
-    margin-left: 0;
-    width: 100%;
-    justify-content: flex-start;
-  }
-  
-  .batch-btn .btn-text-full {
-    display: none;
-  }
-  
-  .batch-btn .btn-text-short {
-    display: inline;
-  }
-  
-  .operation-buttons {
-    gap: 4px;
-  }
-  
-  .op-btn .op-btn-text-full {
-    display: none;
-  }
-  
-  .op-btn .op-btn-text-short {
-    display: inline;
-  }
-  
-  /* 表格移动端优化 */
-  .n-data-table {
-    font-size: 12px !important;
-  }
-  
-  .n-data-table .n-data-table-td,
-  .n-data-table .n-data-table-th {
-    white-space: nowrap !important;
-    padding: 6px 4px !important;
-    font-size: 12px !important;
-    line-height: 1.2 !important;
-  }
-  
-  .n-data-table .n-data-table-td {
-    min-height: 32px !important;
-  }
-  
-  /* 表格内容优化 */
-  .n-data-table .n-tag {
-    font-size: 11px !important;
-    padding: 2px 6px !important;
-    line-height: 1.2 !important;
-  }
-  
-  /* 分页器移动端优化 */
-  .n-pagination {
-    justify-content: center !important;
-  }
-  
-  .n-pagination .n-pagination-item {
-    min-width: 28px !important;
-    height: 28px !important;
-    font-size: 12px !important;
-  }
-}
-
-@media (max-width: 480px) {
-  .button-group {
-    gap: 4px;
-    flex-wrap: wrap;
-  }
-  
-  .batch-btn {
-    font-size: 11px !important;
-    padding: 3px 6px !important;
-    min-width: auto !important;
-  }
-  
-  .operation-buttons {
-    gap: 2px;
-    flex-direction: column;
-    align-items: center;
-  }
-  
-  .op-btn {
-    font-size: 10px !important;
-    padding: 2px 4px !important;
-    min-width: 36px !important;
-    line-height: 1.2 !important;
-  }
-  
-  /* 极小屏幕表格优化 */
-  .n-data-table .n-data-table-td,
-  .n-data-table .n-data-table-th {
-    padding: 4px 2px !important;
-    font-size: 11px !important;
-  }
-  
-  .n-data-table .n-tag {
-    font-size: 10px !important;
-    padding: 1px 4px !important;
-  }
-  
-  /* 分页器极小屏幕优化 */
-  .n-pagination .n-pagination-item {
-    min-width: 24px !important;
-    height: 24px !important;
-    font-size: 11px !important;
-  }
-  
-  .n-pagination .n-pagination-prefix,
-  .n-pagination .n-pagination-suffix {
-    font-size: 11px !important;
-  }
-}
-</style>
+<style scoped></style>

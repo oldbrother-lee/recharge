@@ -28,6 +28,14 @@ func (BalanceLog) TableName() string {
 	return "balance_logs"
 }
 
+// BalanceLogWithOrder 流水记录（关联订单号、外部订单号、手机号，用于列表展示）
+type BalanceLogWithOrder struct {
+	BalanceLog
+	OrderNumber  string `json:"order_number" gorm:"column:order_number"`
+	OutTradeNum  string `json:"out_trade_num" gorm:"column:out_trade_num"`
+	Mobile       string `json:"mobile" gorm:"column:mobile"`
+}
+
 // 余额变动类型
 const (
 	BalanceTypeIncome  = 1 // 收入

@@ -143,7 +143,8 @@ func RegisterOrderRoutes(r *gin.RouterGroup, db *gorm.DB, userService *service.U
 		// order.POST("/:id/recharge", orderController.ProcessOrderRecharge)
 		order.POST("/:id/success", orderController.ProcessOrderSuccess)
 		order.POST("/:id/fail", orderController.ProcessOrderFail)
-		// order.POST("/:id/refund", orderController.ProcessOrderRefund)
+		order.POST("/:id/refund", orderController.ProcessOrderRefund)           // 审核通过：执行退款
+		order.POST("/:id/refund/reject", orderController.ProcessOrderRefundReject) // 审核拒绝：恢复待充值
 		// order.POST("/:id/cancel", orderController.ProcessOrderCancel)
 		// order.POST("/:id/split", orderController.ProcessOrderSplit)
 		// order.POST("/:id/partial", orderController.ProcessOrderPartial)

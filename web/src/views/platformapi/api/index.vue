@@ -1,192 +1,30 @@
-<template>
-  <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
-    <!-- 搜索表单 -->
-    <NCard :bordered="false" size="small" class="mb-16px">
-      <NForm
-        ref="searchFormRef"
-        :model="searchForm"
-        label-placement="left"
-        :label-width="80"
-      >
-        <NCollapse :default-expanded-names="[]">
-          <NCollapseItem title="搜索条件" name="api-search">
-            <NGrid responsive="screen" item-responsive :x-gap="24">
-              <NFormItemGi span="24 s:12 m:6" label="接口名称" path="name">
-                <NInput v-model:value="searchForm.name" placeholder="请输入接口名称" />
-              </NFormItemGi>
-              <NFormItemGi span="24 s:12 m:6" label="平台" path="platform_id">
-                <NSelect
-                  v-model:value="searchForm.platform_id"
-                  :options="platformOptions"
-                  placeholder="请选择平台"
-                  clearable
-                />
-              </NFormItemGi>
-              <NFormItemGi span="24 s:12 m:6" label="状态" path="status">
-                <NSelect
-                  v-model:value="searchForm.status"
-                  :options="[
-                    { label: '启用', value: 1 },
-                    { label: '禁用', value: 0 }
-                  ]"
-                  placeholder="请选择状态"
-                  clearable
-                />
-              </NFormItemGi>
-              <NFormItemGi span="24" class="pr-24px">
-                <NSpace class="w-full" justify="end">
-                  <NButton @click="handleReset">重置</NButton>
-                  <NButton type="primary" ghost @click="handleSearch(fetchAPIs)">搜索</NButton>
-                </NSpace>
-              </NFormItemGi>
-            </NGrid>
-          </NCollapseItem>
-        </NCollapse>
-      </NForm>
-    </NCard>
-
-    <!-- 数据表格 -->
-    <NCard :title="'接口管理'" :bordered="false" size="small" class="flex-1 card-wrapper">
-      <template #header-extra>
-        <NSpace>
-          <NButton type="primary" @click="handleAdd()">
-            新增接口
-          </NButton>
-        </NSpace>
-      </template>
-      <NDataTable
-        :columns="columns"
-        :data="data"
-        :loading="loading"
-        :pagination="pagination"
-        :flex-height="true"
-        :scroll-x="1200"
-        remote
-        :row-key="row => row.id"
-        @update:page="onPageChange"
-        @update:page-size="onPageSizeChange"
-        class="min-h-400px"
-        size="small"
-      />
-    </NCard>
-
-    <!-- 新增/编辑弹窗 -->
-    <NModal
-      v-model:show="visible"
-      preset="dialog"
-      :title="formModel.id ? '编辑接口' : '新增接口'"
-      :style="{ width: '600px' }"
-    >
-      <NForm
-        ref="formRef"
-        :model="formModel"
-        :rules="rules"
-        label-placement="left"
-        label-width="auto"
-        require-mark-placement="right-hanging"
-      >
-        <NFormItem label="接口名称" path="name">
-          <NInput v-model:value="formModel.name" placeholder="请输入接口名称" />
-        </NFormItem>
-        <NFormItem label="平台" path="platform_id">
-          <NSelect
-            v-model:value="formModel.platform_id"
-            :options="platformOptions"
-            placeholder="请选择平台"
-            @change="handlePlatformChange"
-          />
-        </NFormItem>
-        <NFormItem label="账号ID" path="account_id">
-          <NSelect
-            v-model:value="formModel.account_id"
-            :options="accountOptions"
-            placeholder="请选择账号"
-          />
-        </NFormItem>
-        <!-- <NFormItem label="商户ID" path="merchant_id">
-          <NInput v-model:value="formModel.merchant_id" placeholder="商户id" />
-        </NFormItem> -->
-        <NFormItem label="接口地址" path="url">
-          <NInput v-model:value="formModel.url" placeholder="请输入接口地址" />
-        </NFormItem>
-        <NFormItem label="回调地址" path="callback_url">
-          <NInput v-model:value="formModel.callback_url" placeholder="回调地址" />
-        </NFormItem>
-        <!-- <NFormItem label="商户密钥" path="secret_key">
-          <NInput v-model:value="formModel.secret_key" placeholder="商户密钥" />
-        </NFormItem> -->
-        <NFormItem label="请求方法" path="method">
-          <NSelect
-            v-model:value="formModel.method"
-            :options="[
-              { label: 'GET', value: 'GET' },
-              { label: 'POST', value: 'POST' },
-              { label: 'PUT', value: 'PUT' },
-              { label: 'DELETE', value: 'DELETE' }
-            ]"
-            placeholder="请选择请求方法"
-          />
-        </NFormItem>
-        <NFormItem label="描述" path="description">
-          <NInput v-model:value="formModel.description" type="textarea" placeholder="请输入描述" />
-        </NFormItem>
-        <NFormItem label="状态" path="status">
-          <NSwitch v-model:value="formModel.status" :checked-value="1" :unchecked-value="0" />
-        </NFormItem>
-      </NForm>
-      <template #action>
-        <NSpace>
-          <NButton @click="hideModal">取消</NButton>
-          <NButton type="primary" @click="handleFormSubmit">确定</NButton>
-        </NSpace>
-      </template>
-    </NModal>
-
-    <!-- 参数配置对话框 -->
-    <NModal
-      v-model:show="paramVisible"
-      preset="dialog"
-      title="套餐配置"
-      :style="{ width: '1000px' }"
-    >
-      <div class="flex flex-col gap-16px">
-        <!-- 工具栏 -->
-        <div class="flex justify-end">
-          <NButton type="primary" @click="paramFormRef?.add(apiId)">
-            新增套餐
-          </NButton>
-        </div>
-        <!-- 参数列表 -->
-        <NDataTable
-          :columns="paramColumns"
-          :data="paramData"
-          :loading="paramLoading"
-          :pagination="paramPagination"
-          :flex-height="!appStore.isMobile"
-          :scroll-x="962"
-          remote
-          :row-key="row => row.id"
-          @update:page="onParamPageChange"
-          @update:page-size="onParamPageSizeChange"
-          class="sm:h-full"
-          style="min-height: 300px;"
-        />
-      </div>
-      <PlatformAPIParamForm ref="paramFormRef" @success="handleParamSuccess" />
-    </NModal>
-  </div>
-</template>
-
 <script setup lang="tsx">
-import { ref, onMounted } from 'vue';
-import { useTable } from '@/hooks/useTable';
-import { useModal } from '@/hooks/useModal';
-import { useForm } from '@/hooks/useForm';
-import { useMessage } from 'naive-ui';
-import { request } from '@/service/request';
+import { onMounted, ref } from 'vue';
+import {
+  NButton,
+  NCard,
+  NCollapse,
+  NCollapseItem,
+  NDataTable,
+  NForm,
+  NFormItem,
+  NFormItemGi,
+  NGrid,
+  NInput,
+  NModal,
+  NPopconfirm,
+  NSelect,
+  NSpace,
+  NSwitch,
+  NTag,
+  useMessage
+} from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
-import { NButton, NPopconfirm, NCard, NForm, NFormItem, NFormItemGi, NSpace, NInput, NSelect, NSwitch, NModal, NDataTable, NTag, NCollapse, NCollapseItem, NGrid } from 'naive-ui';
+import { request } from '@/service/request';
 import { useAppStore } from '@/store/modules/app';
+import { useForm } from '@/hooks/useForm';
+import { useModal } from '@/hooks/useModal';
+import { useTable } from '@/hooks/useTable';
 import PlatformAPIParamForm from './components/PlatformAPIParamForm.vue';
 
 interface PlatformAPI {
@@ -288,17 +126,32 @@ const columns: DataTableColumns<PlatformAPI> = [
     width: 80,
     render(row: PlatformAPI) {
       return row.status === 1 ? (
-        <NTag type="success" size="small">启用</NTag>
+        <NTag type="success" size="small">
+          启用
+        </NTag>
       ) : (
-        <NTag type="error" size="small">禁用</NTag>
+        <NTag type="error" size="small">
+          禁用
+        </NTag>
       );
     }
   },
-  {    key: 'operate',    title: '操作',    align: 'center',    width: 200,    render(row: PlatformAPI) {      return (        <div class="operation-buttons">          <NButton type="primary" ghost size="small" onClick={() => handleEdit(row)} class="op-btn">
+  {
+    key: 'operate',
+    title: '操作',
+    align: 'center',
+    width: 200,
+    render(row: PlatformAPI) {
+      return (
+        <div class="operation-buttons">
+          {' '}
+          <NButton type="primary" ghost size="small" onClick={() => handleEdit(row)} class="op-btn">
             编辑
-          </NButton>          <NButton type="info" ghost size="small" onClick={() => showParamDialog(row)} class="op-btn">
+          </NButton>{' '}
+          <NButton type="info" ghost size="small" onClick={() => showParamDialog(row)} class="op-btn">
             套餐配置
-          </NButton>          <NPopconfirm onPositiveClick={() => handleDelete(row)}>
+          </NButton>{' '}
+          <NPopconfirm onPositiveClick={() => handleDelete(row)}>
             {{
               default: () => '确认删除？',
               trigger: () => (
@@ -307,7 +160,11 @@ const columns: DataTableColumns<PlatformAPI> = [
                 </NButton>
               )
             }}
-          </NPopconfirm>        </div>      );    }  }
+          </NPopconfirm>{' '}
+        </div>
+      );
+    }
+  }
 ];
 
 // 参数表格列定义
@@ -335,29 +192,39 @@ const paramColumns: DataTableColumns<PlatformAPIParam> = [
     key: 'par_value',
     title: '面值',
     align: 'center',
-    width: 80,
+    width: 80
   },
   {
     key: 'price',
     title: '价格',
     align: 'center',
-    width: 80,
+    width: 80
   },
   {
     key: 'allow_provinces',
     title: '允许省份',
     align: 'center',
-    width: 120,
+    width: 120
   },
   {
     key: 'forbid_provinces',
     title: '禁止省份',
     align: 'center',
-    width: 120,
+    width: 120
   },
-  {    key: 'operate',    title: '操作',    align: 'center',    width: 120,    render(row: PlatformAPIParam) {      return (        <div class="param-operation-buttons">          <NButton type="primary" ghost size="small" onClick={() => paramFormRef.value?.edit(row)} class="param-op-btn">
+  {
+    key: 'operate',
+    title: '操作',
+    align: 'center',
+    width: 120,
+    render(row: PlatformAPIParam) {
+      return (
+        <div class="param-operation-buttons">
+          {' '}
+          <NButton type="primary" ghost size="small" onClick={() => paramFormRef.value?.edit(row)} class="param-op-btn">
             编辑
-          </NButton>          <NPopconfirm onPositiveClick={() => handleDeleteParam(row)}>
+          </NButton>{' '}
+          <NPopconfirm onPositiveClick={() => handleDeleteParam(row)}>
             {{
               default: () => '确认删除？',
               trigger: () => (
@@ -366,7 +233,11 @@ const paramColumns: DataTableColumns<PlatformAPIParam> = [
                 </NButton>
               )
             }}
-          </NPopconfirm>        </div>      );    }  }
+          </NPopconfirm>{' '}
+        </div>
+      );
+    }
+  }
 ];
 
 // 搜索表单
@@ -410,7 +281,7 @@ const fetchAccounts = async (platformId: number) => {
         page: 1,
         page_size: 100
       }
-    }); 
+    });
     if (res.data) {
       accountOptions.value = res.data.items.map((item: any) => ({
         label: item.account_name,
@@ -438,7 +309,7 @@ const fetchAPIs = async () => {
   try {
     loading.value = true;
     const { page, pageSize } = pagination.value;
-    
+
     // 过滤掉空值参数
     const searchParams = Object.fromEntries(
       Object.entries(searchForm.value).filter(([_, value]) => {
@@ -473,7 +344,7 @@ const fetchAPIs = async () => {
 // 编辑接口
 const handleEdit = (row: PlatformAPI) => {
   formModel.value = { ...row };
-  formModel.value.extra_params = "";
+  formModel.value.extra_params = '';
   showModal();
 };
 
@@ -551,7 +422,7 @@ const fetchAPIParams = async (apiId: number) => {
   try {
     paramLoading.value = true;
     const { page, pageSize } = paramPagination.value;
-    
+
     const res = await request({
       url: '/platform/api/params',
       method: 'GET',
@@ -622,6 +493,171 @@ onMounted(() => {
   fetchAPIs();
 });
 </script>
+
+<template>
+  <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
+    <!-- 搜索表单 -->
+    <NCard :bordered="false" size="small" class="mb-16px">
+      <NForm ref="searchFormRef" :model="searchForm" label-placement="left" :label-width="80">
+        <NCollapse :default-expanded-names="[]">
+          <NCollapseItem title="搜索条件" name="api-search">
+            <NGrid responsive="screen" item-responsive :x-gap="24">
+              <NFormItemGi span="24 s:12 m:6" label="接口名称" path="name">
+                <NInput v-model:value="searchForm.name" placeholder="请输入接口名称" />
+              </NFormItemGi>
+              <NFormItemGi span="24 s:12 m:6" label="平台" path="platform_id">
+                <NSelect
+                  v-model:value="searchForm.platform_id"
+                  :options="platformOptions"
+                  placeholder="请选择平台"
+                  clearable
+                />
+              </NFormItemGi>
+              <NFormItemGi span="24 s:12 m:6" label="状态" path="status">
+                <NSelect
+                  v-model:value="searchForm.status"
+                  :options="[
+                    { label: '启用', value: 1 },
+                    { label: '禁用', value: 0 }
+                  ]"
+                  placeholder="请选择状态"
+                  clearable
+                />
+              </NFormItemGi>
+              <NFormItemGi span="24" class="pr-24px">
+                <NSpace class="w-full" justify="end">
+                  <NButton @click="handleReset">重置</NButton>
+                  <NButton type="primary" ghost @click="handleSearch(fetchAPIs)">搜索</NButton>
+                </NSpace>
+              </NFormItemGi>
+            </NGrid>
+          </NCollapseItem>
+        </NCollapse>
+      </NForm>
+    </NCard>
+
+    <!-- 数据表格 -->
+    <NCard title="接口管理" :bordered="false" size="small" class="flex-1 card-wrapper">
+      <template #header-extra>
+        <NSpace>
+          <NButton type="primary" @click="handleAdd()">新增接口</NButton>
+        </NSpace>
+      </template>
+      <NDataTable
+        :columns="columns"
+        :data="data"
+        :loading="loading"
+        :pagination="pagination"
+        :flex-height="true"
+        :scroll-x="1200"
+        remote
+        :row-key="row => row.id"
+        class="min-h-400px"
+        size="small"
+        @update:page="onPageChange"
+        @update:page-size="onPageSizeChange"
+      />
+    </NCard>
+
+    <!-- 新增/编辑弹窗 -->
+    <NModal
+      v-model:show="visible"
+      preset="dialog"
+      :title="formModel.id ? '编辑接口' : '新增接口'"
+      :style="{ width: '600px' }"
+    >
+      <NForm
+        ref="formRef"
+        :model="formModel"
+        :rules="rules"
+        label-placement="left"
+        label-width="auto"
+        require-mark-placement="right-hanging"
+      >
+        <NFormItem label="接口名称" path="name">
+          <NInput v-model:value="formModel.name" placeholder="请输入接口名称" />
+        </NFormItem>
+        <NFormItem label="平台" path="platform_id">
+          <NSelect
+            v-model:value="formModel.platform_id"
+            :options="platformOptions"
+            placeholder="请选择平台"
+            @change="handlePlatformChange"
+          />
+        </NFormItem>
+        <NFormItem label="账号ID" path="account_id">
+          <NSelect v-model:value="formModel.account_id" :options="accountOptions" placeholder="请选择账号" />
+        </NFormItem>
+        <!--
+ <NFormItem label="商户ID" path="merchant_id">
+          <NInput v-model:value="formModel.merchant_id" placeholder="商户id" />
+        </NFormItem> 
+-->
+        <NFormItem label="接口地址" path="url">
+          <NInput v-model:value="formModel.url" placeholder="请输入接口地址" />
+        </NFormItem>
+        <NFormItem label="回调地址" path="callback_url">
+          <NInput v-model:value="formModel.callback_url" placeholder="回调地址" />
+        </NFormItem>
+        <!--
+ <NFormItem label="商户密钥" path="secret_key">
+          <NInput v-model:value="formModel.secret_key" placeholder="商户密钥" />
+        </NFormItem> 
+-->
+        <NFormItem label="请求方法" path="method">
+          <NSelect
+            v-model:value="formModel.method"
+            :options="[
+              { label: 'GET', value: 'GET' },
+              { label: 'POST', value: 'POST' },
+              { label: 'PUT', value: 'PUT' },
+              { label: 'DELETE', value: 'DELETE' }
+            ]"
+            placeholder="请选择请求方法"
+          />
+        </NFormItem>
+        <NFormItem label="描述" path="description">
+          <NInput v-model:value="formModel.description" type="textarea" placeholder="请输入描述" />
+        </NFormItem>
+        <NFormItem label="状态" path="status">
+          <NSwitch v-model:value="formModel.status" :checked-value="1" :unchecked-value="0" />
+        </NFormItem>
+      </NForm>
+      <template #action>
+        <NSpace>
+          <NButton @click="hideModal">取消</NButton>
+          <NButton type="primary" @click="handleFormSubmit">确定</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <!-- 参数配置对话框 -->
+    <NModal v-model:show="paramVisible" preset="dialog" title="套餐配置" :style="{ width: '1000px' }">
+      <div class="flex flex-col gap-16px">
+        <!-- 工具栏 -->
+        <div class="flex justify-end">
+          <NButton type="primary" @click="paramFormRef?.add(apiId)">新增套餐</NButton>
+        </div>
+        <!-- 参数列表 -->
+        <NDataTable
+          :columns="paramColumns"
+          :data="paramData"
+          :loading="paramLoading"
+          :pagination="paramPagination"
+          :flex-height="!appStore.isMobile"
+          :scroll-x="962"
+          remote
+          :row-key="row => row.id"
+          class="sm:h-full"
+          style="min-height: 300px"
+          @update:page="onParamPageChange"
+          @update:page-size="onParamPageSizeChange"
+        />
+      </div>
+      <PlatformAPIParamForm ref="paramFormRef" @success="handleParamSuccess" />
+    </NModal>
+  </div>
+</template>
 
 <style scoped>
 .min-h-500px {

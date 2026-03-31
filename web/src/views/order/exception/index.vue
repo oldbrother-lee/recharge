@@ -1,8 +1,31 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, h } from 'vue';
-import { NCard, NDataTable, NButton, NTag, NModal, NForm, NFormItem, NSelect, NInput, NDatePicker, NSpace, NStatistic, useMessage, NGrid, NGridItem, NPagination } from 'naive-ui';
+import { computed, h, onMounted, ref } from 'vue';
+import {
+  NButton,
+  NCard,
+  NDataTable,
+  NDatePicker,
+  NForm,
+  NFormItem,
+  NGrid,
+  NGridItem,
+  NInput,
+  NModal,
+  NPagination,
+  NSelect,
+  NSpace,
+  NStatistic,
+  NTag,
+  useMessage
+} from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
-import { fetchOrderExceptionList, fetchOrderExceptionStatistics, updateOrderExceptionStatus, type OrderException, type OrderExceptionListParams } from '@/api/order-exception';
+import {
+  type OrderException,
+  type OrderExceptionListParams,
+  fetchOrderExceptionList,
+  fetchOrderExceptionStatistics,
+  updateOrderExceptionStatus
+} from '@/api/order-exception';
 
 const message = useMessage();
 const loading = ref(false);
@@ -21,7 +44,7 @@ const initDefaultDateRange = () => {
   const today = new Date();
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
-  
+
   searchParams.value.start_date = yesterday.getTime();
   searchParams.value.end_date = today.getTime();
 };
@@ -39,19 +62,19 @@ const statistics = ref({
 });
 
 // 异常类型映射
-const exceptionTypeMap: Record<string, { color: NTagType, text: string }> = {
-  'balance_verification': { color: 'warning', text: '余额验证异常' },
-  'payment_timeout': { color: 'error', text: '支付超时' },
-  'recharge_failed': { color: 'error', text: '充值失败' },
-  'system_error': { color: 'error', text: '系统错误' }
+const exceptionTypeMap: Record<string, { color: NTagType; text: string }> = {
+  balance_verification: { color: 'warning', text: '余额验证异常' },
+  payment_timeout: { color: 'error', text: '支付超时' },
+  recharge_failed: { color: 'error', text: '充值失败' },
+  system_error: { color: 'error', text: '系统错误' }
 };
 
 // 状态映射
-const statusMap: Record<string, { color: NTagType, text: string }> = {
-  'pending': { color: 'warning', text: '待处理' },
-  'processing': { color: 'info', text: '处理中' },
-  'resolved': { color: 'success', text: '已解决' },
-  'ignored': { color: 'default', text: '已忽略' }
+const statusMap: Record<string, { color: NTagType; text: string }> = {
+  pending: { color: 'warning', text: '待处理' },
+  processing: { color: 'info', text: '处理中' },
+  resolved: { color: 'success', text: '已解决' },
+  ignored: { color: 'default', text: '已忽略' }
 };
 
 // 状态选项
@@ -81,7 +104,6 @@ const updateStatusOptions = [
 
 // 表格列定义
 const columns: DataTableColumns<OrderException> = [
-
   {
     key: 'order_id',
     title: '订单ID',
@@ -110,14 +132,25 @@ const columns: DataTableColumns<OrderException> = [
     }
   },
 
-  {    key: 'exception_reason',    title: '异常原因',    width: 400,    align: 'left',    render(row) {      return row.exception_reason || '-';    }  },
+  {
+    key: 'exception_reason',
+    title: '异常原因',
+    width: 400,
+    align: 'left',
+    render(row) {
+      return row.exception_reason || '-';
+    }
+  },
   {
     key: 'status',
     title: '处理状态',
     width: 100,
     align: 'center',
     render(row) {
-      const statusInfo = statusMap[row.status as keyof typeof statusMap] || { color: 'default' as NTagType, text: row.status };
+      const statusInfo = statusMap[row.status as keyof typeof statusMap] || {
+        color: 'default' as NTagType,
+        text: row.status
+      };
       return h(NTag, { type: statusInfo.color }, { default: () => statusInfo.text });
     }
   },
@@ -136,17 +169,25 @@ const columns: DataTableColumns<OrderException> = [
     width: 120,
     align: 'center',
     render(row) {
-      return h(NSpace, {}, {
-        default: () => [
-          h(NButton, {
-            size: 'small',
-            type: 'primary',
-            ghost: true,
-            onClick: () => openStatusModal(row),
-            disabled: row.status === 'resolved'
-          }, { default: () => '处理' })
-        ]
-      });
+      return h(
+        NSpace,
+        {},
+        {
+          default: () => [
+            h(
+              NButton,
+              {
+                size: 'small',
+                type: 'primary',
+                ghost: true,
+                onClick: () => openStatusModal(row),
+                disabled: row.status === 'resolved'
+              },
+              { default: () => '处理' }
+            )
+          ]
+        }
+      );
     }
   }
 ];
@@ -197,11 +238,11 @@ const fetchStatistics = async () => {
         entries.reduce((sum, [key, val]) => (predicate(key) ? sum + (val || 0) : sum), 0);
 
       const total_count = entries.reduce((sum, [, val]) => sum + (val || 0), 0);
-      const pending_count = sumBy((k) => k.endsWith('_pending'));
-      const processing_count = sumBy((k) => k.endsWith('_processing'));
-      const resolved_count = sumBy((k) => k.endsWith('_resolved'));
-      const ignored_count = sumBy((k) => k.endsWith('_ignored'));
-      const balance_verification_count = sumBy((k) => k.startsWith('balance_verification_'));
+      const pending_count = sumBy(k => k.endsWith('_pending'));
+      const processing_count = sumBy(k => k.endsWith('_processing'));
+      const resolved_count = sumBy(k => k.endsWith('_resolved'));
+      const ignored_count = sumBy(k => k.endsWith('_ignored'));
+      const balance_verification_count = sumBy(k => k.startsWith('balance_verification_'));
 
       statistics.value = {
         total_count,
@@ -345,20 +386,10 @@ onMounted(() => {
           />
         </NFormItem>
         <NFormItem label="开始日期">
-          <NDatePicker
-            v-model:value="searchParams.start_date"
-            type="date"
-            placeholder="开始日期"
-            clearable
-          />
+          <NDatePicker v-model:value="searchParams.start_date" type="date" placeholder="开始日期" clearable />
         </NFormItem>
         <NFormItem label="结束日期">
-          <NDatePicker
-            v-model:value="searchParams.end_date"
-            type="date"
-            placeholder="结束日期"
-            clearable
-          />
+          <NDatePicker v-model:value="searchParams.end_date" type="date" placeholder="结束日期" clearable />
         </NFormItem>
         <NFormItem>
           <NSpace>
@@ -379,14 +410,14 @@ onMounted(() => {
         :scroll-x="1400"
         size="small"
       />
-      
+
       <!-- 分页 -->
-      <div class="flex justify-end mt-4">
+      <div class="mt-4 flex justify-end">
         <NPagination
           v-model:page="pagination.page"
           v-model:page-size="pagination.pageSize"
           :item-count="pagination.itemCount"
-          :page-sizes="[10, 50, 100,500,1000]"
+          :page-sizes="[10, 50, 100, 500, 1000]"
           show-size-picker
           show-quick-jumper
           @update:page="handlePageChange"
@@ -399,35 +430,38 @@ onMounted(() => {
     <NModal v-model:show="showStatusModal" preset="dialog" title="更新处理状态">
       <div v-if="currentException">
         <div class="mb-4">
-          <p><strong>订单ID:</strong> {{ currentException.order_id }}</p>
-          <p><strong>异常类型:</strong> {{ exceptionTypeMap[currentException.exception_type]?.text || currentException.exception_type }}</p>
-          <p><strong>异常原因:</strong> {{ currentException.exception_reason }}</p>
-          <p><strong>当前状态:</strong> {{ statusMap[currentException.status]?.text || currentException.status }}</p>
+          <p>
+            <strong>订单ID:</strong>
+            {{ currentException.order_id }}
+          </p>
+          <p>
+            <strong>异常类型:</strong>
+            {{ exceptionTypeMap[currentException.exception_type]?.text || currentException.exception_type }}
+          </p>
+          <p>
+            <strong>异常原因:</strong>
+            {{ currentException.exception_reason }}
+          </p>
+          <p>
+            <strong>当前状态:</strong>
+            {{ statusMap[currentException.status]?.text || currentException.status }}
+          </p>
           <div v-if="currentException.data">
             <p><strong>异常数据:</strong></p>
-            <pre class="bg-gray-100 p-2 rounded text-sm">{{ formatExceptionData(currentException.data) }}</pre>
+            <pre class="rounded bg-gray-100 p-2 text-sm">{{ formatExceptionData(currentException.data) }}</pre>
           </div>
         </div>
-        
+
         <NForm>
           <NFormItem label="新状态" required>
-            <NSelect
-              v-model:value="newStatus"
-              :options="updateStatusOptions"
-              placeholder="请选择新状态"
-            />
+            <NSelect v-model:value="newStatus" :options="updateStatusOptions" placeholder="请选择新状态" />
           </NFormItem>
           <NFormItem label="处理备注">
-            <NInput
-              v-model:value="statusRemark"
-              type="textarea"
-              placeholder="请输入处理备注（可选）"
-              :rows="3"
-            />
+            <NInput v-model:value="statusRemark" type="textarea" placeholder="请输入处理备注（可选）" :rows="3" />
           </NFormItem>
         </NForm>
       </div>
-      
+
       <template #action>
         <NSpace>
           <NButton @click="showStatusModal = false">取消</NButton>

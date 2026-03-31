@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, useAttrs } from 'vue';
-import { Icon } from '@iconify/vue';
 
 defineOptions({ name: 'SvgIcon', inheritAttrs: false });
 
@@ -38,6 +37,18 @@ const symbolId = computed(() => {
 
 /** If localIcon is passed, render localIcon first */
 const renderLocalIcon = computed(() => props.localIcon || !props.icon);
+
+/**
+ * Get UnoCSS icon class
+ *
+ * @example
+ *   mdi:home -> icon-mdi-home (depends on VITE_ICON_PREFIX)
+ */
+const unoIconClass = computed(() => {
+  if (!props.icon) return '';
+  const { VITE_ICON_PREFIX: prefix } = import.meta.env;
+  return `${prefix}-${props.icon.replace(/:/g, '-')}`;
+});
 </script>
 
 <template>
@@ -47,7 +58,8 @@ const renderLocalIcon = computed(() => props.localIcon || !props.icon);
     </svg>
   </template>
   <template v-else>
-    <Icon v-if="icon" :icon="icon" v-bind="bindAttrs" />
+    <!-- 优先使用 UnoCSS Class 渲染，实现完全本地化 -->
+    <span v-if="icon" :class="unoIconClass" v-bind="bindAttrs"></span>
   </template>
 </template>
 

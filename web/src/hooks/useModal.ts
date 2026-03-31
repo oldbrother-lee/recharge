@@ -16,4 +16,4 @@ export function useModal() {
     showModal,
     hideModal
   };
-} 
+}

@@ -225,25 +225,26 @@ const local: App.I18n.Schema = {
     system: '系统管理',
     system_settings: '系统设置',
     system_user: '用户管理',
-    product:"套餐管理",
-    'product_set-menu':"套餐管理",
-    'product_phone-location':"归属地",
-    'product_type':"产品类型",
-    platform:'平台管理',
-    'platform_account':"平台账号管理",
-    'platform_api':"平台API管理",
-    platformapi:'接口管理',
-    'platformapi_api':"接口管理",
-    'system_user-grade':"用户等级",
-    'order':'订单管理',
-    'order_all':"所有订单",
-    'order_exception':"异常订单",
-    'order_mf178':"蜜蜂订单",
-    'order_kekebang':"客客帮订单",
-    'order_xianzhuanxia':"闲赚侠订单",
-    'order_xianyingke':"闲赢客订单",
-    'user':"用户中心",
-    'system_phone-query':"缴费查询",
+    product: '套餐管理',
+    'product_set-menu': '套餐管理',
+    'product_phone-location': '归属地',
+    product_type: '产品类型',
+    platform: '平台管理',
+    platform_account: '平台账号管理',
+    platform_api: '平台API管理',
+    platformapi: '接口管理',
+    platformapi_api: '接口管理',
+    'system_user-grade': '用户等级',
+    'system_balance-log': '余额流水',
+    order: '订单管理',
+    order_all: '所有订单',
+    order_exception: '异常订单',
+    order_mf178: '蜜蜂订单',
+    order_kekebang: '客客帮订单',
+    order_xianzhuanxia: '闲赚侠订单',
+    order_xianyingke: '闲赢客订单',
+    user: '用户中心',
+    'system_phone-query': '缴费查询'
   },
   page: {
     login: {
@@ -513,8 +514,7 @@ const local: App.I18n.Schema = {
           local: '本地图标'
         }
       }
-    },
-
+    }
   },
   form: {
     required: '不能为空',

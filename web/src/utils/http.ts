@@ -6,13 +6,13 @@ const instance: AxiosInstance = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
   timeout: 15000,
   headers: {
-    'Content-Type': 'application/json',
-  },
+    'Content-Type': 'application/json'
+  }
 });
 
 // 请求拦截器
 instance.interceptors.request.use(
-  (config) => {
+  config => {
     // 从 localStorage 获取 token
     const token = localStorage.getItem('token');
     if (token) {
@@ -20,7 +20,7 @@ instance.interceptors.request.use(
     }
     return config;
   },
-  (error) => {
+  error => {
     return Promise.reject(error);
   }
 );
@@ -30,7 +30,7 @@ instance.interceptors.response.use(
   (response: AxiosResponse) => {
     return response;
   },
-  (error) => {
+  error => {
     if (error.response) {
       // 处理 401 未授权错误
       if (error.response.status === 401) {
@@ -58,5 +58,5 @@ export const http = {
 
   delete: <T = any>(url: string, config?: AxiosRequestConfig): Promise<AxiosResponse<T>> => {
     return instance.delete(url, config);
-  },
-}; 
+  }
+};

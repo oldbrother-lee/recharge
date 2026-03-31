@@ -44,9 +44,11 @@ type OrderService interface {
 	ProcessOrderSuccess(ctx context.Context, orderID int64) error
 	// ProcessOrderFail 处理订单失败
 	ProcessOrderFail(ctx context.Context, orderID int64, remark string) error
-	// ProcessOrderRefund 处理订单退款
+	// ProcessOrderRefund 处理订单退款（管理员审核通过时执行实际退款）
 	ProcessOrderRefund(ctx context.Context, orderID int64, remark string) error
-	// ProcessExternalRefund 处理外部订单退款
+	// ProcessOrderRefundReject 拒绝退款申请（仅待退款审核订单，恢复为待充值）
+	ProcessOrderRefundReject(ctx context.Context, orderID int64, remark string) error
+	// ProcessExternalRefund 处理外部订单退款申请（待充值仅变为待审核，不直接退）
 	ProcessExternalRefund(ctx context.Context, outTradeNum string, reason string) error
 	// GetOrderByOutTradeNum 根据外部交易号获取订单
 	GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error)
@@ -643,8 +645,8 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 			return nil
 		}
 
-		// 如果订单已经支付，需要退还余额
-		if lockedOrder.Status == model.OrderStatusPendingRecharge || lockedOrder.Status == model.OrderStatusRecharging || lockedOrder.Status == model.OrderStatusProcessing {
+		// 如果订单已扣款（待充值/充值中/处理中/待退款审核），需要退还余额
+		if lockedOrder.Status == model.OrderStatusPendingRecharge || lockedOrder.Status == model.OrderStatusRecharging || lockedOrder.Status == model.OrderStatusProcessing || lockedOrder.Status == model.OrderStatusPendingRefundReview {
 			// 使用统一退款服务处理退款
 			var refundReq *RefundRequest
 			if lockedOrder.Client == 2 {
@@ -762,10 +764,11 @@ func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, re
 			return fmt.Errorf("订单已退款")
 		}
 
-		// 只有成功、失败、待充值状态的订单可以退款
+		// 允许退款的状态：成功、失败、待充值、待退款审核（管理员审核通过时）
 		if lockedOrder.Status != model.OrderStatusSuccess &&
 			lockedOrder.Status != model.OrderStatusFailed &&
-			lockedOrder.Status != model.OrderStatusPendingRecharge {
+			lockedOrder.Status != model.OrderStatusPendingRecharge &&
+			lockedOrder.Status != model.OrderStatusPendingRefundReview {
 			log.WithContextCategory(ctx, "order").Error("订单状态不允许退款", log.Int64V2("order_id", orderID), log.IntV2("status", int(lockedOrder.Status)))
 			return fmt.Errorf("订单状态不允许退款")
 		}
@@ -836,15 +839,31 @@ func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum st
 			return fmt.Errorf("订单已退款")
 		}
 
-		// 只有成功、失败、待充值状态的订单可以退款
-		if lockedOrder.Status != model.OrderStatusSuccess &&
-			lockedOrder.Status != model.OrderStatusFailed &&
-			lockedOrder.Status != model.OrderStatusPendingRecharge {
-			log.WithContextCategory(ctx, "order").Error("订单状态不允许退款",
-				log.Int64V2("order_id", lockedOrder.ID),
-				log.IntV2("status", int(lockedOrder.Status)),
-				log.StringV2("out_trade_num", outTradeNum))
-			return fmt.Errorf("订单状态不允许退款")
+		// 外部退款仅允许「待充值」：申请后变为待退款审核；失败/成功不可申请
+		if lockedOrder.Status != model.OrderStatusPendingRecharge {
+			switch lockedOrder.Status {
+			case model.OrderStatusPendingRefundReview:
+				log.WithContextCategory(ctx, "order").Info("订单已处于待退款审核，无需重复申请",
+					log.Int64V2("order_id", lockedOrder.ID),
+					log.StringV2("out_trade_num", outTradeNum))
+				return fmt.Errorf("订单已申请退款待审核，请等待管理员处理")
+			case model.OrderStatusFailed:
+				log.WithContextCategory(ctx, "order").Warn("失败订单由系统自动退款，不允许重复申请",
+					log.Int64V2("order_id", lockedOrder.ID),
+					log.StringV2("out_trade_num", outTradeNum))
+				return fmt.Errorf("失败订单已由系统自动退款，无需重复申请")
+			case model.OrderStatusSuccess:
+				log.WithContextCategory(ctx, "order").Warn("订单已充值成功，不允许退款",
+					log.Int64V2("order_id", lockedOrder.ID),
+					log.StringV2("out_trade_num", outTradeNum))
+				return fmt.Errorf("订单已充值成功，不允许退款")
+			default:
+				log.WithContextCategory(ctx, "order").Error("订单状态不允许退款",
+					log.Int64V2("order_id", lockedOrder.ID),
+					log.IntV2("status", int(lockedOrder.Status)),
+					log.StringV2("out_trade_num", outTradeNum))
+				return fmt.Errorf("订单状态不允许退款")
+			}
 		}
 
 		// 3. 检查是否为外部订单
@@ -856,37 +875,19 @@ func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum st
 			return fmt.Errorf("非外部订单")
 		}
 
-		// 4. 直接退款到用户余额（外部订单使用用户余额系统，使用当前事务）
-		balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
-		if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, lockedOrder.ID, fmt.Sprintf("外部订单退款: %s", reason), "system"); err != nil {
-			log.WithContextCategory(ctx, "order").Error("退款到用户余额失败",
-				log.ErrorV2(err),
-				log.Int64V2("order_id", lockedOrder.ID),
-				log.Int64V2("customer_id", lockedOrder.CustomerID),
-				log.Float64V2("amount", lockedOrder.Price))
-			return fmt.Errorf("退款失败: %v", err)
+		// 4. 不直接退款：仅将订单改为「待退款审核」，备注记录申请原因，等管理员审核通过后再执行退款
+		if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Updates(map[string]interface{}{
+			"status": model.OrderStatusPendingRefundReview,
+			"remark": fmt.Sprintf("申请退款待审核: %s", reason),
+		}).Error; err != nil {
+			log.WithContextCategory(ctx, "order").Error("更新订单为待退款审核失败", log.ErrorV2(err), log.Int64V2("order_id", lockedOrder.ID))
+			return fmt.Errorf("申请退款失败: %v", err)
 		}
 
-		log.WithContextCategory(ctx, "order").Info("退款到用户余额成功",
+		log.WithContextCategory(ctx, "order").Info("退款申请已提交，待管理员审核",
 			log.Int64V2("order_id", lockedOrder.ID),
-			log.Int64V2("customer_id", lockedOrder.CustomerID),
-			log.Float64V2("amount", lockedOrder.Price))
-
-		// 5. 更新订单备注
-		if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Update("remark", fmt.Sprintf("外部订单退款: %s", reason)).Error; err != nil {
-			log.WithContextCategory(ctx, "order").Error("更新订单备注失败", log.ErrorV2(err), log.Int64V2("order_id", lockedOrder.ID))
-			return fmt.Errorf("更新订单备注失败: %v", err)
-		}
-
-		// 6. 更新订单状态为已退款
-		if err := tx.Model(&model.Order{}).Where("id = ?", lockedOrder.ID).Update("status", model.OrderStatusRefunded).Error; err != nil {
-			log.WithContextCategory(ctx, "order").Error("更新订单状态失败", log.ErrorV2(err), log.Int64V2("order_id", lockedOrder.ID))
-			return fmt.Errorf("更新订单状态失败: %v", err)
-		}
-
-		log.WithContextCategory(ctx, "order").Info("外部订单退款完成",
-			log.Int64V2("order_id", lockedOrder.ID),
-			log.StringV2("order_number", lockedOrder.OrderNumber))
+			log.StringV2("out_trade_num", outTradeNum),
+			log.StringV2("reason", reason))
 
 		return nil
 	})
@@ -896,6 +897,21 @@ func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum st
 func (s *orderService) GetOrderByOutTradeNum(ctx context.Context, outTradeNum string) (*model.Order, error) {
 	// 使用仓储层带有兼容查询的实现：优先 out_trade_num，其次 order_number，最后通过 active_out_trade_num 映射
 	return s.orderRepo.GetOrderByOutTradeNum(ctx, outTradeNum)
+}
+
+// ProcessOrderRefundReject 拒绝退款申请：仅待退款审核订单可拒绝，恢复为待充值
+func (s *orderService) ProcessOrderRefundReject(ctx context.Context, orderID int64, remark string) error {
+	order, err := s.orderRepo.GetByID(ctx, orderID)
+	if err != nil {
+		return fmt.Errorf("订单不存在: %v", err)
+	}
+	if order.Status != model.OrderStatusPendingRefundReview {
+		return fmt.Errorf("仅待退款审核状态的订单可拒绝，当前状态: %s", order.Status.String())
+	}
+	if err := s.orderRepo.UpdateRemark(ctx, orderID, fmt.Sprintf("退款申请已拒绝: %s", remark)); err != nil {
+		return err
+	}
+	return s.UpdateOrderStatus(ctx, orderID, model.OrderStatusPendingRecharge)
 }
 
 // ProcessOrderCancel 处理订单取消

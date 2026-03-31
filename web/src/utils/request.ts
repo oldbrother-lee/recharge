@@ -1,6 +1,6 @@
+import { useMessage } from 'naive-ui';
 import axios from 'axios';
 import type { AxiosRequestConfig } from 'axios';
-import { useMessage } from 'naive-ui';
 
 const message = useMessage();
 const instance = axios.create({
@@ -13,21 +13,21 @@ const instance = axios.create({
 
 // 请求拦截器
 instance.interceptors.request.use(
-  (config) => {
+  config => {
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
-  (error) => {
+  error => {
     return Promise.reject(error);
   }
 );
 
 // 响应拦截器
 instance.interceptors.response.use(
-  (response) => {
+  response => {
     const { data } = response;
     if (data.code === 200) {
       return data;
@@ -35,7 +35,7 @@ instance.interceptors.response.use(
     message.error(data.message || '请求失败');
     return Promise.reject(data);
   },
-  (error) => {
+  error => {
     message.error(error.message || '请求失败');
     return Promise.reject(error);
   }
@@ -55,4 +55,4 @@ export const put = <T = any>(url: string, data?: any, config?: AxiosRequestConfi
 
 export const del = <T = any>(url: string, config?: AxiosRequestConfig) => {
   return instance.delete<T>(url, config);
-}; 
+};

@@ -1,11 +1,11 @@
 // @unocss-include
 import { getRgb } from '@sa/color';
 import { DARK_CLASS } from '@/constants/app';
+import { publicSystemApi } from '@/api/system';
 import { localStg } from '@/utils/storage';
 import { toggleHtmlClass } from '@/utils/common';
 import systemLogo from '@/assets/svg-icon/logo.svg?raw';
 import { $t } from '@/locales';
-import { publicSystemApi } from '@/api/system';
 
 async function getSystemNameForLoading(): Promise<string> {
   try {

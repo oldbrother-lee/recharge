@@ -43,9 +43,7 @@ export interface OrderExceptionStatistics {
   balance_verification_count: number;
 }
 
-/**
- * 获取订单异常列表
- */
+/** 获取订单异常列表 */
 export function fetchOrderExceptionList(params: OrderExceptionListParams) {
   return request<OrderExceptionListResponse>({
     url: '/order-exceptions',
@@ -54,9 +52,7 @@ export function fetchOrderExceptionList(params: OrderExceptionListParams) {
   });
 }
 
-/**
- * 根据ID获取订单异常详情
- */
+/** 根据ID获取订单异常详情 */
 export function fetchOrderExceptionById(id: number) {
   return request<OrderException>({
     url: `/order-exceptions/${id}`,
@@ -64,9 +60,7 @@ export function fetchOrderExceptionById(id: number) {
   });
 }
 
-/**
- * 根据订单ID获取异常记录
- */
+/** 根据订单ID获取异常记录 */
 export function fetchOrderExceptionsByOrderId(orderId: string) {
   return request<OrderException[]>({
     url: `/orders/${orderId}/exceptions`,
@@ -74,9 +68,7 @@ export function fetchOrderExceptionsByOrderId(orderId: string) {
   });
 }
 
-/**
- * 更新订单异常状态
- */
+/** 更新订单异常状态 */
 export function updateOrderExceptionStatus(id: number, status: string, remark?: string) {
   return request({
     url: `/order-exceptions/${id}/status`,
@@ -85,9 +77,7 @@ export function updateOrderExceptionStatus(id: number, status: string, remark?: 
   });
 }
 
-/**
- * 获取待处理异常数量
- */
+/** 获取待处理异常数量 */
 export function fetchPendingExceptionCount() {
   return request<{ count: number }>({
     url: '/order-exceptions/pending-count',
@@ -95,9 +85,7 @@ export function fetchPendingExceptionCount() {
   });
 }
 
-/**
- * 获取异常统计信息
- */
+/** 获取异常统计信息 */
 export function fetchOrderExceptionStatistics(startDate?: string, endDate?: string) {
   return request<OrderExceptionStatistics>({
     url: '/order-exceptions/user-statistics',

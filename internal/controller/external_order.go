@@ -426,6 +426,10 @@ func (c *ExternalOrderController) getStatusDesc(status int) string {
 		return "已取消"
 	case model.OrderStatusRefunded:
 		return "已退款"
+	case model.OrderStatusPendingRefundReview:
+		return "待退款审核"
+	case model.OrderStatusProcessing:
+		return "处理中"
 	default:
 		return "未知状态"
 	}

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { publicSystemApi } from '@/api/system';
 import { $t } from '@/locales';
 
@@ -62,12 +62,7 @@ onUnmounted(() => {
 <template>
   <RouterLink to="/" class="w-full flex-center nowrap-hidden">
     <div class="logo-container">
-      <img 
-        v-if="systemLogo" 
-        :src="systemLogo" 
-        :alt="systemName"
-        class="system-logo-image"
-      />
+      <img v-if="systemLogo" :src="systemLogo" :alt="systemName" class="system-logo-image" />
       <SystemLogo v-else class="text-32px text-primary" />
     </div>
     <h2 v-show="showTitle" class="pl-8px text-16px text-primary font-bold transition duration-300 ease-in-out">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
 import { useEcharts } from '@/hooks/common/echarts';
 import { $t } from '@/locales';
 
@@ -103,13 +103,13 @@ const { domRef, updateOptions } = useEcharts(() => ({
 const updateChart = (data: DailyStatistics[]) => {
   console.log('updateChart called', data);
   chartData.value = data;
-  
+
   updateOptions(opts => {
     opts.xAxis.data = data.map(item => {
       const date = new Date(item.date);
       return `${date.getMonth() + 1}/${date.getDate()}`;
     });
-    
+
     opts.series[0].data = data.map(item => item.totalOrders);
     opts.series[1].data = data.map(item => item.successOrders);
     opts.series[2].data = data.map(item => item.failedOrders);
@@ -123,10 +123,26 @@ const updateChart = (data: DailyStatistics[]) => {
 
 // 模拟数据
 const mockData: DailyStatistics[] = [
-  { date: "2025-05-10T00:00:00+08:00", totalOrders: 10, successOrders: 5, failedOrders: 5, successRate: 0.5, costAmount: 100, profitAmount: 20 },
-  { date: "2025-05-11T00:00:00+08:00", totalOrders: 20, successOrders: 10, failedOrders: 10, successRate: 0.5, costAmount: 200, profitAmount: 40 },
   {
-    date: "2025-05-12T00:00:00+08:00",
+    date: '2025-05-10T00:00:00+08:00',
+    totalOrders: 10,
+    successOrders: 5,
+    failedOrders: 5,
+    successRate: 0.5,
+    costAmount: 100,
+    profitAmount: 20
+  },
+  {
+    date: '2025-05-11T00:00:00+08:00',
+    totalOrders: 20,
+    successOrders: 10,
+    failedOrders: 10,
+    successRate: 0.5,
+    costAmount: 200,
+    profitAmount: 40
+  },
+  {
+    date: '2025-05-12T00:00:00+08:00',
     totalOrders: 36,
     successOrders: 0,
     failedOrders: 34,
@@ -135,7 +151,7 @@ const mockData: DailyStatistics[] = [
     profitAmount: 0
   },
   {
-    date: "2025-05-13T00:00:00+08:00",
+    date: '2025-05-13T00:00:00+08:00',
     totalOrders: 15,
     successOrders: 0,
     failedOrders: 15,
@@ -144,7 +160,7 @@ const mockData: DailyStatistics[] = [
     profitAmount: 0
   },
   {
-    date: "2025-05-14T00:00:00+08:00",
+    date: '2025-05-14T00:00:00+08:00',
     totalOrders: 8,
     successOrders: 0,
     failedOrders: 8,
@@ -153,7 +169,7 @@ const mockData: DailyStatistics[] = [
     profitAmount: 0
   },
   {
-    date: "2025-05-15T00:00:00+08:00",
+    date: '2025-05-15T00:00:00+08:00',
     totalOrders: 12,
     successOrders: 0,
     failedOrders: 11,
@@ -162,7 +178,7 @@ const mockData: DailyStatistics[] = [
     profitAmount: 0
   },
   {
-    date: "2025-05-16T00:00:00+08:00",
+    date: '2025-05-16T00:00:00+08:00',
     totalOrders: 34,
     successOrders: 0,
     failedOrders: 32,
@@ -171,7 +187,7 @@ const mockData: DailyStatistics[] = [
     profitAmount: 0
   },
   {
-    date: "2025-05-17T00:00:00+08:00",
+    date: '2025-05-17T00:00:00+08:00',
     totalOrders: 12,
     successOrders: 0,
     failedOrders: 12,
@@ -180,7 +196,7 @@ const mockData: DailyStatistics[] = [
     profitAmount: 0
   },
   {
-    date: "2025-05-18T00:00:00+08:00",
+    date: '2025-05-18T00:00:00+08:00',
     totalOrders: 12,
     successOrders: 0,
     failedOrders: 10,
@@ -189,7 +205,7 @@ const mockData: DailyStatistics[] = [
     profitAmount: 20
   },
   {
-    date: "2025-05-19T00:00:00+08:00",
+    date: '2025-05-19T00:00:00+08:00',
     totalOrders: 0,
     successOrders: 0,
     failedOrders: 0,
@@ -198,7 +214,7 @@ const mockData: DailyStatistics[] = [
     profitAmount: 0
   },
   {
-    date: "2025-05-20T00:00:00+08:00",
+    date: '2025-05-20T00:00:00+08:00',
     totalOrders: 12,
     successOrders: 0,
     failedOrders: 8,

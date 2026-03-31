@@ -39,6 +39,22 @@ func (r *BalanceLogRepository) ListLogs(ctx context.Context, userID int64, offse
 	return logs, total, err
 }
 
+// ListLogsWithOrder 查询用户余额流水（分页，关联订单号/外部订单号/手机号）
+func (r *BalanceLogRepository) ListLogsWithOrder(ctx context.Context, userID int64, offset, limit int) ([]model.BalanceLogWithOrder, int64, error) {
+	var total int64
+	db := r.db.WithContext(ctx).Model(&model.BalanceLog{}).Where("balance_logs.user_id = ?", userID)
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var logs []model.BalanceLogWithOrder
+	err := db.Select("balance_logs.*, o.order_number AS order_number, o.out_trade_num AS out_trade_num, o.mobile AS mobile").
+		Joins("LEFT JOIN orders o ON balance_logs.order_id = o.id").
+		Order("balance_logs.id DESC").
+		Offset(offset).Limit(limit).
+		Find(&logs).Error
+	return logs, total, err
+}
+
 // AddBalance 用户余额增加（使用原子性更新避免竞态条件）
 func (r *BalanceLogRepository) AddBalance(ctx context.Context, userID int64, amount float64) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

@@ -40,4 +40,4 @@ export function useTable<T>() {
     handlePageSizeChange,
     handleSearch
   };
-} 
+}

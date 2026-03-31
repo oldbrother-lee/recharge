@@ -1,22 +1,22 @@
 import { request } from '@/service/request';
-import type { 
-  User, 
-  UserListRequest, 
-  UserListResponse,
-  BalanceRechargeRequest,
+import type {
   BalanceDeductRequest,
-  CreditSetRequest
+  BalanceRechargeRequest,
+  CreditSetRequest,
+  User,
+  UserListRequest,
+  UserListResponse
 } from '@/typings/api/user';
 
 /** 获取用户列表 */
 export const getUserList = (params: UserListRequest) => {
   return request({
-    url: '/users/list',
+    url: '/user/list',
     method: 'GET',
     params: {
       current: params.page,
       size: params.page_size,
-      user_name: params.user_name,
+      username: params.user_name,
       phone: params.phone,
       email: params.email,
       status: params.status,
@@ -51,4 +51,4 @@ export const setUserCredit = (data: CreditSetRequest) => {
     method: 'POST',
     data
   });
-}; 
+};

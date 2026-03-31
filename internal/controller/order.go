@@ -272,6 +272,28 @@ func (c *OrderController) ProcessOrderRefund(ctx *gin.Context) {
 	resp.Success(ctx, nil)
 }
 
+// ProcessOrderRefundReject 拒绝退款申请（仅待退款审核订单，恢复为待充值）
+func (c *OrderController) ProcessOrderRefundReject(ctx *gin.Context) {
+	id := ctx.Param("id")
+	orderID, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		resp.Error(ctx, http.StatusBadRequest, "invalid order id")
+		return
+	}
+
+	var req struct {
+		Remark string `json:"remark"`
+	}
+	_ = ctx.ShouldBindJSON(&req)
+
+	if err := c.orderService.ProcessOrderRefundReject(ctx, orderID, req.Remark); err != nil {
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	resp.Success(ctx, nil)
+}
+
 // ProcessOrderCancel 处理订单取消
 func (c *OrderController) ProcessOrderCancel(ctx *gin.Context) {
 	id := ctx.Param("id")

@@ -1,14 +1,18 @@
 <script setup lang="tsx">
-import { ref, onMounted } from 'vue';
+import { onMounted, ref } from 'vue';
+import { NButton, NCard, NForm, NFormItem, NInput, NPopconfirm, NSelect, NSpace, NTag, useMessage } from 'naive-ui';
+import type { DataTableColumns } from 'naive-ui';
+import { createUserGrade, deleteUserGrade, getUserGradeList, updateUserGrade } from '@/api/user-grade';
+import { useAppStore } from '@/store/modules/app';
 import { useTable } from '@/hooks/useTable';
 import { useModal } from '@/hooks/useModal';
 import { useForm } from '@/hooks/useForm';
-import { useMessage } from 'naive-ui';
-import type { DataTableColumns } from 'naive-ui';
-import type { UserGrade, UserGradeListRequest, UserGradeUpdateRequest, UserGradeCreateRequest } from '@/typings/api/user-grade';
-import { NButton, NPopconfirm, NTag, NCard, NForm, NFormItem, NSpace, NInput, NSelect } from 'naive-ui';
-import { useAppStore } from '@/store/modules/app';
-import { getUserGradeList, createUserGrade, updateUserGrade, deleteUserGrade } from '@/api/user-grade';
+import type {
+  UserGrade,
+  UserGradeCreateRequest,
+  UserGradeListRequest,
+  UserGradeUpdateRequest
+} from '@/typings/api/user-grade';
 
 const appStore = useAppStore();
 const message = useMessage();
@@ -18,7 +22,7 @@ const fetchUserGrades = async () => {
   try {
     loading.value = true;
     const { page, pageSize } = pagination.value;
-    
+
     // 过滤掉空值参数
     const searchParams = Object.fromEntries(
       Object.entries(searchForm.value).filter(([_, value]) => {
@@ -29,7 +33,7 @@ const fetchUserGrades = async () => {
     );
 
     const params: UserGradeListRequest = {
-      page: page,
+      page,
       page_size: pageSize,
       ...searchParams
     };
@@ -279,9 +283,7 @@ onMounted(() => {
         </NFormItem>
         <NFormItem>
           <NSpace>
-            <NButton type="primary" @click="handleSearch">
-              搜索
-            </NButton>
+            <NButton type="primary" @click="handleSearch">搜索</NButton>
             <NButton @click="handleReset">重置</NButton>
           </NSpace>
         </NFormItem>
@@ -289,10 +291,16 @@ onMounted(() => {
     </NCard>
 
     <!-- 数据表格 -->
-    <NCard :title="'用户等级管理'" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
+    <NCard title="用户等级管理" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
       <template #header-extra>
         <NSpace>
-          <NButton type="primary" @click="handleReset(); showModal()">
+          <NButton
+            type="primary"
+            @click="
+              handleReset();
+              showModal();
+            "
+          >
             新增等级
           </NButton>
         </NSpace>
@@ -306,9 +314,9 @@ onMounted(() => {
         :scroll-x="962"
         remote
         :row-key="(row: UserGrade) => row.id"
+        class="sm:h-full"
         @update:page="handlePageChange"
         @update:page-size="handlePageSizeChange"
-        class="sm:h-full"
       />
     </NCard>
 
@@ -365,5 +373,4 @@ onMounted(() => {
   </div>
 </template>
 
-<style scoped>
-</style> 
+<style scoped></style>

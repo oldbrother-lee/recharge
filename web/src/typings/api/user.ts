@@ -46,5 +46,4 @@ export interface CreditSetRequest {
   user_id: number;
   creditLimit: number;
   remark: string;
- 
-} 
+}

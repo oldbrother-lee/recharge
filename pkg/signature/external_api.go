@@ -31,14 +31,46 @@ func NewExternalAPISignatureValidator() *ExternalAPISignatureValidator {
 	}
 }
 
+// signParamValue 将参数值转为签名字符串，与常见客户端（如 Python/JS）一致：JSON 数字按整数形式输出，避免 float64 被格式化为科学计数法导致验签失败
+func signParamValue(v interface{}) string {
+	switch val := v.(type) {
+	case float64:
+		if val == float64(int64(val)) {
+			return strconv.FormatInt(int64(val), 10)
+		}
+		return fmt.Sprintf("%v", val)
+	case float32:
+		if val == float32(int64(val)) {
+			return strconv.FormatInt(int64(val), 10)
+		}
+		return fmt.Sprintf("%v", val)
+	case int:
+		return strconv.FormatInt(int64(val), 10)
+	case int64:
+		return strconv.FormatInt(val, 10)
+	case int32:
+		return strconv.FormatInt(int64(val), 10)
+	case uint, uint64, uint32:
+		return fmt.Sprintf("%v", val)
+	case string:
+		return val
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 // GenerateExternalAPISignature 生成外部API签名 - 按照API文档标准实现
 func (sv *ExternalAPISignatureValidator) GenerateExternalAPISignature(params map[string]interface{}, appSecret string) (string, error) {
-	// 1. 过滤掉空值参数和签名参数本身
+	// 1. 过滤掉空值参数和签名参数本身，并统一数字为整数串（与 JSON 中 number 的常见序列化一致）
 	filteredParams := make(map[string]string)
 	for k, v := range params {
-		if k != "sign" && k != "signature" && v != nil && v != "" {
-			filteredParams[k] = fmt.Sprintf("%v", v)
+		if k == "sign" || k == "signature" || v == nil {
+			continue
 		}
+		if s, ok := v.(string); ok && s == "" {
+			continue
+		}
+		filteredParams[k] = signParamValue(v)
 	}
 
 	// 2. 按参数名进行字典序排序

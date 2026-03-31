@@ -1,31 +1,31 @@
 export interface Product {
-  id: number
-  name: string
-  description: string
-  type: number
-  category_id: number
-  isp: string
-  status: number
-  price: number
-  max_price: number
-  sort: number
-  api_enabled: boolean
-  is_delay: number
-  is_decode: boolean
-  decode_api: string
-  decode_api_package: string
-  show_style: number
-  allow_province: string
-  allow_city: string
-  forbid_province: string
-  forbid_city: string
-  duplicate_check: boolean
-  created_at: string
-  updated_at: string
+  id: number;
+  name: string;
+  description: string;
+  type: number;
+  category_id: number;
+  isp: string;
+  status: number;
+  price: number;
+  max_price: number;
+  sort: number;
+  api_enabled: boolean;
+  is_delay: number;
+  is_decode: boolean;
+  decode_api: string;
+  decode_api_package: string;
+  show_style: number;
+  allow_province: string;
+  allow_city: string;
+  forbid_province: string;
+  forbid_city: string;
+  duplicate_check: boolean;
+  created_at: string;
+  updated_at: string;
   category?: {
-    id: number
-    name: string
-  }
+    id: number;
+    name: string;
+  };
 }
 
 export interface Order {

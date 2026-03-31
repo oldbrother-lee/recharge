@@ -62,7 +62,6 @@ function updateXianzhuanxiaTaskConfig(data: any) {
   return request({ url: '/task-config', method: 'PUT', data });
 }
 
-
 interface Platform {
   id: number;
   name: string;
@@ -145,23 +144,23 @@ const currentPlatformOrderMode = ref<number>(1);
 const beeProductManagementRef = ref();
 
 // 添加 computed 属性
-  const isXianzhuanxia = computed(() => {
-    console.log('Computing isXianzhuanxia:', currentPlatformCode.value);
-    return currentPlatformCode.value === 'xianzhuanxia';
-  });
+const isXianzhuanxia = computed(() => {
+  console.log('Computing isXianzhuanxia:', currentPlatformCode.value);
+  return currentPlatformCode.value === 'xianzhuanxia';
+});
 
-  const isMf178 = computed(() => {
-    return currentPlatformCode.value === 'mifeng';
-  });
+const isMf178 = computed(() => {
+  return currentPlatformCode.value === 'mifeng';
+});
 
-  const isZhangyu = computed(() => {
-    return currentPlatformCode.value === 'zhangyu';
-  });
+const isZhangyu = computed(() => {
+  return currentPlatformCode.value === 'zhangyu';
+});
 
-  // 弹窗标题：闲赚侠使用原有文案，其它平台独立显示
-  function getTaskConfigModalTitle() {
-    return isXianzhuanxia.value ? '拉取订单配置' : '任务配置';
-  }
+// 弹窗标题：闲赚侠使用原有文案，其它平台独立显示
+function getTaskConfigModalTitle() {
+  return isXianzhuanxia.value ? '拉取订单配置' : '任务配置';
+}
 
 const isDz = computed(() => {
   return currentPlatformCode.value === 'dz';
@@ -911,7 +910,11 @@ const taskConfigColumns = computed(() => {
         key: 'enabled',
         width: 80,
         render(row: any) {
-          return h(NTag, { type: row.enabled ? 'success' : 'error', bordered: false }, { default: () => (row.enabled ? '启用' : '禁用') });
+          return h(
+            NTag,
+            { type: row.enabled ? 'success' : 'error', bordered: false },
+            { default: () => (row.enabled ? '启用' : '禁用') }
+          );
         }
       },
       { title: '创建时间', key: 'created_at', width: 160, render: (row: any) => formatDateTime(row.created_at) },
@@ -920,11 +923,18 @@ const taskConfigColumns = computed(() => {
         key: 'actions',
         render(row: any) {
           return h(NSpace, {}, [
-            h(NButton, { size: 'small', type: 'primary', onClick: () => handleEditTaskConfig(row) }, { default: () => '编辑' }),
+            h(
+              NButton,
+              { size: 'small', type: 'primary', onClick: () => handleEditTaskConfig(row) },
+              { default: () => '编辑' }
+            ),
             h(
               NPopconfirm,
               { onPositiveClick: () => handleDeleteTaskConfig(row) },
-              { default: () => '确认删除该配置吗？', trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' }) }
+              {
+                default: () => '确认删除该配置吗？',
+                trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' })
+              }
             )
           ]);
         }
@@ -1263,7 +1273,7 @@ function handleAddTaskConfig() {
   // 允许在账号状态缺失时也能弹窗，字段使用安全默认值
   const platformId = currentPlatformAccount.value?.platform_id ?? 0;
   const accountId = currentPlatformAccount.value?.id ?? 0;
-  
+
   addTaskConfigForm.value = {
     platform_id: platformId,
     platform_account_id: accountId,
@@ -1632,12 +1642,7 @@ onMounted(() => {
     <NCard title="平台管理" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
       <template #header-extra>
         <NSpace>
-  <NButton
-    type="primary"
-    @click="handleCreatePlatform"
-  >
-    新增平台
-  </NButton>
+          <NButton type="primary" @click="handleCreatePlatform">新增平台</NButton>
         </NSpace>
       </template>
       <NDataTable
@@ -1719,13 +1724,13 @@ onMounted(() => {
         </div>
         <!-- 账号列表 -->
         <NDataTable
+          v-model:checked-row-keys="selectedAccountIds"
           :columns="accountColumns"
           :data="accountData"
           :loading="accountLoading"
           :pagination="accountPagination"
           :flex-height="!appStore.isMobile"
           :scroll-x="962"
-          v-model:checked-row-keys="selectedAccountIds"
           remote
           :row-key="row => row.id"
           class="sm:h-full"
@@ -1768,7 +1773,10 @@ onMounted(() => {
           <span style="flex: 1">{{ getTaskConfigModalTitle() }} - {{ currentPlatformAccount?.account_name }}</span>
           <NButton
             type="primary"
-            @click="() => (isXianzhuanxia ? openChannelModal(currentPlatformAccount?.account_name || '') : handleAddTaskConfig())"
+            @click="
+              () =>
+                isXianzhuanxia ? openChannelModal(currentPlatformAccount?.account_name || '') : handleAddTaskConfig()
+            "
           >
             {{ isXianzhuanxia ? '增加配置' : '新增配置' }}
           </NButton>

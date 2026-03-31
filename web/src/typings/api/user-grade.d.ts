@@ -29,4 +29,4 @@ export interface UserGradeCreateRequest {
 
 export interface UserGradeUpdateRequest extends UserGradeCreateRequest {
   id: number;
-} 
+}

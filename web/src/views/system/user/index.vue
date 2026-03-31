@@ -1,6 +1,7 @@
 <script setup lang="tsx">
-import { ref, onMounted, h } from 'vue';
-import { useMessage, NButton, NPopconfirm, NModal, NDropdown, useDialog } from 'naive-ui';
+import { h, onMounted, ref } from 'vue';
+import { NButton, NDropdown, NModal, NPopconfirm, useDialog, useMessage } from 'naive-ui';
+import type { DataTableColumns } from 'naive-ui';
 import { request } from '@/service/request';
 import { useAppStore } from '@/store/modules/app';
 import UserSearch from './modules/user-search.vue';
@@ -9,7 +10,6 @@ import UserRechargeModal from './modules/user-recharge-modal.vue';
 import UserDeductModal from './modules/user-deduct-modal.vue';
 import UserCreditModal from './modules/user-credit-modal.vue';
 import UserRoleModal from './modules/user-role-modal.vue';
-import type { DataTableColumns } from 'naive-ui';
 
 const appStore = useAppStore();
 const message = useMessage();
@@ -158,14 +158,16 @@ const columns: DataTableColumns<any> = [
       };
       return (
         <div class="flex-center gap-8px">
-          <NButton type="primary" ghost size="small" onClick={() => onEdit(row)}>编辑</NButton>
-          <NButton type="success" ghost size="small" onClick={() => onRecharge(row)}>充值</NButton>
-          <NDropdown
-            trigger="click"
-            options={dropdownOptions}
-            onSelect={handleDropdownSelect}
-          >
-            <NButton type="default" ghost size="small">更多</NButton>
+          <NButton type="primary" ghost size="small" onClick={() => onEdit(row)}>
+            编辑
+          </NButton>
+          <NButton type="success" ghost size="small" onClick={() => onRecharge(row)}>
+            充值
+          </NButton>
+          <NDropdown trigger="click" options={dropdownOptions} onSelect={handleDropdownSelect}>
+            <NButton type="default" ghost size="small">
+              更多
+            </NButton>
           </NDropdown>
         </div>
       );
@@ -237,7 +239,11 @@ function onResetPassword(row: any) {
 async function handleResetPassword() {
   if (newPassword.value) {
     try {
-      await request({ url: `/users/${resetPasswordUser.value.id}/reset-password`, method: 'POST', data: { newPassword: newPassword.value } });
+      await request({
+        url: `/users/${resetPasswordUser.value.id}/reset-password`,
+        method: 'POST',
+        data: { newPassword: newPassword.value }
+      });
       message.success('重置密码成功');
       resetPasswordModalVisible.value = false;
       newPassword.value = '';
@@ -284,11 +290,12 @@ onMounted(() => {
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
     <UserSearch v-model:model="searchParams" @search="handleSearch" @reset="handleReset" />
-    <n-card :title="'用户管理'" :bordered="false" size="small" class="card-wrapper">
+    <NCard title="用户管理" :bordered="false" size="small" class="card-wrapper">
       <template #header-extra>
-        <n-button type="primary" @click="onAdd">新增用户</n-button>
+        <NButton type="primary" @click="onAdd">新增用户</NButton>
       </template>
-      <n-data-table
+      <NDataTable
+        v-model:checked-row-keys="selectedRowKeys"
         :columns="columns"
         :data="data"
         :loading="loading"
@@ -297,49 +304,37 @@ onMounted(() => {
         :scroll-x="962"
         remote
         :row-key="row => row.id"
+        class="sm:h-full"
         @update:page="handlePageChange"
         @update:page-size="handlePageSizeChange"
-        v-model:checked-row-keys="selectedRowKeys"
-        class="sm:h-full"
       />
-    </n-card>
+    </NCard>
     <UserOperateDrawer
       v-model:visible="operateDrawerVisible"
       :operate-type="operateType"
       :row-data="editingUser"
       @submitted="fetchUsers"
     />
-    <UserRechargeModal
-      v-model:visible="rechargeModalVisible"
-      :user="rechargeUser"
-      @submitted="fetchUsers"
-    />
-    <UserDeductModal
-      v-model:visible="deductModalVisible"
-      :user="deductUser"
-      @submitted="fetchUsers"
-    />
-    <UserCreditModal
-      v-model:visible="creditModalVisible"
-      :user="creditUser"
-      @submitted="fetchUsers"
-    />
-    <UserRoleModal
-      v-model:visible="roleModalVisible"
-      :user="roleUser"
-      @success="fetchUsers"
-    />
-    <n-modal
+    <UserRechargeModal v-model:visible="rechargeModalVisible" :user="rechargeUser" @submitted="fetchUsers" />
+    <UserDeductModal v-model:visible="deductModalVisible" :user="deductUser" @submitted="fetchUsers" />
+    <UserCreditModal v-model:visible="creditModalVisible" :user="creditUser" @submitted="fetchUsers" />
+    <UserRoleModal v-model:visible="roleModalVisible" :user="roleUser" @success="fetchUsers" />
+    <NModal
       v-model:show="resetPasswordModalVisible"
       title="重置密码"
       preset="dialog"
       positive-text="确定"
       negative-text="取消"
       @positive-click="handleResetPassword"
-      @negative-click="() => { resetPasswordModalVisible = false; newPassword.value = '' }"
+      @negative-click="
+        () => {
+          resetPasswordModalVisible = false;
+          newPassword.value = '';
+        }
+      "
     >
-      <div style="margin-bottom: 12px;">
-        <n-input
+      <div style="margin-bottom: 12px">
+        <NInput
           v-model:value="newPassword"
           type="password"
           placeholder="请输入新密码"
@@ -348,7 +343,7 @@ onMounted(() => {
           show-password-on="click"
         />
       </div>
-    </n-modal>
+    </NModal>
   </div>
 </template>
 

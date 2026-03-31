@@ -20,6 +20,7 @@ const (
 	OrderStatusPartial                                // 部分充值 (8)
 	OrderStatusSplit                                  // 已拆单 (9)
 	OrderStatusProcessing                             // 处理中 (10)
+	OrderStatusPendingRefundReview                    // 待退款审核 (11)：用户已申请退款，等管理员审核
 )
 
 // String 返回订单状态的字符串表示
@@ -45,6 +46,8 @@ func (s OrderStatus) String() string {
 		return "split"
 	case OrderStatusProcessing:
 		return "processing"
+	case OrderStatusPendingRefundReview:
+		return "pending_refund_review"
 	default:
 		return "unknown"
 	}

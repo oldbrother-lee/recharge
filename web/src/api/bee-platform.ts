@@ -124,7 +124,7 @@ export interface BeeEditSupplyGoodData {
 }
 
 export function getBeeProductList(accountId: number, params: any) {
-  return request({ url: `/platform/bee/accounts/${accountId}/products`, method: 'get', params: params });
+  return request({ url: `/platform/bee/accounts/${accountId}/products`, method: 'get', params });
 }
 
 export function updateBeeProductPrice(accountId: number, data: BeeUpdatePriceRequest) {

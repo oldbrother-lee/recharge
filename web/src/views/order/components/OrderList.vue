@@ -1,16 +1,28 @@
 <script setup lang="tsx">
-import { ref, onMounted, watch, computed } from 'vue';
-import OrderSearchForm from './OrderSearchForm.vue';
-import { request } from '@/service/request';
-import type { Order } from '@/typings/api';
-import { NDataTable, NCard, useMessage, NTag, NButton, NModal, NInput, NForm, NFormItem, NDatePicker, NSpace } from 'naive-ui';
+import { computed, onMounted, ref, watch } from 'vue';
+import {
+  NButton,
+  NCard,
+  NDataTable,
+  NDatePicker,
+  NForm,
+  NFormItem,
+  NInput,
+  NModal,
+  NSpace,
+  NTag,
+  useMessage
+} from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
+import { ORDER_STATUS_MAP } from '@/constants/business';
+import { request } from '@/service/request';
 import { useAuthStore } from '@/store/modules/auth';
-import { formatISP } from '@/utils/format';
 import { useAppStore } from '@/store/modules/app';
+import { formatISP } from '@/utils/format';
+import type { Order } from '@/typings/api';
+import OrderSearchForm from './OrderSearchForm.vue';
 // 本地定义 RowKey 类型以兼容 Naive UI DataTable 的选中键类型
 type RowKey = string | number;
-
 
 const authStore = useAuthStore();
 const appStore = useAppStore();
@@ -19,12 +31,15 @@ const hasRole = (role: string) => {
   return authStore.userInfo.roles.includes(role);
 };
 
-const props = withDefaults(defineProps<{
-  platform?: string;
-  platform_code?: string;
-}>(), {
-  platform_code: ''
-});
+const props = withDefaults(
+  defineProps<{
+    platform?: string;
+    platform_code?: string;
+  }>(),
+  {
+    platform_code: ''
+  }
+);
 const message = useMessage();
 const columnChecks = ref<any[]>([]);
 const loading = ref(false);
@@ -97,6 +112,15 @@ const showCleanupModal = ref(false);
 const cleanupRange = ref<{ startTime: number | null; endTime: number | null }>({ startTime: null, endTime: null });
 const cleanupLoading = ref(false);
 
+// 退款审核（待退款审核订单）
+const PENDING_REFUND_STATUS = 11;
+const showRefundApproveModal = ref(false);
+const showRefundRejectModal = ref(false);
+const currentRefundOrder = ref<Order | null>(null);
+const refundApproveRemark = ref('');
+const refundRejectRemark = ref('');
+const refundActionLoading = ref(false);
+
 // 多选相关状态
 const selectedRowKeys = ref<RowKey[]>([]);
 const showBatchDeleteModal = ref(false);
@@ -109,17 +133,9 @@ const batchLoading = ref(false);
 // 余额验证状态
 const balanceVerificationEnabled = ref(false);
 
-const statusMap: Record<string, { type: 'success' | 'warning' | 'error' | 'info' | 'default', text: string }> = {
-  '1': { type: 'warning', text: '待支付' },
-  '2': { type: 'warning', text: '待充值' },
-  '3': { type: 'info', text: '充值中' },
-  '4': { type: 'success', text: '充值成功' },
-  '5': { type: 'error', text: '充值失败' },
-  '6': { type: 'info', text: '已退款' },
-  '7': { type: 'error', text: '已取消' },
-  '8': { type: 'warning', text: '部分充值' },
-  '9': { type: 'info', text: '已拆单' },
-  '10': { type: 'info', text: '处理中' }
+// 订单状态展示（含待退款审核 11）
+const statusMap: Record<string, { type: 'success' | 'warning' | 'error' | 'info' | 'default'; text: string }> = {
+  ...Object.fromEntries(Object.entries(ORDER_STATUS_MAP).map(([k, v]) => [k, { type: v.type, text: v.text }]))
 };
 
 const handleFail = async (row: Order) => {
@@ -195,6 +211,56 @@ const openDeleteModal = (row: Order) => {
   showDeleteModal.value = true;
 };
 
+const openRefundApproveModal = (row: Order) => {
+  currentRefundOrder.value = row;
+  refundApproveRemark.value = '';
+  showRefundApproveModal.value = true;
+};
+
+const openRefundRejectModal = (row: Order) => {
+  currentRefundOrder.value = row;
+  refundRejectRemark.value = '';
+  showRefundRejectModal.value = true;
+};
+
+const handleRefundApproveConfirm = async () => {
+  if (!currentRefundOrder.value) return;
+  refundActionLoading.value = true;
+  try {
+    await request({
+      url: `/order/${currentRefundOrder.value.id}/refund`,
+      method: 'POST',
+      data: { remark: refundApproveRemark.value || '管理员审核通过' }
+    });
+    message.success('已通过退款申请，订单已退款');
+    showRefundApproveModal.value = false;
+    fetchOrders();
+  } catch (error: any) {
+    message.error(error?.message || '操作失败');
+  } finally {
+    refundActionLoading.value = false;
+  }
+};
+
+const handleRefundRejectConfirm = async () => {
+  if (!currentRefundOrder.value) return;
+  refundActionLoading.value = true;
+  try {
+    await request({
+      url: `/order/${currentRefundOrder.value.id}/refund/reject`,
+      method: 'POST',
+      data: { remark: refundRejectRemark.value || '管理员拒绝' }
+    });
+    message.success('已拒绝退款申请，订单已恢复为待充值');
+    showRefundRejectModal.value = false;
+    fetchOrders();
+  } catch (error: any) {
+    message.error(error?.message || '操作失败');
+  } finally {
+    refundActionLoading.value = false;
+  }
+};
+
 const handleDeleteConfirm = async () => {
   try {
     await request({
@@ -230,7 +296,7 @@ const handleCleanup = async () => {
     showCleanupModal.value = false;
     fetchOrders();
   } catch (error: any) {
-    message.error('清理失败: ' + (error?.msg || error?.message || ''));
+    message.error(`清理失败: ${error?.msg || error?.message || ''}`);
   } finally {
     cleanupLoading.value = false;
   }
@@ -337,9 +403,9 @@ const confirmBatchFail = async () => {
     await request({
       url: '/order/batch-fail',
       method: 'POST',
-      data: { 
+      data: {
         order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)),
-        remark: batchFailRemark.value 
+        remark: batchFailRemark.value
       }
     });
     message.success(`成功设置 ${selectedRowKeys.value.length} 个订单为失败`);
@@ -372,10 +438,10 @@ const toggleBalanceQuery = async () => {
       url: '/systemManage/key/balance_verification_enabled',
       method: 'GET'
     });
-    
+
     const currentValue = res.data?.config_value === 'true';
     const newValue = !currentValue;
-    
+
     await request({
       url: '/systemManage/settings/batch',
       method: 'PUT',
@@ -383,10 +449,10 @@ const toggleBalanceQuery = async () => {
         balance_verification_enabled: newValue.toString()
       }
     });
-    
+
     // 更新本地状态
     balanceVerificationEnabled.value = newValue;
-    
+
     message.success(`余额查询已${newValue ? '开启' : '关闭'}`);
   } catch (error) {
     message.error('切换余额查询状态失败');
@@ -400,10 +466,10 @@ const columns: DataTableColumns<Order> = [
   { key: 'order_number', title: '订单号', align: 'center', minWidth: 180 },
   { key: 'out_trade_num', title: '外部订单号', align: 'center', minWidth: 180 },
   { key: 'mobile', title: '手机号', align: 'center', width: 120 },
-  { 
-    key: 'isp', 
-    title: '运营商', 
-    align: 'center', 
+  {
+    key: 'isp',
+    title: '运营商',
+    align: 'center',
     width: 120,
     render(row) {
       const value = (row as any).isp;
@@ -452,12 +518,13 @@ const columns: DataTableColumns<Order> = [
       if (!status) {
         return '-';
       }
-      const statusMap: { [key: string]: { type: 'default' | 'error' | 'info' | 'success' | 'warning'; text: string } } = {
-        '1': { type: 'warning', text: '待通知' },
-        '2': { type: 'info', text: '通知中' },
-        '3': { type: 'success', text: '成功' },
-        '4': { type: 'error', text: '失败' }
-      };
+      const statusMap: { [key: string]: { type: 'default' | 'error' | 'info' | 'success' | 'warning'; text: string } } =
+        {
+          '1': { type: 'warning', text: '待通知' },
+          '2': { type: 'info', text: '通知中' },
+          '3': { type: 'success', text: '成功' },
+          '4': { type: 'error', text: '失败' }
+        };
       const statusInfo = statusMap[String(status)] || { type: 'default', text: String(status) };
       return <NTag type={statusInfo.type}>{statusInfo.text}</NTag>;
     }
@@ -488,17 +555,34 @@ const columns: DataTableColumns<Order> = [
     align: 'center',
     width: 400,
     render(row) {
+      const isPendingRefund = Number(row.status) === PENDING_REFUND_STATUS;
+      const canAuditRefund = hasRole('SUPER_ADMIN');
       return (
-        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-          <NButton size="small" type="success" ghost onClick={() => openSuccessModal(row)}>
-            设置为成功
-          </NButton>
-          <NButton size="small" type="error" ghost onClick={() => openFailModal(row)}>
-            失败订单
-          </NButton>
-          <NButton size="small" type="warning" ghost onClick={() => openDeleteModal(row)}>
-            删除订单
-          </NButton>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+          {isPendingRefund && canAuditRefund ? (
+            <>
+              <NButton size="small" type="success" ghost onClick={() => openRefundApproveModal(row)}>
+                审核通过
+              </NButton>
+              <NButton size="small" type="error" ghost onClick={() => openRefundRejectModal(row)}>
+                审核拒绝
+              </NButton>
+            </>
+          ) : isPendingRefund ? (
+            <span style={{ color: '#999', fontSize: '12px' }}>待管理员审核</span>
+          ) : (
+            <>
+              <NButton size="small" type="success" ghost onClick={() => openSuccessModal(row)}>
+                设置为成功
+              </NButton>
+              <NButton size="small" type="error" ghost onClick={() => openFailModal(row)}>
+                失败订单
+              </NButton>
+              <NButton size="small" type="warning" ghost onClick={() => openDeleteModal(row)}>
+                删除订单
+              </NButton>
+            </>
+          )}
         </div>
       );
     }
@@ -507,14 +591,24 @@ const columns: DataTableColumns<Order> = [
 
 // 成功统计列表列定义
 const successStatsColumns: DataTableColumns<any> = [
-  { key: 'isp', title: '运营商', align: 'center', width: 120, render(row) {
+  {
+    key: 'isp',
+    title: '运营商',
+    align: 'center',
+    width: 120,
+    render(row) {
       const v = String(row.isp);
       return formatISP(v);
     }
   },
   { key: 'denom', title: '面值', align: 'center', width: 100 },
   { key: 'successCount', title: '成功笔数', align: 'center', width: 120 },
-  { key: 'successAmount', title: '成功金额', align: 'center', width: 120, render(row) {
+  {
+    key: 'successAmount',
+    title: '成功金额',
+    align: 'center',
+    width: 120,
+    render(row) {
       const amt = Number(row.successAmount || 0);
       return amt.toFixed(2);
     }
@@ -602,7 +696,10 @@ const fetchSuccessStats = async () => {
     } else if (props.platform && props.platform !== 'all') {
       params.platform = props.platform;
     }
-    const res = await request<{ list: Array<{ isp: number; denom: number; successCount: number; successAmount: number }>; total: number }>({ url: '/orders/statistics/isp-denom-success', method: 'GET', params });
+    const res = await request<{
+      list: Array<{ isp: number; denom: number; successCount: number; successAmount: number }>;
+      total: number;
+    }>({ url: '/orders/statistics/isp-denom-success', method: 'GET', params });
     successStats.value = Array.isArray(res.data?.list) ? res.data!.list : [];
   } catch (error) {
     message.error('获取成功统计失败');
@@ -647,9 +744,12 @@ const handleRowKeysUpdate = (keys: RowKey[]) => {
   }
 };
 
-watch(() => [props.platform, props.platform_code], () => {
-  fetchOrders();
-});
+watch(
+  () => [props.platform, props.platform_code],
+  () => {
+    fetchOrders();
+  }
+);
 
 onMounted(() => {
   fetchOrders();
@@ -672,46 +772,34 @@ function formatLocalDatetime(ts: number | null) {
     <NCard v-if="hasSearch" size="small" class="stats-card" :class="{ 'opacity-60': successStatsLoading }">
       <template #header>成功统计</template>
       <div class="stats-text">
-        <div class="stats-summary">总笔数 {{ successStatsTotals.count }}，总金额 ¥{{ successStatsTotals.amount.toFixed(2) }}</div>
+        <div class="stats-summary">
+          总笔数 {{ successStatsTotals.count }}，总金额 ¥{{ successStatsTotals.amount.toFixed(2) }}
+        </div>
         <div v-if="successStatsGroups.length === 0">暂无数据</div>
         <div v-else class="stats-groups">
-          <div class="stats-group" v-for="group in successStatsGroups" :key="group.isp">
+          <div v-for="group in successStatsGroups" :key="group.isp" class="stats-group">
             <span class="isp">{{ group.isp }}：</span>
             <span class="detail">
               <template v-for="(it, idx) in group.items" :key="idx">
-                {{ it.denom.toFixed(2) }}: {{ it.successCount }}笔/¥{{ it.successAmount.toFixed(2) }}<span v-if="idx < group.items.length - 1">；</span>
+                {{ it.denom.toFixed(2) }}: {{ it.successCount }}笔/¥{{ it.successAmount.toFixed(2) }}
+                <span v-if="idx < group.items.length - 1">；</span>
               </template>
             </span>
           </div>
         </div>
       </div>
     </NCard>
-    
-    <NCard :title="'订单列表'" :bordered="false" size="small" class="card-wrapper sm:flex-1-hidden">
+
+    <NCard title="订单列表" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
       <template #header-extra>
         <NSpace justify="end" wrap class="lt-sm:w-200px">
-          <NButton
-            v-show="selectedRowKeys.length > 0"
-            type="success"
-            size="small"
-            @click="handleBatchSuccess"
-          >
+          <NButton v-show="selectedRowKeys.length > 0" type="success" size="small" @click="handleBatchSuccess">
             批量成功 ({{ selectedRowKeys.length }})
           </NButton>
-          <NButton
-            v-show="selectedRowKeys.length > 0"
-            type="error"
-            size="small"
-            @click="handleBatchFail"
-          >
+          <NButton v-show="selectedRowKeys.length > 0" type="error" size="small" @click="handleBatchFail">
             批量失败 ({{ selectedRowKeys.length }})
           </NButton>
-          <NButton
-            v-show="selectedRowKeys.length > 0"
-            type="info"
-            size="small"
-            @click="handleBatchNotification"
-          >
+          <NButton v-show="selectedRowKeys.length > 0" type="info" size="small" @click="handleBatchNotification">
             批量回调 ({{ selectedRowKeys.length }})
           </NButton>
           <NButton
@@ -746,11 +834,11 @@ function formatLocalDatetime(ts: number | null) {
         checkable
         :row-key="row => String(row.id)"
         :checked-row-keys="selectedRowKeys"
+        class="sm:h-full"
+        size="small"
         @update:checked-row-keys="handleRowKeysUpdate"
         @update:page="handlePageChange"
         @update:page-size="handlePageSizeChange"
-        class="sm:h-full"
-        size="small"
       />
     </NCard>
     <NModal v-model:show="showFailModal" title="标记为失败" preset="dialog">
@@ -778,6 +866,34 @@ function formatLocalDatetime(ts: number | null) {
         <NButton type="primary" @click="handleDeleteConfirm">确定</NButton>
       </template>
     </NModal>
+    <NModal v-model:show="showRefundApproveModal" title="退款审核通过" preset="dialog">
+      <NForm>
+        <NFormItem label="审核备注">
+          <NInput v-model:value="refundApproveRemark" type="textarea" placeholder="选填，如：审核通过" :rows="2" />
+        </NFormItem>
+      </NForm>
+      <div v-if="currentRefundOrder" class="text-sm text-gray-500">
+        订单号：{{ currentRefundOrder.order_number }}，将执行退款至用户余额。
+      </div>
+      <template #action>
+        <NButton @click="() => (showRefundApproveModal = false)">取消</NButton>
+        <NButton type="success" :loading="refundActionLoading" @click="handleRefundApproveConfirm">确认通过</NButton>
+      </template>
+    </NModal>
+    <NModal v-model:show="showRefundRejectModal" title="拒绝退款申请" preset="dialog">
+      <NForm>
+        <NFormItem label="拒绝原因">
+          <NInput v-model:value="refundRejectRemark" type="textarea" placeholder="选填拒绝原因" :rows="2" />
+        </NFormItem>
+      </NForm>
+      <div v-if="currentRefundOrder" class="text-sm text-gray-500">
+        订单号：{{ currentRefundOrder.order_number }}，拒绝后订单将恢复为「待充值」。
+      </div>
+      <template #action>
+        <NButton @click="() => (showRefundRejectModal = false)">取消</NButton>
+        <NButton type="error" :loading="refundActionLoading" @click="handleRefundRejectConfirm">确认拒绝</NButton>
+      </template>
+    </NModal>
     <NModal v-model:show="showCleanupModal" title="清理订单" preset="dialog">
       <NForm>
         <NFormItem label="开始时间" required>
@@ -801,10 +917,12 @@ function formatLocalDatetime(ts: number | null) {
       </NForm>
       <template #action>
         <NButton @click="() => (showCleanupModal = false)">取消</NButton>
-        <NButton type="error" :loading="cleanupLoading" @click="handleCleanup" style="margin-left: 12px">确认清理</NButton>
+        <NButton type="error" :loading="cleanupLoading" style="margin-left: 12px" @click="handleCleanup">
+          确认清理
+        </NButton>
       </template>
     </NModal>
-    
+
     <!-- 批量操作模态框 -->
     <NModal v-model:show="showBatchDeleteModal" title="批量删除订单" preset="dialog">
       <div>确认要删除选中的 {{ selectedRowKeys.length }} 个订单吗？</div>
@@ -813,7 +931,7 @@ function formatLocalDatetime(ts: number | null) {
         <NButton type="error" :loading="batchLoading" @click="confirmBatchDelete">确定删除</NButton>
       </template>
     </NModal>
-    
+
     <NModal v-model:show="showBatchSuccessModal" title="批量设置成功" preset="dialog">
       <div>确认将选中的 {{ selectedRowKeys.length }} 个订单设置为成功吗？</div>
       <template #action>
@@ -821,20 +939,20 @@ function formatLocalDatetime(ts: number | null) {
         <NButton type="success" :loading="batchLoading" @click="confirmBatchSuccess">确定</NButton>
       </template>
     </NModal>
-    
+
     <NModal v-model:show="showBatchFailModal" title="批量设置失败" preset="dialog">
       <NForm>
         <NFormItem label="失败原因" required>
           <NInput v-model:value="batchFailRemark" type="textarea" placeholder="请输入失败原因" />
         </NFormItem>
-        <div style="margin-bottom: 12px; color: #666;">将对选中的 {{ selectedRowKeys.length }} 个订单进行操作</div>
+        <div style="margin-bottom: 12px; color: #666">将对选中的 {{ selectedRowKeys.length }} 个订单进行操作</div>
       </NForm>
       <template #action>
         <NButton @click="() => (showBatchFailModal = false)">取消</NButton>
         <NButton type="error" :loading="batchLoading" @click="confirmBatchFail">确定</NButton>
       </template>
     </NModal>
-    
+
     <NModal v-model:show="showBatchNotificationModal" title="批量发送回调通知" preset="dialog">
       <div>确认将选中的 {{ selectedRowKeys.length }} 个订单推送到通知队列进行回调通知吗？</div>
       <template #action>

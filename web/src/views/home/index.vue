@@ -1,17 +1,17 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue';
-import { useAppStore } from '@/store/modules/app';
+import { computed, onMounted, ref } from 'vue';
 import { useMessage } from 'naive-ui';
 import { request } from '@/service/request';
+import { getOperatorStatistics } from '@/api/statistics';
+import { fetchOrderExceptionStatistics } from '@/api/order-exception';
+import { useAppStore } from '@/store/modules/app';
+import { useAuthStore } from '@/store/modules/auth';
 import HeaderBanner from './modules/header-banner.vue';
 import CardData from './modules/card-data.vue';
 import LineChart from './modules/line-chart.vue';
 import PieChart from './modules/pie-chart.vue';
 import ProjectNews from './modules/project-news.vue';
 import CreativityBanner from './modules/creativity-banner.vue';
-import { getOperatorStatistics } from '@/api/statistics';
-import { fetchOrderExceptionStatistics } from '@/api/order-exception';
-import { useAuthStore } from '@/store/modules/auth';
 
 const appStore = useAppStore();
 const message = useMessage();

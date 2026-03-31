@@ -1,3 +1,162 @@
+<script setup lang="ts">
+import { reactive, ref } from 'vue';
+import {
+  NButton,
+  NCard,
+  NDataTable,
+  NDivider,
+  NEmpty,
+  NForm,
+  NFormItem,
+  NInput,
+  NInputNumber,
+  NSelect,
+  useMessage
+} from 'naive-ui';
+import type { DataTableColumns, FormInst, FormRules } from 'naive-ui';
+import { request } from '@/service/request';
+
+const message = useMessage();
+
+// 运营商选项
+const ispOptions = [
+  { label: '中国移动', value: 'yd' },
+  { label: '中国联通', value: 'lt' },
+  { label: '中国电信', value: 'dx' }
+];
+
+// 余额查询表单
+const balanceForm = reactive({
+  phone: '',
+  isp_type: null
+});
+
+// 缴费记录查询表单
+const recordForm = reactive({
+  phone: '',
+  isp_type: null
+});
+
+const balanceLoading = ref(false);
+const recordLoading = ref(false);
+const balanceResult = ref(null);
+const recordResult = ref(null);
+
+const balanceFormRef = ref<FormInst | null>(null);
+const recordFormRef = ref<FormInst | null>(null);
+
+// 表单验证规则
+const balanceRules: FormRules = {
+  phone: [
+    { required: true, message: '请输入手机号码', trigger: 'blur' },
+    { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码', trigger: 'blur' }
+  ],
+  isp_type: [{ required: true, type: 'string', message: '请选择运营商类型', trigger: 'change' }]
+};
+
+const recordRules: FormRules = {
+  phone: [
+    { required: true, message: '请输入手机号码', trigger: 'blur' },
+    { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码', trigger: 'blur' }
+  ],
+  isp_type: [{ required: true, type: 'string', message: '请选择运营商类型', trigger: 'change' }]
+};
+
+// 缴费记录表格列定义
+const recordColumns: DataTableColumns = [
+  {
+    title: '缴费时间',
+    key: 'payTime',
+    width: 180
+  },
+  {
+    title: '缴费金额',
+    key: 'payAmount',
+    width: 120,
+    render(row: any) {
+      return `¥${row.payAmount}`;
+    }
+  },
+  {
+    title: '缴费渠道',
+    key: 'channel'
+  },
+  {
+    title: '时间戳',
+    key: 'payTimeStamp',
+    width: 120
+  }
+];
+
+// 获取运营商名称
+const getIspName = (ispType: string) => {
+  const isp = ispOptions.find(item => item.value === ispType);
+  return isp ? isp.label : '未知';
+};
+
+// 格式化时间
+const formatTime = (time: string) => {
+  if (!time) return '-';
+  return new Date(time).toLocaleString();
+};
+
+// 余额查询
+const handleBalanceQuery = async () => {
+  try {
+    await balanceFormRef.value?.validate();
+    balanceLoading.value = true;
+    balanceResult.value = null;
+
+    const response = await request({
+      url: '/phone/balance',
+      method: 'POST',
+      data: balanceForm
+    });
+
+    if (response.data) {
+      balanceResult.value = response.data;
+      message.success('余额查询成功');
+    }
+  } catch (error: any) {
+    message.error(error?.message || '余额查询失败');
+  } finally {
+    balanceLoading.value = false;
+  }
+};
+
+// 缴费记录查询
+const handleRecordQuery = async () => {
+  try {
+    await recordFormRef.value?.validate();
+    recordLoading.value = true;
+    recordResult.value = null;
+
+    const response = await request({
+      url: '/phone/payment-records',
+      method: 'POST',
+      data: recordForm
+    });
+
+    if (response.data) {
+      // 适配API返回的数据结构
+      if (response.data && response.data.datas) {
+        recordResult.value = {
+          ...response.data.data,
+          records: response.data.datas
+        };
+      } else {
+        recordResult.value = response.data;
+      }
+      message.success('缴费记录查询成功');
+    }
+  } catch (error: any) {
+    message.error(error?.message || '缴费记录查询失败');
+  } finally {
+    recordLoading.value = false;
+  }
+};
+</script>
+
 <template>
   <div class="phone-query-management">
     <div class="page-header">
@@ -7,11 +166,11 @@
 
     <div class="query-container">
       <!-- 余额查询 -->
-      <n-card title="手机余额查询" class="query-card">
+      <NCard title="手机余额查询" class="query-card">
         <template #header-extra>
           <span class="card-description">查询手机号码余额信息</span>
         </template>
-        <n-form
+        <NForm
           ref="balanceFormRef"
           :model="balanceForm"
           :rules="balanceRules"
@@ -19,31 +178,20 @@
           :label-width="120"
           @submit.prevent="handleBalanceQuery"
         >
-          <n-form-item label="手机号码" path="phone">
-            <n-input
-              v-model:value="balanceForm.phone"
-              placeholder="请输入手机号码"
-              :maxlength="11"
-              show-count
-            />
-          </n-form-item>
-          <n-form-item label="运营商类型" path="isp_type">
-            <n-select
-              v-model:value="balanceForm.isp_type"
-              :options="ispOptions"
-              placeholder="请选择运营商类型"
-            />
-          </n-form-item>
-          <n-form-item>
-            <n-button type="primary" :loading="balanceLoading" @click="handleBalanceQuery">
-              查询余额
-            </n-button>
-          </n-form-item>
-        </n-form>
-        
+          <NFormItem label="手机号码" path="phone">
+            <NInput v-model:value="balanceForm.phone" placeholder="请输入手机号码" :maxlength="11" show-count />
+          </NFormItem>
+          <NFormItem label="运营商类型" path="isp_type">
+            <NSelect v-model:value="balanceForm.isp_type" :options="ispOptions" placeholder="请选择运营商类型" />
+          </NFormItem>
+          <NFormItem>
+            <NButton type="primary" :loading="balanceLoading" @click="handleBalanceQuery">查询余额</NButton>
+          </NFormItem>
+        </NForm>
+
         <!-- 余额查询结果 -->
         <div v-if="balanceResult" class="query-result">
-          <n-divider title-placement="left">查询结果</n-divider>
+          <NDivider title-placement="left">查询结果</NDivider>
           <div class="result-grid">
             <div class="result-item">
               <span class="label">手机号码：</span>
@@ -57,17 +205,16 @@
               <span class="label">余额：</span>
               <span class="value balance-amount">¥{{ balanceResult.datas }}</span>
             </div>
-
           </div>
         </div>
-      </n-card>
+      </NCard>
 
       <!-- 缴费记录查询 -->
-      <n-card title="缴费记录查询" class="query-card">
+      <NCard title="缴费记录查询" class="query-card">
         <template #header-extra>
           <span class="card-description">查询手机号码缴费记录</span>
         </template>
-        <n-form
+        <NForm
           ref="recordFormRef"
           :model="recordForm"
           :rules="recordRules"
@@ -75,33 +222,21 @@
           :label-width="120"
           @submit.prevent="handleRecordQuery"
         >
-          <n-form-item label="手机号码" path="phone">
-            <n-input
-              v-model:value="recordForm.phone"
-              placeholder="请输入手机号码"
-              :maxlength="11"
-              show-count
-            />
-          </n-form-item>
-          <n-form-item label="运营商类型" path="isp_type">
-            <n-select
-              v-model:value="recordForm.isp_type"
-              :options="ispOptions"
-              placeholder="请选择运营商类型"
-            />
-          </n-form-item>
+          <NFormItem label="手机号码" path="phone">
+            <NInput v-model:value="recordForm.phone" placeholder="请输入手机号码" :maxlength="11" show-count />
+          </NFormItem>
+          <NFormItem label="运营商类型" path="isp_type">
+            <NSelect v-model:value="recordForm.isp_type" :options="ispOptions" placeholder="请选择运营商类型" />
+          </NFormItem>
 
-    
-          <n-form-item>
-            <n-button type="primary" :loading="recordLoading" @click="handleRecordQuery">
-              查询记录
-            </n-button>
-          </n-form-item>
-        </n-form>
-        
+          <NFormItem>
+            <NButton type="primary" :loading="recordLoading" @click="handleRecordQuery">查询记录</NButton>
+          </NFormItem>
+        </NForm>
+
         <!-- 缴费记录查询结果 -->
         <div v-if="recordResult" class="query-result">
-          <n-divider title-placement="left">查询结果</n-divider>
+          <NDivider title-placement="left">查询结果</NDivider>
           <div class="result-info">
             <div class="result-item">
               <span class="label">手机号码：</span>
@@ -120,176 +255,24 @@
               <span class="value">{{ new Date().toLocaleString() }}</span>
             </div>
           </div>
-          
+
           <!-- 缴费记录表格 -->
-          <n-data-table
-          v-if="recordResult.records && recordResult.records.length > 0"
-          :columns="recordColumns"
-          :data="recordResult.records"
-          :pagination="false"
-          :bordered="false"
-          :scroll-x="600"
-          size="small"
-          class="record-table"
-        />
-          <n-empty v-else description="暂无缴费记录" />
+          <NDataTable
+            v-if="recordResult.records && recordResult.records.length > 0"
+            :columns="recordColumns"
+            :data="recordResult.records"
+            :pagination="false"
+            :bordered="false"
+            :scroll-x="600"
+            size="small"
+            class="record-table"
+          />
+          <NEmpty v-else description="暂无缴费记录" />
         </div>
-      </n-card>
+      </NCard>
     </div>
   </div>
 </template>
-
-<script setup lang="ts">
-import { ref, reactive } from 'vue'
-import { useMessage, NCard, NForm, NFormItem, NInput, NSelect, NInputNumber, NButton, NDivider, NDataTable, NEmpty } from 'naive-ui'
-import type { FormInst, FormRules, DataTableColumns } from 'naive-ui'
-import { request } from '@/service/request'
-
-const message = useMessage()
-
-// 运营商选项
-const ispOptions = [
-  { label: '中国移动', value: 'yd' },
-  { label: '中国联通', value: 'lt' },
-  { label: '中国电信', value: 'dx' }
-]
-
-// 余额查询表单
-const balanceForm = reactive({
-  phone: '',
-  isp_type: null
-})
-
-// 缴费记录查询表单
-const recordForm = reactive({
-  phone: '',
-  isp_type: null
-})
-
-const balanceLoading = ref(false)
-const recordLoading = ref(false)
-const balanceResult = ref(null)
-const recordResult = ref(null)
-
-const balanceFormRef = ref<FormInst | null>(null)
-const recordFormRef = ref<FormInst | null>(null)
-
-// 表单验证规则
-const balanceRules: FormRules = {
-  phone: [
-    { required: true, message: '请输入手机号码', trigger: 'blur' },
-    { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码', trigger: 'blur' }
-  ],
-  isp_type: [
-    { required: true, type: 'string', message: '请选择运营商类型', trigger: 'change' }
-  ]
-}
-
-const recordRules: FormRules = {
-  phone: [
-    { required: true, message: '请输入手机号码', trigger: 'blur' },
-    { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号码', trigger: 'blur' }
-  ],
-  isp_type: [
-    { required: true, type: 'string', message: '请选择运营商类型', trigger: 'change' }
-  ]
-}
-
-// 缴费记录表格列定义
-const recordColumns: DataTableColumns = [
-  {
-    title: '缴费时间',
-    key: 'payTime',
-    width: 180
-  },
-  {
-    title: '缴费金额',
-    key: 'payAmount',
-    width: 120,
-    render(row: any) {
-      return `¥${row.payAmount}`
-    }
-  },
-  {
-    title: '缴费渠道',
-    key: 'channel',
-
-  },
-  {
-    title: '时间戳',
-    key: 'payTimeStamp',
-    width: 120
-  }
-]
-
-// 获取运营商名称
-const getIspName = (ispType: string) => {
-  const isp = ispOptions.find(item => item.value === ispType)
-  return isp ? isp.label : '未知'
-}
-
-// 格式化时间
-const formatTime = (time: string) => {
-  if (!time) return '-'
-  return new Date(time).toLocaleString()
-}
-
-// 余额查询
-const handleBalanceQuery = async () => {
-  try {
-    await balanceFormRef.value?.validate()
-    balanceLoading.value = true
-    balanceResult.value = null
-    
-    const response = await request({
-      url: '/phone/balance',
-      method: 'POST',
-      data: balanceForm
-    })
-    
-    if (response.data) {
-      balanceResult.value = response.data
-      message.success('余额查询成功')
-    }
-  } catch (error: any) {
-    message.error(error?.message || '余额查询失败')
-  } finally {
-    balanceLoading.value = false
-  }
-}
-
-// 缴费记录查询
-const handleRecordQuery = async () => {
-  try {
-    await recordFormRef.value?.validate()
-    recordLoading.value = true
-    recordResult.value = null
-    
-    const response = await request({
-      url: '/phone/payment-records',
-      method: 'POST',
-      data: recordForm
-    })
-    
-    if (response.data) {
-      // 适配API返回的数据结构
-      if (response.data && response.data.datas) {
-        recordResult.value = {
-          ...response.data.data,
-          records: response.data.datas
-        }
-      } else {
-        recordResult.value = response.data
-      }
-      message.success('缴费记录查询成功')
-    }
-  } catch (error: any) {
-    message.error(error?.message || '缴费记录查询失败')
-  } finally {
-    recordLoading.value = false
-  }
-}
-</script>
 
 <style scoped>
 .phone-query-management {
@@ -380,7 +363,7 @@ const handleRecordQuery = async () => {
   .query-container {
     padding: 0 16px;
   }
-  
+
   .result-grid,
   .result-info {
     grid-template-columns: 1fr;

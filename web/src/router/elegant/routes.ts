@@ -76,53 +76,6 @@ export const generatedRoutes: GeneratedRoute[] = [
     }
   },
   {
-    name: 'manage',
-    path: '/manage',
-    component: 'layout.base',
-    meta: {
-      title: 'manage',
-      i18nKey: 'route.manage'
-    },
-    children: [
-      {
-        name: 'manage_menu',
-        path: '/manage/menu',
-        component: 'view.manage_menu',
-        meta: {
-          title: 'manage_menu',
-          i18nKey: 'route.manage_menu'
-        }
-      },
-      {
-        name: 'manage_role',
-        path: '/manage/role',
-        component: 'view.manage_role',
-        meta: {
-          title: 'manage_role',
-          i18nKey: 'route.manage_role'
-        }
-      },
-      {
-        name: 'manage_user',
-        path: '/manage/user',
-        component: 'view.manage_user',
-        meta: {
-          title: 'manage_user',
-          i18nKey: 'route.manage_user'
-        }
-      },
-      {
-        name: 'manage_user-detail',
-        path: '/manage/user-detail/:id',
-        component: 'view.manage_user-detail',
-        meta: {
-          title: 'manage_user-detail',
-          i18nKey: 'route.manage_user-detail'
-        }
-      }
-    ]
-  },
-  {
     name: 'order',
     path: '/order',
     component: 'layout.base',
@@ -296,6 +249,15 @@ export const generatedRoutes: GeneratedRoute[] = [
       roles: ['SUPER_ADMIN']
     },
     children: [
+      {
+        name: 'system_balance-log',
+        path: '/system/balance-log',
+        component: 'view.system_balance-log',
+        meta: {
+          title: 'system_balance-log',
+          i18nKey: 'route.system_balance-log'
+        }
+      },
       {
         name: 'system_phone-query',
         path: '/system/phone-query',

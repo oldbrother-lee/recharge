@@ -1,37 +1,23 @@
-<template>
-  <n-modal v-model:show="visible" title="分配角色" preset="dialog" :mask-closable="false">
-    <n-spin :show="loading">
-      <n-checkbox-group v-model:value="checkedRoles">
-        <n-space vertical>
-          <n-checkbox v-for="role in allRoles" :key="role.id" :value="role.id">
-            {{ role.name }}
-          </n-checkbox>
-        </n-space>
-      </n-checkbox-group>
-    </n-spin>
-    <template #action>
-      <n-space>
-        <n-button @click="close">取消</n-button>
-        <n-button type="primary" :loading="saving" @click="handleSave">保存</n-button>
-      </n-space>
-    </template>
-  </n-modal>
-</template>
-
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue';
-import { NModal, NButton, NCheckbox, NCheckboxGroup, NSpace, NSpin, useMessage } from 'naive-ui';
+import { onMounted, ref, watch } from 'vue';
+import { NButton, NCheckbox, NCheckboxGroup, NModal, NSpace, NSpin, useMessage } from 'naive-ui';
 import { request } from '@/service/request';
 
 const props = defineProps<{ visible: boolean; user: any }>();
 const emit = defineEmits(['update:visible', 'success']);
 
 const visible = ref(props.visible);
-watch(() => props.visible, v => (visible.value = v));
+watch(
+  () => props.visible,
+  v => (visible.value = v)
+);
 watch(visible, v => emit('update:visible', v));
 
 const user = ref(props.user);
-watch(() => props.user, v => (user.value = v));
+watch(
+  () => props.user,
+  v => (user.value = v)
+);
 
 const allRoles = ref<any[]>([]);
 const checkedRoles = ref<number[]>([]);
@@ -44,7 +30,7 @@ async function fetchRoles() {
   try {
     // 获取所有角色
     const res = await request({ url: '/roles', method: 'GET' });
-    console.log(res.data, "res++++++++")
+    console.log(res.data, 'res++++++++');
     allRoles.value = res.data.list || [];
     // 获取用户已分配角色
     if (user.value?.id) {
@@ -87,4 +73,24 @@ async function handleSave() {
     saving.value = false;
   }
 }
-</script> 
+</script>
+
+<template>
+  <NModal v-model:show="visible" title="分配角色" preset="dialog" :mask-closable="false">
+    <NSpin :show="loading">
+      <NCheckboxGroup v-model:value="checkedRoles">
+        <NSpace vertical>
+          <NCheckbox v-for="role in allRoles" :key="role.id" :value="role.id">
+            {{ role.name }}
+          </NCheckbox>
+        </NSpace>
+      </NCheckboxGroup>
+    </NSpin>
+    <template #action>
+      <NSpace>
+        <NButton @click="close">取消</NButton>
+        <NButton type="primary" :loading="saving" @click="handleSave">保存</NButton>
+      </NSpace>
+    </template>
+  </NModal>
+</template>

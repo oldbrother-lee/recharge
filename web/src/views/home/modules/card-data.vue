@@ -207,7 +207,10 @@ function getGradientColor(color: string) {
               <div class="text-30px text-white dark:text-dark">
                 {{ props.statisticsData.total.today }}/{{ props.statisticsData.total.yesterday }}
               </div>
-              <div class="text-16px mt-1" :class="{ 'text-green-400': todayVsYesterday.up, 'text-red-400': !todayVsYesterday.up }">
+              <div
+                class="mt-1 text-16px"
+                :class="{ 'text-green-400': todayVsYesterday.up, 'text-red-400': !todayVsYesterday.up }"
+              >
                 {{ todayVsYesterday.up ? '↑' : '↓' }} {{ todayVsYesterday.percent }}%
               </div>
             </div>
@@ -225,7 +228,10 @@ function getGradientColor(color: string) {
               <div class="text-30px text-white dark:text-dark">
                 {{ props.statisticsData.status.success }}/{{ props.statisticsData.yesterday_status.yesterday_success }}
               </div>
-              <div class="text-16px mt-1" :class="{ 'text-green-400': successTodayVsYesterday.up, 'text-red-400': !successTodayVsYesterday.up }">
+              <div
+                class="mt-1 text-16px"
+                :class="{ 'text-green-400': successTodayVsYesterday.up, 'text-red-400': !successTodayVsYesterday.up }"
+              >
                 {{ successTodayVsYesterday.up ? '↑' : '↓' }} {{ successTodayVsYesterday.percent }}%
               </div>
             </div>
@@ -243,7 +249,10 @@ function getGradientColor(color: string) {
               <div class="text-30px text-white dark:text-dark">
                 {{ props.statisticsData.status.failed }}/{{ props.statisticsData.yesterday_status.yesterday_failed }}
               </div>
-              <div class="text-16px mt-1" :class="{ 'text-green-400': failedTodayVsYesterday.up, 'text-red-400': !failedTodayVsYesterday.up }">
+              <div
+                class="mt-1 text-16px"
+                :class="{ 'text-green-400': failedTodayVsYesterday.up, 'text-red-400': !failedTodayVsYesterday.up }"
+              >
                 {{ failedTodayVsYesterday.up ? '↑' : '↓' }} {{ failedTodayVsYesterday.percent }}%
               </div>
             </div>

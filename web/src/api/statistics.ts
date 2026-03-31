@@ -5,4 +5,4 @@ export function getOperatorStatistics() {
     url: '/statistics/order/operator',
     method: 'GET'
   });
-} 
+}

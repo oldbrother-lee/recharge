@@ -1,87 +1,24 @@
-<template>
-  <NModal
-    v-model:show="visible"
-    preset="dialog"
-    title="商品分类管理"
-    :style="{ width: '800px'}"
-  >
-    <div class="flex flex-col gap-16px h-[600px]">
-      <!-- 工具栏 -->
-      <div class="flex justify-end">
-        <NButton type="primary" @click="showAddModal">
-          新增分类
-        </NButton>
-      </div>
-      <!-- 分类列表 -->
-      <div class="flex-1 overflow-hidden">
-        <NDataTable
-          :columns="columns"
-          :data="data"
-          :loading="loading"
-          :pagination="pagination"
-          :flex-height="true"
-          :scroll-x="962"
-          :max-height="500"
-          remote
-          :row-key="row => row.id"
-          @update:page="onPageChange"
-          @update:page-size="onPageSizeChange"
-          class="h-full"
-        />
-      </div>
-    </div>
-
-    <!-- 新增/编辑分类弹窗 -->
-    <NModal
-      v-model:show="formVisible"
-      preset="dialog"
-      :title="formModel.id ? '编辑分类' : '新增分类'"
-      :style="{ width: '600px' }"
-    >
-      <NForm
-        ref="formRef"
-        :model="formModel"
-        :rules="rules"
-        label-placement="left"
-        label-width="auto"
-        require-mark-placement="right-hanging"
-      >
-        <NFormItem label="分类名称" path="name">
-          <NInput v-model:value="formModel.name" placeholder="请输入分类名称" />
-        </NFormItem>
-        <NFormItem label="排序" path="sort">
-          <NInputNumber v-model:value="formModel.sort" placeholder="请输入排序" />
-        </NFormItem>
-        <NFormItem label="商品类型" path="type">
-          <NSelect
-            v-model:value="formModel.type"
-            :options="productTypes.map(type => ({
-              label: type.type_name,
-              value: type.id
-            }))"
-            placeholder="请选择商品类型"
-          />
-        </NFormItem>
-      </NForm>
-      <template #action>
-        <NSpace>
-          <NButton @click="hideFormModal">取消</NButton>
-          <NButton type="primary" @click="handleSubmit">确定</NButton>
-        </NSpace>
-      </template>
-    </NModal>
-  </NModal>
-</template>
-
 <script setup lang="tsx">
-import { ref, onMounted } from 'vue';
-import { useTable } from '@/hooks/useTable';
-import { useForm } from '@/hooks/useForm';
-import { useMessage } from 'naive-ui';
-import { request } from '@/service/request';
+import { onMounted, ref } from 'vue';
+import {
+  NButton,
+  NDataTable,
+  NForm,
+  NFormItem,
+  NInput,
+  NInputNumber,
+  NModal,
+  NPopconfirm,
+  NSelect,
+  NSpace,
+  NTag,
+  useMessage
+} from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
-import { NButton, NPopconfirm, NTag, NForm, NFormItem, NSpace, NInput, NSelect, NInputNumber, NModal, NDataTable } from 'naive-ui';
+import { request } from '@/service/request';
 import { useAppStore } from '@/store/modules/app';
+import { useForm } from '@/hooks/useForm';
+import { useTable } from '@/hooks/useTable';
 
 interface ProductType {
   id: number;
@@ -155,9 +92,13 @@ const columns: DataTableColumns<ProductCategory> = [
     render(row: ProductCategory) {
       const type = productTypes.value.find(t => t.id === row.type);
       return type ? (
-        <NTag type="info" size="small">{type.type_name}</NTag>
+        <NTag type="info" size="small">
+          {type.type_name}
+        </NTag>
       ) : (
-        <NTag type="warning" size="small">未知类型</NTag>
+        <NTag type="warning" size="small">
+          未知类型
+        </NTag>
       );
     }
   },
@@ -218,7 +159,7 @@ const fetchCategories = async () => {
   try {
     loading.value = true;
     const { page, pageSize } = pagination.value;
-    
+
     const res = await request({
       url: '/product/categories',
       method: 'GET',
@@ -227,7 +168,7 @@ const fetchCategories = async () => {
         page_size: pageSize
       }
     });
-    
+
     if (res.data) {
       data.value = res.data.list;
       pagination.value.itemCount = res.data.total;
@@ -333,9 +274,78 @@ defineExpose({
 
 onMounted(() => {
   fetchProductTypes();
- 
 });
 </script>
+
+<template>
+  <NModal v-model:show="visible" preset="dialog" title="商品分类管理" :style="{ width: '800px' }">
+    <div class="h-[600px] flex flex-col gap-16px">
+      <!-- 工具栏 -->
+      <div class="flex justify-end">
+        <NButton type="primary" @click="showAddModal">新增分类</NButton>
+      </div>
+      <!-- 分类列表 -->
+      <div class="flex-1 overflow-hidden">
+        <NDataTable
+          :columns="columns"
+          :data="data"
+          :loading="loading"
+          :pagination="pagination"
+          :flex-height="true"
+          :scroll-x="962"
+          :max-height="500"
+          remote
+          :row-key="row => row.id"
+          class="h-full"
+          @update:page="onPageChange"
+          @update:page-size="onPageSizeChange"
+        />
+      </div>
+    </div>
+
+    <!-- 新增/编辑分类弹窗 -->
+    <NModal
+      v-model:show="formVisible"
+      preset="dialog"
+      :title="formModel.id ? '编辑分类' : '新增分类'"
+      :style="{ width: '600px' }"
+    >
+      <NForm
+        ref="formRef"
+        :model="formModel"
+        :rules="rules"
+        label-placement="left"
+        label-width="auto"
+        require-mark-placement="right-hanging"
+      >
+        <NFormItem label="分类名称" path="name">
+          <NInput v-model:value="formModel.name" placeholder="请输入分类名称" />
+        </NFormItem>
+        <NFormItem label="排序" path="sort">
+          <NInputNumber v-model:value="formModel.sort" placeholder="请输入排序" />
+        </NFormItem>
+        <NFormItem label="商品类型" path="type">
+          <NSelect
+            v-model:value="formModel.type"
+            :options="
+              productTypes.map(type => ({
+                label: type.type_name,
+                value: type.id
+              }))
+            "
+            placeholder="请选择商品类型"
+          />
+        </NFormItem>
+      </NForm>
+      <template #action>
+        <NSpace>
+          <NButton @click="hideFormModal">取消</NButton>
+          <NButton type="primary" @click="handleSubmit">确定</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+  </NModal>
+</template>
 
 <style scoped>
 .flex-center {
@@ -346,4 +356,4 @@ onMounted(() => {
 .gap-8px {
   gap: 8px;
 }
-</style> 
+</style>

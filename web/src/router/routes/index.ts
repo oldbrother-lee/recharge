@@ -6,7 +6,7 @@ import { transformElegantRoutesToVueRoutes } from '../elegant/transform';
 /**
  * custom routes
  *
- * @link https://github.com/soybeanjs/elegant-router?tab=readme-ov-file#custom-route
+ * @link https://github.com/soybeanjs/elegant-router?tab
  */
 const customRoutes: CustomRoute[] = [
   {
@@ -27,10 +27,6 @@ export function createStaticRoutes() {
   const authRoutes: ElegantRoute[] = [];
 
   [...customRoutes, ...generatedRoutes].forEach(item => {
-    if (item.name === 'manage') {
-      item.meta = { ...item.meta, title: item.meta?.title ?? 'manage', hideInMenu: true };
-    }
-
     if (item.meta?.constant) {
       constantRoutes.push(item);
     } else {

@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { publicSystemApi } from '@/api/system';
 
 defineOptions({ name: 'SystemLogo' });
@@ -44,12 +44,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <img 
-    v-if="systemLogo" 
-    :src="systemLogo" 
-    alt="系统Logo"
-    class="system-logo-image"
-  />
+  <img v-if="systemLogo" :src="systemLogo" alt="系统Logo" class="system-logo-image" />
   <icon-local-logo v-else />
 </template>
 

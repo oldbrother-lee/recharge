@@ -1,13 +1,28 @@
 <script setup lang="ts">
-import { ref, h, watch, onMounted } from 'vue';
+import { h, onMounted, ref, watch } from 'vue';
 import {
-  NCard, NSpace, NButton, NInput, NSelect, NDatePicker, NForm, NFormItem, NDataTable, NPagination, NTag,
-  NModal, NCheckbox, NCheckboxGroup, NSpin, useMessage, NPopconfirm
+  NButton,
+  NCard,
+  NCheckbox,
+  NCheckboxGroup,
+  NDataTable,
+  NDatePicker,
+  NForm,
+  NFormItem,
+  NInput,
+  NModal,
+  NPagination,
+  NPopconfirm,
+  NSelect,
+  NSpace,
+  NSpin,
+  NTag,
+  useMessage
 } from 'naive-ui';
-import type { SelectOption, DataTableColumns } from 'naive-ui';
-import { getChannelList } from '@/api/platform';
+import type { DataTableColumns, SelectOption } from 'naive-ui';
 import { request } from '@/service/request';
-import { getTaskConfigList, deleteTaskConfig, updateTaskConfig } from '@/api/taskConfig'
+import { getChannelList } from '@/api/platform';
+import { deleteTaskConfig, getTaskConfigList, updateTaskConfig } from '@/api/taskConfig';
 
 // 搜索表单数据
 const searchForm = ref({
@@ -57,40 +72,40 @@ const columns: DataTableColumns<any> = [
     title: '创建时间',
     key: 'createTime',
     width: 180,
-    render: (row) => {
-      return formatDate(row.createTime)
+    render: row => {
+      return formatDate(row.createTime);
     }
   },
   {
     title: '充值时间',
     key: 'chargeTime',
     width: 180,
-    render: (row) => {
-      return row.chargeTime ? formatDate(row.chargeTime) : '-'
+    render: row => {
+      return row.chargeTime ? formatDate(row.chargeTime) : '-';
     }
   },
   {
     title: '上报时间',
     key: 'uploadTime',
     width: 180,
-    render: (row) => {
-      return row.uploadTime ? formatDate(row.uploadTime) : '-'
+    render: row => {
+      return row.uploadTime ? formatDate(row.uploadTime) : '-';
     }
   },
   {
     title: '状态',
     key: 'status',
     width: 100,
-    render: (row) => {
-      return getStatusText(row.status)
+    render: row => {
+      return getStatusText(row.status);
     }
   },
   {
     title: '结算状态',
     key: 'settleStatus',
     width: 100,
-    render: (row) => {
-      return getSettleStatusText(row.settleStatus)
+    render: row => {
+      return getSettleStatusText(row.settleStatus);
     }
   },
   {
@@ -103,7 +118,9 @@ const columns: DataTableColumns<any> = [
     key: 'prov',
     width: 100
   },
-  { title: '操作', key: 'actions',
+  {
+    title: '操作',
+    key: 'actions',
     render(row) {
       return h(NSpace, {}, [
         h(NButton, { size: 'small', type: 'primary', onClick: () => handleDetail(row) }, { default: () => '详情' })
@@ -114,7 +131,7 @@ const columns: DataTableColumns<any> = [
 
 // 获取订单列表
 const getOrderList = async () => {
-  loading.value = true
+  loading.value = true;
   try {
     const params = {
       page: pagination.value.page,
@@ -123,7 +140,7 @@ const getOrderList = async () => {
       status: searchForm.value.status,
       start_time: searchForm.value.dateRange?.[0],
       end_time: searchForm.value.dateRange?.[1]
-    }
+    };
     const { data: res } = await request<{
       list: any[];
       total: number;
@@ -131,22 +148,22 @@ const getOrderList = async () => {
       url: '/daichong-order',
       method: 'get',
       params
-    })
+    });
     if (res) {
-      data.value = res.list
-      pagination.value.itemCount = res.total
+      data.value = res.list;
+      pagination.value.itemCount = res.total;
     }
   } catch (error) {
-    console.error('获取订单列表失败:', error)
-    message.error('获取订单列表失败')
+    console.error('获取订单列表失败:', error);
+    message.error('获取订单列表失败');
   } finally {
-    loading.value = false
+    loading.value = false;
   }
-}
+};
 
 function handleSearch() {
-  pagination.value.page = 1 // 重置到第一页
-  getOrderList()
+  pagination.value.page = 1; // 重置到第一页
+  getOrderList();
 }
 
 function handleReset() {
@@ -154,14 +171,14 @@ function handleReset() {
     yr_order_id: '',
     status: undefined,
     dateRange: null
-  }
-  pagination.value.page = 1 // 重置到第一页
-  getOrderList()
+  };
+  pagination.value.page = 1; // 重置到第一页
+  getOrderList();
 }
 
 function handlePageChange(page: number) {
-  pagination.value.page = page
-  getOrderList()
+  pagination.value.page = page;
+  getOrderList();
 }
 
 function handleDetail(row: any) {
@@ -181,25 +198,27 @@ const message = useMessage();
 function openChannelModal() {
   showModal.value = true;
   loadingChannels.value = true;
-  getChannelList().then(res => {
-    const list = Array.isArray(res.data) ? res.data : [];
-    channels.value = list;
-    const faceInit: { [channelId: number]: string } = {};
-    const minSettleInit: { [channelId: number]: string } = {};
-    list.forEach((c: Channel) => {
-      faceInit[c.channelId] = '';
-      minSettleInit[c.channelId] = '';
+  getChannelList()
+    .then(res => {
+      const list = Array.isArray(res.data) ? res.data : [];
+      channels.value = list;
+      const faceInit: { [channelId: number]: string } = {};
+      const minSettleInit: { [channelId: number]: string } = {};
+      list.forEach((c: Channel) => {
+        faceInit[c.channelId] = '';
+        minSettleInit[c.channelId] = '';
+      });
+      const selectedInit: { [channelId: number]: number[] } = {};
+      list.forEach((c: Channel) => {
+        selectedInit[c.channelId] = [];
+      });
+      selected.value = selectedInit;
+      faceValues.value = faceInit;
+      minSettleAmounts.value = minSettleInit;
+    })
+    .finally(() => {
+      loadingChannels.value = false;
     });
-    const selectedInit: { [channelId: number]: number[] } = {};
-    list.forEach((c: Channel) => {
-      selectedInit[c.channelId] = [];
-    });
-    selected.value = selectedInit;
-    faceValues.value = faceInit;
-    minSettleAmounts.value = minSettleInit;
-  }).finally(() => {
-    loadingChannels.value = false;
-  });
 }
 
 function handleChannelChange(channelId: number, productIds: number[]) {
@@ -209,7 +228,7 @@ function handleChannelChange(channelId: number, productIds: number[]) {
 async function handleSave() {
   const payload = Object.entries(selected.value)
     .map(([cid, pids]) => {
-      const productIds = (pids as number[]);
+      const productIds = pids as number[];
       return {
         channel_id: Number(cid),
         channel_name: channels.value.find(c => c.channelId === Number(cid))?.channelName || '',
@@ -217,9 +236,13 @@ async function handleSave() {
         min_settle_amounts: minSettleAmounts.value[Number(cid)] || '',
         product_id: productIds.join(','),
         product_name: productIds
-          .map(pid => channels.value.find(c => c.channelId === Number(cid))?.productList.find(p => p.productId === pid)?.productName || '')
+          .map(
+            pid =>
+              channels.value.find(c => c.channelId === Number(cid))?.productList.find(p => p.productId === pid)
+                ?.productName || ''
+          )
           .join(',')
-      }
+      };
     })
     .filter(item => item.product_id);
   if (!payload.length) {
@@ -266,32 +289,47 @@ const configColumns: DataTableColumns<any> = [
   { title: '运营商ID', key: 'product_name', width: 80 },
   { title: '面值', key: 'face_values' },
   { title: '最低结算价', key: 'min_settle_amounts' },
-  { 
-    title: '状态', 
-    key: 'status', 
-    render(row) { 
-      return h(NTag, {
-        type: row.status === 1 ? 'success' : 'error',
-        bordered: false
-      }, { default: () => row.status === 1 ? '启用' : '禁用' })
-    } 
-  },
-  { title: '创建时间', key: 'created_at', render(row) { return formatDateTime(row.created_at) } },
   {
-    title: '操作', key: 'actions',
+    title: '状态',
+    key: 'status',
+    render(row) {
+      return h(
+        NTag,
+        {
+          type: row.status === 1 ? 'success' : 'error',
+          bordered: false
+        },
+        { default: () => (row.status === 1 ? '启用' : '禁用') }
+      );
+    }
+  },
+  {
+    title: '创建时间',
+    key: 'created_at',
+    render(row) {
+      return formatDateTime(row.created_at);
+    }
+  },
+  {
+    title: '操作',
+    key: 'actions',
     render(row) {
       return h(NSpace, {}, [
         h(NButton, { size: 'small', type: 'primary', onClick: () => handleEdit(row) }, { default: () => '编辑' }),
-        h(NPopconfirm, {
-          onPositiveClick: () => handleDelete(row)
-        }, {
-          default: () => '确认删除该配置吗？',
-          trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' })
-        })
+        h(
+          NPopconfirm,
+          {
+            onPositiveClick: () => handleDelete(row)
+          },
+          {
+            default: () => '确认删除该配置吗？',
+            trigger: () => h(NButton, { size: 'small', type: 'error' }, { default: () => '删除' })
+          }
+        )
       ]);
     }
   }
-]
+];
 
 async function fetchConfigList() {
   loading.value = true;
@@ -366,9 +404,9 @@ async function handleDelete(row: any) {
 
 // 格式化日期
 const formatDate = (timestamp: number): string => {
-  if (!timestamp) return '-'
-  return new Date(timestamp).toLocaleString()
-}
+  if (!timestamp) return '-';
+  return new Date(timestamp).toLocaleString();
+};
 
 // 获取状态文本
 const getStatusText = (status: number): string => {
@@ -378,9 +416,9 @@ const getStatusText = (status: number): string => {
     3: '充值成功',
     4: '充值失败',
     5: '已取消'
-  }
-  return statusMap[status] || '未知状态'
-}
+  };
+  return statusMap[status] || '未知状态';
+};
 
 // 获取结算状态文本
 const getSettleStatusText = (status: number): string => {
@@ -388,22 +426,22 @@ const getSettleStatusText = (status: number): string => {
     0: '未结算',
     1: '已结算',
     2: '结算中'
-  }
-  return statusMap[status] || '未知状态'
-}
+  };
+  return statusMap[status] || '未知状态';
+};
 
 // 监听分页变化
 watch(
   () => [pagination.value.page, pagination.value.pageSize],
   () => {
-    getOrderList()
+    getOrderList();
   }
-)
+);
 
 // 初始化加载
 onMounted(() => {
-  getOrderList()
-})
+  getOrderList();
+});
 
 async function batchSetStatus(status: number) {
   if (!selectedConfigKeys.value.length) return;
@@ -422,14 +460,9 @@ async function batchSetStatus(status: number) {
 <template>
   <div class="flex flex-col gap-4">
     <!-- 功能操作区 -->
-    <div class="flex justify-between items-center">
-      <NCard title="订单查询" size="small" style="flex:1;">
-        <NForm
-          :model="searchForm"
-          label-placement="left"
-          label-width="auto"
-          require-mark-placement="right-hanging"
-        >
+    <div class="flex items-center justify-between">
+      <NCard title="订单查询" size="small" style="flex: 1">
+        <NForm :model="searchForm" label-placement="left" label-width="auto" require-mark-placement="right-hanging">
           <NSpace vertical>
             <NSpace>
               <NFormItem label="订单号" path="yr_order_id">
@@ -444,12 +477,7 @@ async function batchSetStatus(status: number) {
                 />
               </NFormItem>
               <NFormItem label="下单时间" path="dateRange">
-                <NDatePicker
-                  v-model:value="searchForm.dateRange"
-                  type="daterange"
-                  clearable
-                  style="width: 300px"
-                />
+                <NDatePicker v-model:value="searchForm.dateRange" type="daterange" clearable style="width: 300px" />
               </NFormItem>
             </NSpace>
             <NSpace>
@@ -466,7 +494,7 @@ async function batchSetStatus(status: number) {
     <!-- 表格列表区 -->
     <NCard title="订单列表" size="small">
       <NDataTable :columns="columns" :data="data" :loading="loading" />
-      <div class="flex justify-end mt-4">
+      <div class="mt-4 flex justify-end">
         <NPagination
           v-model:page="pagination.page"
           :page-size="pagination.pageSize"
@@ -477,15 +505,10 @@ async function batchSetStatus(status: number) {
     </NCard>
 
     <!-- 渠道及运营商选择弹窗 -->
-    <NModal
-      v-model:show="showModal"
-      title="选择渠道及运营商"
-      preset="dialog"
-      style="width: 500px;"
-    >
+    <NModal v-model:show="showModal" title="选择渠道及运营商" preset="dialog" style="width: 500px">
       <NSpin :show="loadingChannels">
-        <div v-for="channel in channels" :key="channel.channelId" style="margin-bottom: 16px;">
-          <div style="font-weight: bold;">{{ channel.channelName }}</div>
+        <div v-for="channel in channels" :key="channel.channelId" style="margin-bottom: 16px">
+          <div style="font-weight: bold">{{ channel.channelName }}</div>
           <NCheckboxGroup
             v-model:value="selected[channel.channelId]"
             @update:value="val => handleChannelChange(channel.channelId, val as number[])"
@@ -497,107 +520,102 @@ async function batchSetStatus(status: number) {
               :label="product.productName"
             />
           </NCheckboxGroup>
-          <div class="flex items-center" style="margin-top: 8px;">
-            <span style="width: 90px;">拉取面值</span>
-            <div style="flex: 1;">
+          <div class="flex items-center" style="margin-top: 8px">
+            <span style="width: 90px">拉取面值</span>
+            <div style="flex: 1">
               <NInput
                 v-model:value="faceValues[channel.channelId]"
                 size="small"
                 placeholder="50,100,200,500,1000"
-                style="width: 200px;"
+                style="width: 200px"
               />
-              <div style="color: #888; font-size: 12px; margin-top: 2px;">
-                支持多个，逗号隔开，最多5个面值，不要重复
-              </div>
+              <div style="color: #888; font-size: 12px; margin-top: 2px">支持多个，逗号隔开，最多5个面值，不要重复</div>
             </div>
           </div>
-          <div class="flex items-center" style="margin-top: 8px;">
-            <span style="width: 90px;">最低结算价格</span>
+          <div class="flex items-center" style="margin-top: 8px">
+            <span style="width: 90px">最低结算价格</span>
             <NInput
               v-model:value="minSettleAmounts[channel.channelId]"
               size="small"
               placeholder="最低结算价格"
-              style="width: 200px;"
+              style="width: 200px"
             />
-            <div style="color: #888; font-size: 12px; margin-top: 2px;">
-              支持多个,逗号隔开,faceValues对应
-              </div>
-          </div>  
+            <div style="color: #888; font-size: 12px; margin-top: 2px">支持多个,逗号隔开,faceValues对应</div>
+          </div>
         </div>
-        <div style="text-align: right;">
+        <div style="text-align: right">
           <NButton type="primary" @click="handleSave">确定</NButton>
-          <NButton @click="showModal = false" style="margin-left: 8px;">取消</NButton>
+          <NButton style="margin-left: 8px" @click="showModal = false">取消</NButton>
         </div>
       </NSpin>
     </NModal>
 
-    <n-modal v-model:show="showConfigModal" title="订单配置" preset="dialog" style="width: 900px;">
+    <NModal v-model:show="showConfigModal" title="订单配置" preset="dialog" style="width: 900px">
       <template #header>
-        <div style="display: flex; align-items: center; width: 100%; box-sizing: border-box;">
-          <span style="flex: 1;">订单配置</span>
+        <div style="display: flex; align-items: center; width: 100%; box-sizing: border-box">
+          <span style="flex: 1">订单配置</span>
           <NButton type="primary" @click="openChannelModal">增加配置</NButton>
           <NButton
             type="success"
-            style="margin-left: 8px;"
+            style="margin-left: 8px"
             :disabled="selectedConfigKeys.length === 0"
             @click="batchSetStatus(1)"
-          >批量开启</NButton>
+          >
+            批量开启
+          </NButton>
           <NButton
             type="error"
-            style="margin-left: 8px;"
+            style="margin-left: 8px"
             :disabled="selectedConfigKeys.length === 0"
             @click="batchSetStatus(0)"
-          >批量关闭</NButton>
+          >
+            批量关闭
+          </NButton>
         </div>
       </template>
-      <n-data-table
+      <NDataTable
+        v-model:checked-row-keys="selectedConfigKeys"
         :columns="configColumns"
         :data="configList"
         :pagination="pagination"
         :loading="loading"
         :row-key="row => row.id"
-        v-model:checked-row-keys="selectedConfigKeys"
-        style="margin-top: 16px;"
+        style="margin-top: 16px"
       />
-    </n-modal>
+    </NModal>
 
     <!-- 添加编辑弹窗 -->
-    <n-modal v-model:show="showEditModal" title="编辑配置" preset="dialog" style="width: 500px;">
-      <n-form
-        :model="editForm"
-        label-placement="left"
-        label-width="auto"
-        require-mark-placement="right-hanging"
-      >
-        <n-form-item label="渠道ID" path="channel_id">
-          <n-input-number v-model:value="editForm.channel_id" :min="1" disabled />
-        </n-form-item>
-        <n-form-item label="运营商ID" path="product_id">
-          <n-input-number v-model:value="editForm.product_id" :min="0" />
-        </n-form-item>
-        <n-form-item label="面值" path="face_values">
-          <n-input v-model:value="editForm.face_values" placeholder="50,100,200" />
-        </n-form-item>
-        <n-form-item label="最低结算价" path="min_settle_amounts">
-          <n-input v-model:value="editForm.min_settle_amounts" placeholder="49.5,99,198" />
-        </n-form-item>
-        <n-form-item label="状态" path="status">
-          <n-select
+    <NModal v-model:show="showEditModal" title="编辑配置" preset="dialog" style="width: 500px">
+      <NForm :model="editForm" label-placement="left" label-width="auto" require-mark-placement="right-hanging">
+        <NFormItem label="渠道ID" path="channel_id">
+          <NInputNumber v-model:value="editForm.channel_id" :min="1" disabled />
+        </NFormItem>
+        <NFormItem label="运营商ID" path="product_id">
+          <NInputNumber v-model:value="editForm.product_id" :min="0" />
+        </NFormItem>
+        <NFormItem label="面值" path="face_values">
+          <NInput v-model:value="editForm.face_values" placeholder="50,100,200" />
+        </NFormItem>
+        <NFormItem label="最低结算价" path="min_settle_amounts">
+          <NInput v-model:value="editForm.min_settle_amounts" placeholder="49.5,99,198" />
+        </NFormItem>
+        <NFormItem label="状态" path="status">
+          <NSelect
             v-model:value="editForm.status"
             :options="[
               { label: '启用', value: 1 },
               { label: '禁用', value: 0 }
             ]"
           />
-        </n-form-item>
-      </n-form>
+        </NFormItem>
+      </NForm>
       <template #action>
-        <n-space>
-          <n-button @click="showEditModal = false">取消</n-button>
-          <n-button type="primary" @click="handleSaveEdit">确定</n-button>
-        </n-space>
+        <NSpace>
+          <NButton @click="showEditModal = false">取消</NButton>
+          <NButton type="primary" @click="handleSaveEdit">确定</NButton>
+        </NSpace>
       </template>
-    </n-modal>
+    </NModal>
   </div>
 </template>
 
@@ -623,4 +641,4 @@ async function batchSetStatus(status: number) {
 .items-center {
   align-items: center;
 }
-</style> 
+</style>

@@ -23,11 +23,6 @@ declare module "@elegant-router/types" {
     "home": "/home";
     "iframe-page": "/iframe-page/:url";
     "login": "/login/:module(pwd-login|code-login|register|reset-pwd|bind-wechat)?";
-    "manage": "/manage";
-    "manage_menu": "/manage/menu";
-    "manage_role": "/manage/role";
-    "manage_user": "/manage/user";
-    "manage_user-detail": "/manage/user-detail/:id";
     "order": "/order";
     "order_all": "/order/all";
     "order_exception": "/order/exception";
@@ -43,6 +38,7 @@ declare module "@elegant-router/types" {
     "product_set-menu": "/product/set-menu";
     "product_type": "/product/type";
     "system": "/system";
+    "system_balance-log": "/system/balance-log";
     "system_phone-query": "/system/phone-query";
     "system_settings": "/system/settings";
     "system_user": "/system/user";
@@ -85,7 +81,6 @@ declare module "@elegant-router/types" {
     | "home"
     | "iframe-page"
     | "login"
-    | "manage"
     | "order"
     | "platform"
     | "platformapi"
@@ -114,10 +109,6 @@ declare module "@elegant-router/types" {
     | "iframe-page"
     | "login"
     | "home"
-    | "manage_menu"
-    | "manage_role"
-    | "manage_user-detail"
-    | "manage_user"
     | "order_all"
     | "order_exception"
     | "order_kekebang"
@@ -129,6 +120,7 @@ declare module "@elegant-router/types" {
     | "product_phone-location"
     | "product_set-menu"
     | "product_type"
+    | "system_balance-log"
     | "system_phone-query"
     | "system_settings"
     | "system_user-grade"

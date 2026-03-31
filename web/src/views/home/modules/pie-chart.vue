@@ -32,7 +32,7 @@ const { domRef, updateOptions } = useEcharts(() => ({
 
 watch(
   () => props.data,
-  (val) => {
+  val => {
     updateOptions(opts => {
       opts.series[0].data = val.map(item => ({
         name: item.operator,

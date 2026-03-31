@@ -1,129 +1,12 @@
-<template>
-  <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
-    <!-- 搜索表单 -->
-    <NCard>
-      <NForm
-        ref="searchFormRef"
-        :model="searchForm"
-        inline
-        label-placement="left"
-        label-width="auto"
-        class="flex flex-wrap gap-16px"
-      >
-        <NFormItem label="手机号" path="phone">
-          <NInput v-model:value="searchForm.phone" placeholder="请输入手机号" style="min-width: 200px" />
-        </NFormItem>
-        <NFormItem label="省份" path="province">
-          <NInput v-model:value="searchForm.province" placeholder="请输入省份" style="min-width: 200px" />
-        </NFormItem>
-        <NFormItem label="城市" path="city">
-          <NInput v-model:value="searchForm.city" placeholder="请输入城市" style="min-width: 200px" />
-        </NFormItem>
-        <NFormItem label="运营商" path="isp">
-          <NSelect
-            v-model:value="searchForm.isp"
-            :options="[
-              { label: '移动', value: '移动' },
-              { label: '联通', value: '联通' },
-              { label: '电信', value: '电信' }
-            ]"
-            placeholder="请选择运营商"
-            clearable
-            style="min-width: 100px"
-          />
-        </NFormItem>
-        <NFormItem>
-          <NSpace>
-            <NButton type="primary" @click="handleSearch(fetchPhoneLocations)">
-              搜索
-            </NButton>
-            <NButton @click="handleReset">重置</NButton>
-          </NSpace>
-        </NFormItem>
-      </NForm>
-    </NCard>
-
-    <!-- 数据表格 -->
-    <NCard :title="'手机归属地管理'" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
-      <template #header-extra>
-        <NSpace>
-          <NButton type="primary" @click="handleReset(); showModal()">
-            新增归属地
-          </NButton>
-        </NSpace>
-      </template>
-      <NDataTable
-        :columns="columns"
-        :data="data"
-        :loading="loading"
-        :pagination="pagination"
-        :flex-height="!appStore.isMobile"
-        :scroll-x="962"
-        remote
-        :row-key="row => row.id"
-        @update:page="handlePageChange"
-        @update:page-size="handlePageSizeChange"
-        class="sm:h-full"
-      />
-    </NCard>
-
-    <!-- 新增/编辑弹窗 -->
-    <NModal
-      v-model:show="visible"
-      preset="dialog"
-      :title="formModel.id ? '编辑归属地' : '新增归属地'"
-      :style="{ width: '600px' }"
-    >
-      <NForm
-        ref="formRef"
-        :model="formModel"
-        :rules="rules"
-        label-placement="left"
-        label-width="auto"
-        require-mark-placement="right-hanging"
-      >
-        <NFormItem label="手机号" path="phone_number">
-          <NInput v-model:value="formModel.phone_number" placeholder="请输入手机号" style="min-width: 200px" />
-        </NFormItem>
-        <NFormItem label="省份" path="province">
-          <NInput v-model:value="formModel.province" placeholder="请输入省份" style="min-width: 200px" />
-        </NFormItem>
-        <NFormItem label="城市" path="city">
-          <NInput v-model:value="formModel.city" placeholder="请输入城市" style="min-width: 200px" />
-        </NFormItem>
-        <NFormItem label="运营商" path="isp">
-          <NSelect
-            v-model:value="formModel.isp"
-            :options="[
-              { label: '移动', value: '1' },
-              { label: '联通', value: '3' },
-              { label: '电信', value: '2' }
-            ]"
-            placeholder="请选择运营商"
-            style="min-width: 200px"
-          />
-        </NFormItem>
-      </NForm>
-      <template #action>
-        <NSpace>
-          <NButton @click="hideModal">取消</NButton>
-          <NButton type="primary" @click="handleFormSubmit">确定</NButton>
-        </NSpace>
-      </template>
-    </NModal>
-  </div>
-</template>
-
 <script setup lang="tsx">
-import { ref, onMounted } from 'vue';
-import { useTable } from '@/hooks/useTable';
-import { useModal } from '@/hooks/useModal';
-import { useForm } from '@/hooks/useForm';
-import { useMessage } from 'naive-ui';
-import { request } from '@/service/request';
+import { onMounted, ref } from 'vue';
+import { NButton, NCard, NForm, NFormItem, NInput, NPopconfirm, NSelect, NSpace, useMessage } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
-import { NButton, NPopconfirm, NCard, NForm, NFormItem, NSpace, NInput, NSelect } from 'naive-ui';
+import { request } from '@/service/request';
 import { useAppStore } from '@/store/modules/app';
+import { useForm } from '@/hooks/useForm';
+import { useModal } from '@/hooks/useModal';
+import { useTable } from '@/hooks/useTable';
 
 const appStore = useAppStore();
 const message = useMessage();
@@ -211,7 +94,7 @@ const fetchPhoneLocations = async () => {
   try {
     loading.value = true;
     const { page, pageSize } = pagination.value;
-    
+
     // 过滤掉空值参数
     const searchParams = Object.fromEntries(
       Object.entries(searchForm.value).filter(([_, value]) => {
@@ -244,13 +127,13 @@ const fetchPhoneLocations = async () => {
 };
 
 // 编辑归属地
-const handleEdit = (row) => {
+const handleEdit = row => {
   formModel.value = { ...row };
   showModal();
 };
 
 // 删除归属地
-const handleDelete = async (row) => {
+const handleDelete = async row => {
   try {
     await request({
       url: `/phone-locations/${row.id}`,
@@ -305,6 +188,126 @@ onMounted(() => {
 });
 </script>
 
+<template>
+  <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
+    <!-- 搜索表单 -->
+    <NCard>
+      <NForm
+        ref="searchFormRef"
+        :model="searchForm"
+        inline
+        label-placement="left"
+        label-width="auto"
+        class="flex flex-wrap gap-16px"
+      >
+        <NFormItem label="手机号" path="phone">
+          <NInput v-model:value="searchForm.phone" placeholder="请输入手机号" style="min-width: 200px" />
+        </NFormItem>
+        <NFormItem label="省份" path="province">
+          <NInput v-model:value="searchForm.province" placeholder="请输入省份" style="min-width: 200px" />
+        </NFormItem>
+        <NFormItem label="城市" path="city">
+          <NInput v-model:value="searchForm.city" placeholder="请输入城市" style="min-width: 200px" />
+        </NFormItem>
+        <NFormItem label="运营商" path="isp">
+          <NSelect
+            v-model:value="searchForm.isp"
+            :options="[
+              { label: '移动', value: '移动' },
+              { label: '联通', value: '联通' },
+              { label: '电信', value: '电信' }
+            ]"
+            placeholder="请选择运营商"
+            clearable
+            style="min-width: 100px"
+          />
+        </NFormItem>
+        <NFormItem>
+          <NSpace>
+            <NButton type="primary" @click="handleSearch(fetchPhoneLocations)">搜索</NButton>
+            <NButton @click="handleReset">重置</NButton>
+          </NSpace>
+        </NFormItem>
+      </NForm>
+    </NCard>
+
+    <!-- 数据表格 -->
+    <NCard title="手机归属地管理" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
+      <template #header-extra>
+        <NSpace>
+          <NButton
+            type="primary"
+            @click="
+              handleReset();
+              showModal();
+            "
+          >
+            新增归属地
+          </NButton>
+        </NSpace>
+      </template>
+      <NDataTable
+        :columns="columns"
+        :data="data"
+        :loading="loading"
+        :pagination="pagination"
+        :flex-height="!appStore.isMobile"
+        :scroll-x="962"
+        remote
+        :row-key="row => row.id"
+        class="sm:h-full"
+        @update:page="handlePageChange"
+        @update:page-size="handlePageSizeChange"
+      />
+    </NCard>
+
+    <!-- 新增/编辑弹窗 -->
+    <NModal
+      v-model:show="visible"
+      preset="dialog"
+      :title="formModel.id ? '编辑归属地' : '新增归属地'"
+      :style="{ width: '600px' }"
+    >
+      <NForm
+        ref="formRef"
+        :model="formModel"
+        :rules="rules"
+        label-placement="left"
+        label-width="auto"
+        require-mark-placement="right-hanging"
+      >
+        <NFormItem label="手机号" path="phone_number">
+          <NInput v-model:value="formModel.phone_number" placeholder="请输入手机号" style="min-width: 200px" />
+        </NFormItem>
+        <NFormItem label="省份" path="province">
+          <NInput v-model:value="formModel.province" placeholder="请输入省份" style="min-width: 200px" />
+        </NFormItem>
+        <NFormItem label="城市" path="city">
+          <NInput v-model:value="formModel.city" placeholder="请输入城市" style="min-width: 200px" />
+        </NFormItem>
+        <NFormItem label="运营商" path="isp">
+          <NSelect
+            v-model:value="formModel.isp"
+            :options="[
+              { label: '移动', value: '1' },
+              { label: '联通', value: '3' },
+              { label: '电信', value: '2' }
+            ]"
+            placeholder="请选择运营商"
+            style="min-width: 200px"
+          />
+        </NFormItem>
+      </NForm>
+      <template #action>
+        <NSpace>
+          <NButton @click="hideModal">取消</NButton>
+          <NButton type="primary" @click="handleFormSubmit">确定</NButton>
+        </NSpace>
+      </template>
+    </NModal>
+  </div>
+</template>
+
 <style scoped>
 .min-h-500px {
   min-height: 500px;
@@ -350,4 +353,4 @@ onMounted(() => {
 .gap-8px {
   gap: 8px;
 }
-</style> 
+</style>

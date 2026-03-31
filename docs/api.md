@@ -1,163 +1,282 @@
-# 最新 API 对接文档（统一版）
+# 充值下单对接 API 文档（外部接入专用）
 
-本文件汇总项目当前对外与内部相关的 HTTP API，涵盖外部订单接口、回调接口、公开与管理员手机查询接口，以及鉴权规则与统一响应结构。本文面向对接方与项目开发维护者，路径与参数均以当前代码实现为准。
+本文档仅面向外部系统对接我方充值下单能力。
 
-- 基础前缀 Base URL: /api/v1
-- 所有路径均在上述前缀之下，例如 POST /api/v1/external/order
+- Base URL：`/api/v1`
+- 生产环境域名由我方单独提供
 
-## 一、鉴权与安全
+## 1. 接入鉴权
 
-- 外部 API 统一采用 API Key + 签名校验的方式：
-  - 请求头：
-    - X-API-Key: 分配的 App Key
-    - X-Signature: 签名值（按签名算法生成）
-  - 业务参数需包含：app_id, timestamp, nonce, sign（sign 与 X-Signature 等价，服务端同时支持以便兼容）
-  - 服务端校验内容：
-    - API Key 状态与 IP 白名单校验
-    - 频率限制（按 app_id 分钟级限流）
-    - 签名验证（移除 sign 后对参数进行字典序拼接 + app_secret + MD5 大写生成）
+外部接口统一使用 `API Key + 签名`。
 
-- 管理后台接口使用系统内部认证中间件（JWT），需在请求头携带有效的 Authorization: Bearer <token>
+### 1.1 请求头
 
-- 超时与重试：服务端默认请求超时时间为 30 秒（可在配置文件中调整）。
+- `X-API-Key`：我方分配的 `app_key`
+- `X-Signature`：签名值（推荐与请求参数里的 `sign` 一致）
+- `Content-Type: application/json`
 
-## 二、统一响应结构
+### 1.2 业务必传签名字段
 
-无论成功或失败，均返回统一结构：
+以下字段需参与业务请求（且参与签名）：
 
-- 成功：
-  - code: 200
-  - message: "success" 或业务提示
-  - data: 对应接口的数据对象
-  - timestamp: 服务端时间戳（秒）
+- `app_id`
+- `timestamp`（秒级时间戳）
+- `nonce`（随机串，建议 16~32 位）
+- `sign`
 
-- 失败：
-  - code: HTTP 状态码（如 400/401/404/429/500）
-  - message: 错误说明
-  - timestamp: 服务端时间戳（秒）
+其他字段若传入则参与签名，不传或为空则不参与（见第 2 节）。
 
-示例（创建订单失败）：
+### 1.3 服务端校验规则
+
+- API Key 是否有效、是否启用
+- 调用 IP 是否在白名单
+- 频率限制（按 app_id 分钟级）
+- 签名是否正确
+- 时间戳是否过期（默认允许 ±300 秒）
+
+## 2. 签名算法（含示例）
+
+签名规则按当前服务实现：
+
+1. 取所有业务参数，移除 `sign` / `signature`
+2. 过滤空值参数（`nil` 或空字符串）
+3. 按参数名 ASCII 升序排序
+4. 拼接为 `k=v&k2=v2...`（**值为原始字符串，不做 URL 编码**）
+5. 末尾追加 `&key=APP_SECRET`
+6. 对最终字符串做 MD5，并转大写，得到签名
+
+**注意**：拼签名字符串时，参数值用**原始值**，不要对 `notify_url` 等做 URL 编码（不要用 `%3A`、`%2F` 等）。与请求体 JSON 里该字段的取值保持一致即可。
+
+### 2.1 下单签名示例
+
+**重要：参与签名的参数 = 请求体中「实际传入且非空」的所有字段**（排除 `sign`/`signature`）。  
+**传了哪些字段，签名字段就必须包含哪些**；未传或空值不参与。例如传了 `notify_url`，则签名字符串里必须包含 `notify_url=xxx`，否则服务端验签会失败。
+
+**示例一：仅必填字段（未传 notify_url）**
+
+请求体（不含 sign）：
+
+```json
 {
-  "code": 400,
-  "message": "请求参数错误",
-  "timestamp": 1700000000
+  "app_id": "demo_app_001",
+  "mobile": "13800138000",
+  "product_id": 101,
+  "out_trade_num": "EXT202603090001",
+  "amount": 100,
+  "timestamp": 1760000000,
+  "nonce": "abc123xyz"
 }
+```
 
-## 三、订单状态码（主要值）
+拼接串（`APP_SECRET = demo_secret_123456`）：
 
-- 0/未知: 未知状态（仅作为兜底显示）
-- 1/待支付: 待支付
-- 2/待充值: 待充值
-- 3/充值中: 充值中
-- 4/成功: 充值成功
-- 5/失败: 充值失败
-- 6/已退款: 已退款
-- 7/已取消: 已取消
+```text
+amount=100&app_id=demo_app_001&mobile=13800138000&nonce=abc123xyz&out_trade_num=EXT202603090001&product_id=101&timestamp=1760000000&key=demo_secret_123456
+```
 
-说明：项目还包含部分扩展状态（如部分充值、已拆单、处理中等），查询接口会返回具体数值与对应中文含义。
+MD5 大写：`5DE5885CE664A2FA497F0263FD318036`
 
-## 四、外部订单 API
+**示例二：含可选字段 notify_url（传了就必须参与签名）**
 
-说明：以下接口均在 /api/v1 前缀下，并需通过外部认证中间件（X-API-Key + X-Signature）。
+请求体（不含 sign）：
 
-1) 创建订单
-- 方法: POST
-- 路径: /external/order
-- 请求体（JSON）字段：
-  - app_id: string, required
-  - mobile: string, required
-  - product_id: int64, required
-  - out_trade_num: string, required（外部交易号，唯一）
-  - amount: number, required
-  - biz_type: string, optional
-  - notify_url: string, optional（订单状态变更回调地址）
-  - param1/param2/param3: string, optional（扩展）
-  - customer_id: int64, optional
-  - isp: int, optional（运营商）
-  - remark: string, optional
-  - timestamp: int64, required（秒）
-  - nonce: string, required
-  - sign: string, required
-- 响应（成功）：
+```json
+{
+  "app_id": "demo_app_001",
+  "mobile": "13800138000",
+  "product_id": 101,
+  "out_trade_num": "EXT202603090001",
+  "amount": 100,
+  "notify_url": "https://partner.example.com/callback/recharge",
+  "timestamp": 1760000000,
+  "nonce": "abc123xyz"
+}
+```
+
+拼接串（注意多了 `notify_url`，值与 body 中一致、不 URL 编码）：
+
+```text
+amount=100&app_id=demo_app_001&mobile=13800138000&nonce=abc123xyz&notify_url=https://partner.example.com/callback/recharge&out_trade_num=EXT202603090001&product_id=101&timestamp=1760000000&key=demo_secret_123456
+```
+
+然后对该串做 MD5 并转大写得到 `sign`。**只要 body 里传了 `notify_url`，算签名时必须把该键值对一起参与排序和拼接，否则验签不通过。**
+
+## 3. 下单接口
+
+### 3.1 创建订单
+
+- 方法：`POST`
+- 路径：`/external/order`
+- 鉴权：需要 `X-API-Key` + `X-Signature`
+
+**请求体字段说明：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| app_id | string | 是 | 应用ID，需与 API Key 对应 |
+| mobile | string | 是 | 充值手机号 |
+| product_id | int64 | 是 | 商品ID |
+| out_trade_num | string | 是 | 外部交易号，全局唯一 |
+| amount | number | 是 | 金额，参与签名；**实际扣款以商品价格为准** |
+| timestamp | int64 | 是 | 秒级时间戳 |
+| nonce | string | 是 | 随机串 |
+| sign | string | 是 | 签名值 |
+| notify_url | string | 否 | 状态回调地址 |
+| isp | int | 否 | 运营商 |
+| remark | string | 否 | 备注 |
+
+请求体示例（含必填与常用可选字段）：
+
+```json
+{
+  "app_id": "demo_app_001",
+  "mobile": "13800138000",
+  "product_id": 101,
+  "out_trade_num": "EXT202603090001",
+  "amount": 100,
+  "timestamp": 1760000000,
+  "nonce": "abc123xyz",
+  "sign": "5DE5885CE664A2FA497F0263FD318036",
+  "notify_url": "https://partner.example.com/callback/recharge",
+  "isp": 1,
+  "remark": "test"
+}
+```
+
+
+成功响应示例：
+
+```json
 {
   "code": 200,
-  "message": "success",
+  "message": "Success",
   "data": {
-    "order_number": "INTERNAL_ORDER_001",
-    "out_trade_num": "EXT_001",
+    "order_number": "R202603090001",
+    "out_trade_num": "EXT202603090001",
     "status": 1,
     "status_desc": "待支付",
-    "amount": 100.0,
-    "create_time": 1700000000
+    "amount": 100,
+    "create_time": 1760000001
   },
-  "timestamp": 1700000000
+  "timestamp": 1760000001
 }
+```
 
-2) 查询订单
-- 方法: GET
-- 路径: /external/order/query
-- 查询参数：
-  - out_trade_num: string，与 order_number 至少传一个
-  - order_number: string，与 out_trade_num 至少传一个
-- 响应（成功）：与创建返回结构一致
-- 失败：
-  - 404: Order not found
-  - 400: 缺少查询参数
+备注：
 
-3) 申请退款
-- 方法: POST
-- 路径: /external/order/refund
-- 说明：需要传入与业务约定的退款参数（具体字段以退款控制器实现为准），同样走外部认证与签名校验。
+- `out_trade_num` 必须全局唯一。
+- 若重复下单，系统会返回已存在订单信息（`code=200`，`message=Order already exists`）。
+- **amount** 必传且参与签名；订单实际扣款金额以**商品（product_id）价格**为准。
+### 3.2 查询订单
 
-## 五、外部回调 API
+- 方法：`GET`
+- 路径：`/external/order/query`
+- 鉴权：需要 `X-API-Key + X-Signature`
+- 查询参数：`app_id`、`timestamp`、`nonce`、`sign`，以及以下二选一：
+  - `out_trade_num`
+  - `order_number`
 
-- 方法: POST
-- 路径: /external/callback/order
-- 鉴权：不走外部认证中间件，但会进行签名验证（要求对方按约定算法生成 sign）。
-- 行为：
-  - 解析回调请求体，记录日志
-  - 根据外部交易号或内部订单号查询并更新订单状态
-  - 对失败场景提供重试机制（队列）
-  - 根据 notify_url 进行平台级通知（如配置）
-- 响应：成功返回统一成功结构；失败返回统一错误结构
+请求示例：
 
-## 六、手机查询 API
+```text
+/api/v1/external/order/query?app_id=demo_app_001&out_trade_num=EXT202603090001&timestamp=1760000300&nonce=qwe789&sign=64F9FCCDFA62733C1FD293349C414B12
+```
 
-说明：分为公开接口与管理员接口，两者路径不同，管理员接口需携带系统 JWT 授权。
+成功响应与创建订单一致。
 
-1) 管理员接口（需认证）
-- 基础路径: /phone
-- 方法/路径：
-  - POST /phone/balance       （查询余额/套餐等）
-  - POST /phone/payment-records（查询缴费记录）
-- 说明：仅管理员或具备相应权限的用户可访问。
+### 3.3 申请退款
 
-2) 公开接口（无需认证）
-- 基础路径: /public/phone
-- 方法/路径：
-  - POST /public/phone/balance
-  - POST /public/phone/payment-records
-- 说明：适用于向外提供的公共查询能力（如需对外开放）。
+- 方法：`POST`
+- 路径：`/external/order/refund`
+- 鉴权：需要 `X-API-Key` + `X-Signature`
+- 权限：仅允许对**本 API Key 所属用户创建的订单**发起退款（订单归属校验），否则返回 `403 无权限操作该订单`。
+- 可退款状态：仅**待充值**可申请退款。申请后订单变为**待退款审核**，不直接退款；需**管理员审核通过**后才执行退款，审核拒绝则订单恢复为待充值。**失败**订单由系统自动退款，不可重复申请；**成功**不允许退款。
 
-## 七、错误码与示例
+请求体：
 
-- 400 Bad Request：请求参数错误、签名错误等
-- 401 Unauthorized：API Key 无效或缺失
-- 404 Not Found：资源不存在（如订单未找到）
-- 429 Too Many Requests：触发限流
-- 500 Internal Server Error：服务端异常
+```json
+{
+  "app_id": "demo_app_001",
+  "out_trade_num": "EXT202603090001",
+  "reason": "user request",
+  "timestamp": 1760000600,
+  "nonce": "refund001",
+  "sign": "签名值"
+}
+```
 
-## 八、签名算法摘要（对接方须知）
+成功响应示例（申请成功、待审核）：
 
-- 参与签名的所有业务参数需去除空值，并按字典序（key 升序）拼接为 key=value 的形式，以 & 连接。
-- 在上述拼接字符串末尾追加 &app_secret=YOUR_SECRET。
-- 对最终字符串进行 MD5，取大写作为签名值。
-- 将签名同时提供于：
-  - 请求体字段：sign
-  - 请求头字段：X-Signature
+```json
+{
+  "code": 200,
+  "message": "退款申请已提交，待管理员审核",
+  "data": {
+    "order_number": "R202603090001",
+    "out_trade_num": "EXT202603090001",
+    "amount": 100,
+    "status": "pending_review"
+  }
+}
+```
 
-## 九、参考
+管理员审核通过后，订单状态变为已退款（`status=6`）；审核拒绝则订单恢复为待充值。对接方可通过**查询订单**接口轮询订单状态。
 
-- 外部订单控制器：负责创建与查询的响应结构与错误处理，含状态中文描述与统一错误返回。
-- 外部认证中间件：X-API-Key 与签名校验、IP 白名单、限流与签名解析逻辑。
-- 路由：统一前缀 /api/v1，外部订单路由组 /external/order，回调路由组 /external/callback；手机查询路由组 /phone 与 /public/phone。
+## 4. 我方主动回调（notify_url）
+
+当订单状态变为终态时，我方会向你在下单时传入的 `notify_url` 发起 `POST` 回调。
+
+- 回调时机：`成功` 或 `失败`
+- 请求体格式：`application/json`
+
+请求体字段：
+
+- `app_id`
+- `out_trade_num`
+- `status`（成功=4，失败=5）
+- `timestamp`
+- `nonce`
+- `sign`
+
+回调示例：
+
+```json
+{
+  "app_id": "demo_app_001",
+  "out_trade_num": "EXT202603090001",
+  "status": 4,
+  "timestamp": 1760001200,
+  "nonce": "cb_1760001200",
+  "sign": "回调签名"
+}
+```
+
+你方建议返回 HTTP 200，响应体可自定义（建议 JSON）。
+
+## 5. 状态码说明
+
+- `1`：待支付
+- `2`：待充值
+- `3`：充值中
+- `4`：成功
+- `5`：失败
+- `6`：已退款
+- `7`：已取消
+- `11`：待退款审核（用户已申请退款，等管理员审核）
+
+## 6. 常见错误码
+
+- `400`：参数错误（如缺少必要字段）
+- `401`：鉴权失败（API Key 或签名错误）
+- `402`：余额不足
+- `403`：IP 不在白名单
+- `404`：订单不存在
+- `429`：请求过于频繁
+- `500`：服务内部错误
+
+## 7. 对接建议
+
+1. 先完成签名工具封装，再联调下单/查询
+2. `out_trade_num` 请使用你方唯一业务单号
+3. 所有请求建议设置超时与重试机制（幂等场景重试）
+4. 回调接口请做幂等处理（按 `out_trade_num` 去重）

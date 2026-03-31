@@ -1,38 +1,38 @@
-import { defineStore } from 'pinia'
-import { ref } from 'vue'
-import { request } from '@/service/request'
+import { ref } from 'vue';
+import { defineStore } from 'pinia';
+import { request } from '@/service/request';
 
 export interface Product {
-  id: number
-  name: string
-  description: string
-  type: number
-  category_id: number
-  isp: string
-  status: number
-  price: number
-  max_price: number
-  sort: number
-  api_enabled: boolean
-  is_delay: number
-  is_decode: boolean
-  decode_api: string
-  decode_api_package: string
-  show_style: number
-  allow_province: string
-  allow_city: string
-  forbid_province: string
-  forbid_city: string
-  created_at: string
-  updated_at: string
+  id: number;
+  name: string;
+  description: string;
+  type: number;
+  category_id: number;
+  isp: string;
+  status: number;
+  price: number;
+  max_price: number;
+  sort: number;
+  api_enabled: boolean;
+  is_delay: number;
+  is_decode: boolean;
+  decode_api: string;
+  decode_api_package: string;
+  show_style: number;
+  allow_province: string;
+  allow_city: string;
+  forbid_province: string;
+  forbid_city: string;
+  created_at: string;
+  updated_at: string;
   category?: {
-    id: number
-    name: string
-  }
+    id: number;
+    name: string;
+  };
 }
 
 export const useProductStore = defineStore('product', () => {
-  const products = ref<Product[]>([])
+  const products = ref<Product[]>([]);
 
   const fetchProducts = async () => {
     try {
@@ -41,20 +41,20 @@ export const useProductStore = defineStore('product', () => {
         method: 'GET',
         params: {
           page: 1,
-          page_size: 100  // 获取足够多的商品用于选择器
+          page_size: 100 // 获取足够多的商品用于选择器
         }
-      })
+      });
       if (res.data) {
-        products.value = res.data.records
+        products.value = res.data.records;
       }
     } catch (error) {
-      console.error('Failed to fetch products:', error)
-      throw error
+      console.error('Failed to fetch products:', error);
+      throw error;
     }
-  }
+  };
 
   return {
     products,
     fetchProducts
-  }
-})
+  };
+});

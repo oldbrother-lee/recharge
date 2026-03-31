@@ -1,24 +1,24 @@
-import { request } from '@/service/request'
+import { request } from '@/service/request';
 
 export interface Interface {
-  id: number
-  name: string
-  status: number
-  type: number
-  created_at: string
-  updated_at: string
+  id: number;
+  name: string;
+  status: number;
+  type: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface PaginationParams {
-  page: number
-  pageSize: number
+  page: number;
+  pageSize: number;
 }
 
 export interface ProductInterfaceResponse {
-  records: Interface[]
-  total: number
-  current: number
-  size: number
+  records: Interface[];
+  total: number;
+  current: number;
+  size: number;
 }
 
 export const getProductInterfaces = async (productId: number, params?: PaginationParams): Promise<Interface[]> => {
@@ -30,14 +30,14 @@ export const getProductInterfaces = async (productId: number, params?: Paginatio
         page: params?.page || 1,
         page_size: params?.pageSize || 10
       }
-    })
-    console.log(response.data,"response.data");
-    return response.data.list || []
+    });
+    console.log(response.data, 'response.data');
+    return response.data.list || [];
   } catch (error) {
-    console.error('Failed to fetch product interfaces:', error)
-    return []
+    console.error('Failed to fetch product interfaces:', error);
+    return [];
   }
-}
+};
 
 export const getAllInterfaces = async (params?: PaginationParams): Promise<Interface[]> => {
   try {
@@ -48,13 +48,13 @@ export const getAllInterfaces = async (params?: PaginationParams): Promise<Inter
         page: params?.page || 1,
         page_size: params?.pageSize || 10
       }
-    })
-    return response.data.list || []
+    });
+    return response.data.list || [];
   } catch (error) {
-    console.error('Failed to fetch all interfaces:', error)
-    return []
+    console.error('Failed to fetch all interfaces:', error);
+    return [];
   }
-}
+};
 
 export const updateProductInterfaces = async (productId: number, interfaceIds: number[]): Promise<void> => {
   try {
@@ -65,9 +65,9 @@ export const updateProductInterfaces = async (productId: number, interfaceIds: n
         product_id: productId,
         interface_ids: interfaceIds
       }
-    })
+    });
   } catch (error) {
-    console.error('Failed to update product interfaces:', error)
-    throw error
+    console.error('Failed to update product interfaces:', error);
+    throw error;
   }
-} 
+};

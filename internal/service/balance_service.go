@@ -267,6 +267,6 @@ func (s *BalanceService) SmartDeduct(ctx context.Context, userID int64, amount f
 }
 
 // ListLogs 查询余额流水
-func (s *BalanceService) ListLogs(ctx context.Context, userID int64, offset, limit int) ([]model.BalanceLog, int64, error) {
-	return s.repo.ListLogs(ctx, userID, offset, limit)
+func (s *BalanceService) ListLogs(ctx context.Context, userID int64, offset, limit int) ([]model.BalanceLogWithOrder, int64, error) {
+	return s.repo.ListLogsWithOrder(ctx, userID, offset, limit)
 }

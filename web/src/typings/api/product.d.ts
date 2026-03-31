@@ -42,4 +42,4 @@ export interface Product {
   remark: string;
   created_at: string;
   updated_at: string;
-} 
+}

@@ -1,130 +1,24 @@
-<template>
-  <NModal
-    v-model:show="visible"
-    preset="dialog"
-    title="商品管理"
-    :style="{ width: '90%' }"
-    @close="close"
-  >
-    <div class="product-management">
-      <!-- 搜索区域 -->
-      <NCard class="mb-4" :bordered="false">
-        <NGrid :cols="24" :x-gap="12" :y-gap="12">
-          <NGridItem :span="24" :md="6">
-            <NInput
-              v-model:value="searchKeyword"
-              placeholder="请输入商品名称或编码"
-              clearable
-              @keyup.enter="handleSearch"
-            />
-          </NGridItem>
-          <NGridItem :span="24" :md="5">
-            <NSelect
-              v-model:value="searchStatus"
-              :options="statusOptions"
-              placeholder="选择状态"
-              clearable
-            />
-          </NGridItem>
-          <NGridItem :span="24" :md="5">
-            <NSelect
-              v-model:value="searchType"
-              :options="typeOptions"
-              placeholder="选择类型"
-              clearable
-            />
-          </NGridItem>
-          <NGridItem :span="24" :md="8">
-            <NSpace>
-              <NButton type="primary" @click="handleSearch">搜索</NButton>
-              <NButton @click="handleReset">重置</NButton>
-              <NButton @click="handleRefresh">刷新</NButton>
-            </NSpace>
-          </NGridItem>
-        </NGrid>
-      </NCard>
-
-      <!-- 统计信息 -->
-       <NCard class="mb-4" :bordered="false">
-         <template #header>
-           <span style="font-weight: 600;">数据统计</span>
-         </template>
-         <NGrid :cols="3" :x-gap="12">
-           <NGridItem>
-             <NStatistic label="总商品数" :value="total">
-               <template #prefix>
-                 <NIcon color="#18a058">
-                   <svg viewBox="0 0 24 24">
-                     <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                   </svg>
-                 </NIcon>
-               </template>
-             </NStatistic>
-           </NGridItem>
-           <NGridItem>
-             <NStatistic label="在线商品" :value="onlineCount">
-               <template #prefix>
-                 <NIcon color="#2080f0">
-                   <svg viewBox="0 0 24 24">
-                     <path fill="currentColor" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                   </svg>
-                 </NIcon>
-               </template>
-             </NStatistic>
-           </NGridItem>
-           <NGridItem>
-             <NStatistic label="离线商品" :value="offlineCount">
-               <template #prefix>
-                 <NIcon color="#d03050">
-                   <svg viewBox="0 0 24 24">
-                     <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/>
-                   </svg>
-                 </NIcon>
-               </template>
-             </NStatistic>
-           </NGridItem>
-         </NGrid>
-       </NCard>
-
-      <!-- 商品列表 -->
-      <NCard :bordered="false">
-        <template #header>
-          <div class="flex justify-between items-center">
-            <span style="font-weight: 600;">商品列表</span>
-            <NSpace>
-              <NButton v-if="!isEditing" type="primary" @click="handleToggleEdit(true)">批量编辑</NButton>
-              <template v-else>
-                <NButton type="primary" @click="handleBatchSave">保存</NButton>
-                <NButton @click="handleCancelEdit">取消</NButton>
-              </template>
-            </NSpace>
-          </div>
-        </template>
-        <NDataTable
-          :columns="columns"
-          :data="filteredProductList"
-          :loading="loading"
-          :pagination="pagination"
-          :scroll-x="1400"
-          size="small"
-          :bordered="false"
-          :single-line="false"
-        />
-      </NCard>
-    </div>
-
-    <!-- 价格编辑弹窗 -->
-    <ProductPriceForm ref="priceFormRef" @success="fetchProductList" />
-  </NModal>
-</template>
-
 <script setup lang="ts">
-import { ref, computed, nextTick, h } from 'vue';
-import type { DataTableColumns } from 'naive-ui';
-import { NButton, NTag, NSpace, NSelect, NCard, NGrid, NGridItem, NStatistic, NIcon, NInput, NModal, NSwitch, NInputNumber } from 'naive-ui';
-import { getBeeProductList, type BeeProduct, editBeeSupplyGoodManageStock } from '@/api/bee-platform';
-import ProductPriceForm from './ProductPriceForm.vue';
+import { computed, h, nextTick, ref } from 'vue';
 import type { ComponentPublicInstance } from 'vue';
+import type { DataTableColumns } from 'naive-ui';
+import {
+  NButton,
+  NCard,
+  NGrid,
+  NGridItem,
+  NIcon,
+  NInput,
+  NInputNumber,
+  NModal,
+  NSelect,
+  NSpace,
+  NStatistic,
+  NSwitch,
+  NTag
+} from 'naive-ui';
+import { type BeeProduct, editBeeSupplyGoodManageStock, getBeeProductList } from '@/api/bee-platform';
+import ProductPriceForm from './ProductPriceForm.vue';
 
 // 定义ProductPriceForm组件类型
 type ProductPriceFormInstance = ComponentPublicInstance & {
@@ -171,23 +65,33 @@ const typeOptions = [
 // 计算属性：过滤后的商品列表（展开省份数据）
 const filteredProductList = computed(() => {
   const filtered = productList.value.filter(product => {
-    const matchKeyword = !searchKeyword.value || 
+    const matchKeyword =
+      !searchKeyword.value ||
       product.goods_name?.toLowerCase().includes(searchKeyword.value.toLowerCase()) ||
       product.goods_id?.toString().includes(searchKeyword.value);
-    
+
     const pAny = product as any;
-    const matchStatus = searchStatus.value === null || (product.status === searchStatus.value || pAny?.supply_status === searchStatus.value);
+    const matchStatus =
+      searchStatus.value === null ||
+      product.status === searchStatus.value ||
+      pAny?.supply_status === searchStatus.value;
     const matchType = searchType.value === null || product.user_quote_type === searchType.value;
-    
+
     return matchKeyword && matchStatus && matchType;
   });
-  
+
   // 展开有多个省份的商品为多行
-  const expandedList: (BeeProduct & { _isExpanded?: boolean; _provinceName?: string; _provinceData?: any; _isSummaryRow?: boolean; _status?: number })[] = [];
-  
+  const expandedList: (BeeProduct & {
+    _isExpanded?: boolean;
+    _provinceName?: string;
+    _provinceData?: any;
+    _isSummaryRow?: boolean;
+    _status?: number;
+  })[] = [];
+
   filtered.forEach(product => {
     const provInfo = (product as any).user_quote_stock_prov_info;
-    
+
     if (!provInfo || provInfo.length === 0) {
       // 没有省份信息，显示为全国
       expandedList.push({
@@ -206,14 +110,14 @@ const filteredProductList = computed(() => {
     } else {
       // 多个省份，先添加汇总行，再展开为多行
       // 添加汇总行
-      
+
       expandedList.push({
         ...product,
         _isExpanded: false,
         _provinceName: `支持${provInfo.length}个省份`,
         _isSummaryRow: true
       });
-      
+
       // 添加各省份详细行
       provInfo.forEach((prov: any) => {
         expandedList.push({
@@ -230,17 +134,17 @@ const filteredProductList = computed(() => {
       });
     }
   });
-  
+
   return expandedList;
 });
 
 // 统计数据
 const onlineCount = computed(() => {
-  return productList.value.filter(item => (item.status === 1 || (item as any)?.supply_status === 1)).length;
+  return productList.value.filter(item => item.status === 1 || (item as any)?.supply_status === 1).length;
 });
 
 const offlineCount = computed(() => {
-  return productList.value.filter(item => (item.status === 0 || (item as any)?.supply_status === 0)).length;
+  return productList.value.filter(item => item.status === 0 || (item as any)?.supply_status === 0).length;
 });
 
 // 分页配置
@@ -268,7 +172,7 @@ const columns: DataTableColumns<BeeProduct> = [
     key: 'goods_id',
     width: 100,
     render(row: any) {
-      return (!row._isExpanded || row._isSummaryRow) ? row.goods_id : '';
+      return !row._isExpanded || row._isSummaryRow ? row.goods_id : '';
     }
   },
   {
@@ -276,7 +180,7 @@ const columns: DataTableColumns<BeeProduct> = [
     key: 'vender_name',
     width: 200,
     render(row: any) {
-      return (!row._isExpanded || row._isSummaryRow) ? row.vender_name : '';
+      return !row._isExpanded || row._isSummaryRow ? row.vender_name : '';
     },
     ellipsis: { tooltip: true }
   },
@@ -285,7 +189,7 @@ const columns: DataTableColumns<BeeProduct> = [
     key: 'goods_name',
     width: 160,
     render(row: any) {
-      return (!row._isExpanded || row._isSummaryRow) ? row.goods_name + '|' + row.spec_name : '';
+      return !row._isExpanded || row._isSummaryRow ? `${row.goods_name}|${row.spec_name}` : '';
     }
   },
   {
@@ -312,7 +216,7 @@ const columns: DataTableColumns<BeeProduct> = [
       if (!lastPrice || lastPrice === null || lastPrice === undefined || lastPrice === 0) {
         return '暂无数据';
       }
-      const price = parseFloat(lastPrice);
+      const price = Number.parseFloat(lastPrice);
       if (isNaN(price)) {
         return '-';
       }
@@ -333,7 +237,7 @@ const columns: DataTableColumns<BeeProduct> = [
       if (row._isExpanded && row._provinceData) {
         const payment = row._provinceData?.user_quote_payment;
         if (!payment && payment !== 0) return '-';
-        const price = parseFloat(payment);
+        const price = Number.parseFloat(payment);
         return isNaN(price) ? '-' : `¥${price.toFixed(3)}`;
       }
       // 普通商品行：编辑万分比，展示金额
@@ -342,7 +246,7 @@ const columns: DataTableColumns<BeeProduct> = [
         if (discount || discount === 0) return Number(discount);
         const payment = row.user_quote_stock_info?.user_quote_payment;
         const face = row.user_payment;
-        if ((payment || payment === 0) && (face || face === 0)) return Number(payment) / Number(face) * 10000;
+        if ((payment || payment === 0) && (face || face === 0)) return (Number(payment) / Number(face)) * 10000;
         return null;
       })();
       const modelValue = editPriceMap.value[row.goods_id] ?? (currentDiscount as number | null);
@@ -352,35 +256,40 @@ const columns: DataTableColumns<BeeProduct> = [
         let display: number | null = null;
         if (payment || payment === 0) display = Number(payment);
         else if ((modelValue || modelValue === 0) && (row.user_payment || row.user_payment === 0)) {
-          display = Number(modelValue) / 10000 * Number(row.user_payment);
+          display = (Number(modelValue) / 10000) * Number(row.user_payment);
         }
         return display === null || isNaN(Number(display)) ? '-' : `¥${Number(display).toFixed(3)}`;
       }
-      return h(NSpace, { size: 6, vertical: true }, {
-        default: () => {
-          const face = row.user_payment;
-          const discountToUse = (editPriceMap.value[row.goods_id] ?? (currentDiscount as number | null));
-          const calc = (discountToUse !== null && discountToUse !== undefined && (face || face === 0))
-            ? Number(discountToUse) / 10000 * Number(face)
-            : null;
-          const calcText = (calc === null || isNaN(Number(calc))) ? '—' : `${Number(calc).toFixed(3)}元`;
-          return [
-            h(NInputNumber, {
-              size: 'small',
-              min: 0,
-              max: 10000,
-              step: 1,
-              style: 'width: 110px;',
-              value: modelValue as number | null,
-              placeholder: currentDiscount === null ? '—' : String(Math.round(Number(currentDiscount))),
-              'onUpdate:value': (v: number | null) => {
-                editPriceMap.value[row.goods_id] = (v === null ? null : Number(v));
-              }
-            }),
-            h('div', { style: 'font-size: 12px; color: #E83E3E;' }, `报价计算：${calcText}`)
-          ];
+      return h(
+        NSpace,
+        { size: 6, vertical: true },
+        {
+          default: () => {
+            const face = row.user_payment;
+            const discountToUse = editPriceMap.value[row.goods_id] ?? (currentDiscount as number | null);
+            const calc =
+              discountToUse !== null && discountToUse !== undefined && (face || face === 0)
+                ? (Number(discountToUse) / 10000) * Number(face)
+                : null;
+            const calcText = calc === null || isNaN(Number(calc)) ? '—' : `${Number(calc).toFixed(3)}元`;
+            return [
+              h(NInputNumber, {
+                size: 'small',
+                min: 0,
+                max: 10000,
+                step: 1,
+                style: 'width: 110px;',
+                value: modelValue as number | null,
+                placeholder: currentDiscount === null ? '—' : String(Math.round(Number(currentDiscount))),
+                'onUpdate:value': (v: number | null) => {
+                  editPriceMap.value[row.goods_id] = v === null ? null : Number(v);
+                }
+              }),
+              h('div', { style: 'font-size: 12px; color: #E83E3E;' }, `报价计算：${calcText}`)
+            ];
+          }
         }
-      });
+      );
     }
   },
   {
@@ -391,32 +300,37 @@ const columns: DataTableColumns<BeeProduct> = [
       // 省份行仅展示，不可编辑（如需按省编辑，应走省份接口）
       if (row._isExpanded && row._provinceData) {
         const stock = row._provinceData?.usable_stock;
-        return (stock || stock === 0) ? String(stock) : '-';
+        return stock || stock === 0 ? String(stock) : '-';
       }
       // 取本行商品库存
-      const currentStock = row.user_quote_stock_info && row.user_quote_stock_info.usable_stock !== undefined
-        ? Number(row.user_quote_stock_info.usable_stock)
-        : null;
+      const currentStock =
+        row.user_quote_stock_info && row.user_quote_stock_info.usable_stock !== undefined
+          ? Number(row.user_quote_stock_info.usable_stock)
+          : null;
       const modelValue = editStockMap.value[row.goods_id] ?? currentStock;
       // 非编辑模式：仅展示库存数值
       if (!isEditing.value) {
-        return (modelValue || modelValue === 0) ? String(modelValue) : '-';
+        return modelValue || modelValue === 0 ? String(modelValue) : '-';
       }
-      return h(NSpace, { size: 6 }, {
-        default: () => [
-          h(NInputNumber, {
-            size: 'small',
-            min: 0,
-            step: 1,
-            style: 'width: 90px;',
-            value: modelValue as number | null,
-            placeholder: currentStock === null ? '—' : String(currentStock),
-            'onUpdate:value': (v: number | null) => {
-              editStockMap.value[row.goods_id] = (v === null ? null : Math.max(0, Math.floor(v)));
-            }
-          })
-        ]
-      });
+      return h(
+        NSpace,
+        { size: 6 },
+        {
+          default: () => [
+            h(NInputNumber, {
+              size: 'small',
+              min: 0,
+              step: 1,
+              style: 'width: 90px;',
+              value: modelValue as number | null,
+              placeholder: currentStock === null ? '—' : String(currentStock),
+              'onUpdate:value': (v: number | null) => {
+                editStockMap.value[row.goods_id] = v === null ? null : Math.max(0, Math.floor(v));
+              }
+            })
+          ]
+        }
+      );
     }
   },
   {
@@ -433,16 +347,20 @@ const columns: DataTableColumns<BeeProduct> = [
         status = row.status ?? (row as any)?.supply_status;
       }
       const isChecked = status === 1;
-      return h(NSwitch, {
-        value: isChecked,
-        checkedValue: true,
-        uncheckedValue: false,
-        'onUpdate:value': (value: boolean) => handleStatusChange(row, value),
-        size: 'small'
-      }, {
-        checked: () => row._isExpanded ? '上架' : '供应中',
-        unchecked: () => row._isExpanded ? '下架' : '未供应'
-      });
+      return h(
+        NSwitch,
+        {
+          value: isChecked,
+          checkedValue: true,
+          uncheckedValue: false,
+          'onUpdate:value': (value: boolean) => handleStatusChange(row, value),
+          size: 'small'
+        },
+        {
+          checked: () => (row._isExpanded ? '上架' : '供应中'),
+          unchecked: () => (row._isExpanded ? '下架' : '未供应')
+        }
+      );
     }
   },
   {
@@ -470,12 +388,16 @@ const columns: DataTableColumns<BeeProduct> = [
         return '';
       }
       return h(NSpace, { size: 'small' }, [
-        h(NButton, {
-          type: 'primary',
-          size: 'small',
-          disabled: isEditing.value,
-          onClick: () => handleEditPrice(row)
-        }, { default: () => '修改报价' })
+        h(
+          NButton,
+          {
+            type: 'primary',
+            size: 'small',
+            disabled: isEditing.value,
+            onClick: () => handleEditPrice(row)
+          },
+          { default: () => '修改报价' }
+        )
       ]);
     }
   }
@@ -485,7 +407,7 @@ const columns: DataTableColumns<BeeProduct> = [
 const fetchProductList = async () => {
   const accountId = currentAccountId.value || props.accountId;
   if (!accountId) return;
-  
+
   loading.value = true;
   try {
     const response = await getBeeProductList(accountId, {
@@ -495,7 +417,7 @@ const fetchProductList = async () => {
       page: currentPage.value,
       page_size: pageSize.value
     });
-    
+
     if (response && response.data) {
       productList.value = response.data.list || [];
       total.value = response.data.total || 0;
@@ -512,10 +434,13 @@ const fetchProductList = async () => {
         const discount = p?.user_quote_stock_info?.user_quote_discount;
         const payment = p?.user_quote_stock_info?.user_quote_payment;
         const face = p?.user_payment;
-        const base = (discount || discount === 0)
-          ? Number(discount)
-          : ((payment || payment === 0) && (face || face === 0) ? (Number(payment) / Number(face) * 10000) : null);
-        priceMap[p.goods_id] = (base || base === 0) ? Number(base) : null;
+        const base =
+          discount || discount === 0
+            ? Number(discount)
+            : (payment || payment === 0) && (face || face === 0)
+              ? (Number(payment) / Number(face)) * 10000
+              : null;
+        priceMap[p.goods_id] = base || base === 0 ? Number(base) : null;
       });
       editStockMap.value = map;
       editPriceMap.value = priceMap;
@@ -568,8 +493,8 @@ const handleCancelEdit = () => {
     }
     const discount = p?.user_quote_stock_info?.user_quote_discount;
     const payment = p?.user_quote_stock_info?.user_quote_payment;
-    const base = (payment || payment === 0) ? Number(payment) : ((discount || discount === 0) ? Number(discount) : null);
-    priceMap[p.goods_id] = (base || base === 0) ? base : null;
+    const base = payment || payment === 0 ? Number(payment) : discount || discount === 0 ? Number(discount) : null;
+    priceMap[p.goods_id] = base || base === 0 ? base : null;
   });
   editStockMap.value = map;
   editPriceMap.value = priceMap;
@@ -589,26 +514,35 @@ const handleBatchSave = async () => {
     const goods: any[] = [];
     productList.value.forEach((row: any) => {
       if (row._isExpanded && row._provinceData) return; // 省份行忽略
-      const currentStock = row.user_quote_stock_info && row.user_quote_stock_info.usable_stock !== undefined
-        ? Number(row.user_quote_stock_info.usable_stock)
-        : null;
+      const currentStock =
+        row.user_quote_stock_info && row.user_quote_stock_info.usable_stock !== undefined
+          ? Number(row.user_quote_stock_info.usable_stock)
+          : null;
       const currentDiscount = (() => {
         const discount = row.user_quote_stock_info?.user_quote_discount;
         if (discount || discount === 0) return Number(discount);
         const payment = row.user_quote_stock_info?.user_quote_payment;
         const face = row.user_payment;
-        if ((payment || payment === 0) && (face || face === 0)) return Number(payment) / Number(face) * 10000;
+        if ((payment || payment === 0) && (face || face === 0)) return (Number(payment) / Number(face)) * 10000;
         return null;
       })();
       const editedStock = editStockMap.value[row.goods_id];
       const editedDiscount = editPriceMap.value[row.goods_id];
       const item: any = { goods_id: row.goods_id, status: 1 };
       let changed = false;
-      if (editedStock !== null && editedStock !== undefined && (currentStock === null || Number(editedStock) !== Number(currentStock))) {
+      if (
+        editedStock !== null &&
+        editedStock !== undefined &&
+        (currentStock === null || Number(editedStock) !== Number(currentStock))
+      ) {
         item.user_quote_stock = Math.max(0, Math.floor(Number(editedStock)));
         changed = true;
       }
-      if (editedDiscount !== null && editedDiscount !== undefined && (currentDiscount === null || Number(editedDiscount) !== Number(currentDiscount))) {
+      if (
+        editedDiscount !== null &&
+        editedDiscount !== undefined &&
+        (currentDiscount === null || Number(editedDiscount) !== Number(currentDiscount))
+      ) {
         // 按万分比保存
         item.user_quote_payment = Number(editedDiscount);
         changed = true;
@@ -666,11 +600,13 @@ const handleSaveStock = async (row: any) => {
     const statusVal = 1;
 
     const requestData = {
-      goods: [{
-        goods_id: row.goods_id,
-        status: statusVal,
-        user_quote_stock: newStock
-      }]
+      goods: [
+        {
+          goods_id: row.goods_id,
+          status: statusVal,
+          user_quote_stock: newStock
+        }
+      ]
     } as any;
 
     await editBeeSupplyGoodManageStock(accountId, requestData);
@@ -685,7 +621,7 @@ const handleSaveStock = async (row: any) => {
     if (original?.user_quote_stock_info) {
       original.user_quote_stock_info.usable_stock = newStock;
     }
-    
+
     // 保存成功后刷新列表
     handleRefresh();
   } catch (error: any) {
@@ -697,9 +633,9 @@ const handleSaveStock = async (row: any) => {
 // 编辑价格
 const handleEditPrice = (row: any) => {
   const accountId = currentAccountId.value || props.accountId;
-  
+
   const originalProduct = productList.value.find(p => p.goods_id === row.goods_id);
-  
+
   if (originalProduct) {
     let provInfo = (originalProduct as any).prov_info;
     if ((!provInfo || provInfo.length === 0) && (originalProduct as any).user_quote_stock_prov_info) {
@@ -755,22 +691,26 @@ const handleStatusChange = async (row: any, newStatus: boolean) => {
 
     const status = newStatus ? 1 : 2; // 1开启供应，2关闭供应
     const requestData = {
-      goods: [{
-        goods_id: row.goods_id,
-        status: status
-      }]
+      goods: [
+        {
+          goods_id: row.goods_id,
+          status
+        }
+      ]
     };
 
     await editBeeSupplyGoodManageStock(accountId, requestData);
     window.$message?.success('供应状态修改成功');
-    
+
     // 更新本地数据
     if (row._isExpanded && row._provinceData) {
       row._provinceData.status = status;
       row._status = status;
       const originalProduct = productList.value.find(p => p.goods_id === row.goods_id);
       if (originalProduct && (originalProduct as any).user_quote_stock_prov_info) {
-        const provInfo = (originalProduct as any).user_quote_stock_prov_info.find((p: any) => p.prov === row._provinceName);
+        const provInfo = (originalProduct as any).user_quote_stock_prov_info.find(
+          (p: any) => p.prov === row._provinceName
+        );
         if (provInfo) {
           provInfo.status = status;
         }
@@ -778,9 +718,9 @@ const handleStatusChange = async (row: any, newStatus: boolean) => {
     } else {
       (row as any).status = status;
       if ((row as any).user_quote_stock_prov_info && (row as any).user_quote_stock_prov_info.length > 0) {
-         (row as any).user_quote_stock_prov_info.forEach((item: any) => {
-           item.status = status;
-         });
+        (row as any).user_quote_stock_prov_info.forEach((item: any) => {
+          item.status = status;
+        });
       }
     }
   } catch (error: any) {
@@ -811,6 +751,116 @@ defineExpose({
   close
 });
 </script>
+
+<template>
+  <NModal v-model:show="visible" preset="dialog" title="商品管理" :style="{ width: '90%' }" @close="close">
+    <div class="product-management">
+      <!-- 搜索区域 -->
+      <NCard class="mb-4" :bordered="false">
+        <NGrid :cols="24" :x-gap="12" :y-gap="12">
+          <NGridItem :span="24" :md="6">
+            <NInput
+              v-model:value="searchKeyword"
+              placeholder="请输入商品名称或编码"
+              clearable
+              @keyup.enter="handleSearch"
+            />
+          </NGridItem>
+          <NGridItem :span="24" :md="5">
+            <NSelect v-model:value="searchStatus" :options="statusOptions" placeholder="选择状态" clearable />
+          </NGridItem>
+          <NGridItem :span="24" :md="5">
+            <NSelect v-model:value="searchType" :options="typeOptions" placeholder="选择类型" clearable />
+          </NGridItem>
+          <NGridItem :span="24" :md="8">
+            <NSpace>
+              <NButton type="primary" @click="handleSearch">搜索</NButton>
+              <NButton @click="handleReset">重置</NButton>
+              <NButton @click="handleRefresh">刷新</NButton>
+            </NSpace>
+          </NGridItem>
+        </NGrid>
+      </NCard>
+
+      <!-- 统计信息 -->
+      <NCard class="mb-4" :bordered="false">
+        <template #header>
+          <span style="font-weight: 600">数据统计</span>
+        </template>
+        <NGrid :cols="3" :x-gap="12">
+          <NGridItem>
+            <NStatistic label="总商品数" :value="total">
+              <template #prefix>
+                <NIcon color="#18a058">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"
+                    />
+                  </svg>
+                </NIcon>
+              </template>
+            </NStatistic>
+          </NGridItem>
+          <NGridItem>
+            <NStatistic label="在线商品" :value="onlineCount">
+              <template #prefix>
+                <NIcon color="#2080f0">
+                  <svg viewBox="0 0 24 24">
+                    <path fill="currentColor" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </NIcon>
+              </template>
+            </NStatistic>
+          </NGridItem>
+          <NGridItem>
+            <NStatistic label="离线商品" :value="offlineCount">
+              <template #prefix>
+                <NIcon color="#d03050">
+                  <svg viewBox="0 0 24 24">
+                    <path
+                      fill="currentColor"
+                      d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"
+                    />
+                  </svg>
+                </NIcon>
+              </template>
+            </NStatistic>
+          </NGridItem>
+        </NGrid>
+      </NCard>
+
+      <!-- 商品列表 -->
+      <NCard :bordered="false">
+        <template #header>
+          <div class="flex items-center justify-between">
+            <span style="font-weight: 600">商品列表</span>
+            <NSpace>
+              <NButton v-if="!isEditing" type="primary" @click="handleToggleEdit(true)">批量编辑</NButton>
+              <template v-else>
+                <NButton type="primary" @click="handleBatchSave">保存</NButton>
+                <NButton @click="handleCancelEdit">取消</NButton>
+              </template>
+            </NSpace>
+          </div>
+        </template>
+        <NDataTable
+          :columns="columns"
+          :data="filteredProductList"
+          :loading="loading"
+          :pagination="pagination"
+          :scroll-x="1400"
+          size="small"
+          :bordered="false"
+          :single-line="false"
+        />
+      </NCard>
+    </div>
+
+    <!-- 价格编辑弹窗 -->
+    <ProductPriceForm ref="priceFormRef" @success="fetchProductList" />
+  </NModal>
+</template>
 
 <style scoped>
 .product-management {

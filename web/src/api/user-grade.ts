@@ -1,5 +1,11 @@
 import { request } from '@/service/request';
-import type { UserGrade, UserGradeListRequest, UserGradeListResponse, UserGradeCreateRequest, UserGradeUpdateRequest } from '@/typings/api/user-grade';
+import type {
+  UserGrade,
+  UserGradeCreateRequest,
+  UserGradeListRequest,
+  UserGradeListResponse,
+  UserGradeUpdateRequest
+} from '@/typings/api/user-grade';
 
 export const getUserGradeList = (params: UserGradeListRequest) => {
   return request({
@@ -36,4 +42,4 @@ export const deleteUserGrade = (id: number) => {
     url: `/user-grades/${id}`,
     method: 'DELETE'
   });
-}; 
+};

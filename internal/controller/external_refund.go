@@ -60,10 +60,16 @@ func (c *ExternalRefundController) ProcessRefund(ctx *gin.Context) {
 		return
 	}
 
-	// 验证API Key
-	_, err := c.validateAPIKey(ctx, req.AppID)
-	if err != nil {
-		c.respondError(ctx, http.StatusUnauthorized, "无效的API Key", logData, startTime)
+	// 使用中间件注入的 API Key 信息（与下单/查询一致）
+	apiKeyInfo, exists := ctx.Get("api_key_info")
+	if !exists {
+		c.respondError(ctx, http.StatusUnauthorized, "API Key information not found", logData, startTime)
+		return
+	}
+	apiKey := apiKeyInfo.(*model.ExternalAPIKey)
+	if req.AppID != apiKey.AppID {
+		logData.ErrorMsg = "App ID mismatch"
+		c.respondError(ctx, http.StatusBadRequest, "App ID mismatch", logData, startTime)
 		return
 	}
 
@@ -83,39 +89,55 @@ func (c *ExternalRefundController) ProcessRefund(ctx *gin.Context) {
 		return
 	}
 
-	// 处理退款
-	err = c.orderService.ProcessExternalRefund(ctx, req.OutTradeNum, req.Reason)
-	if err != nil {
-		c.respondError(ctx, http.StatusInternalServerError, "退款处理失败: "+err.Error(), logData, startTime)
+	// 校验订单归属：仅允许该订单所属用户（下单时使用的 API Key 对应用户）发起退款
+	if order.CustomerID != apiKey.UserID {
+		logData.ErrorMsg = "order does not belong to this app"
+		c.respondError(ctx, http.StatusForbidden, "无权限操作该订单", logData, startTime)
 		return
 	}
 
-	// 更新日志记录
-	logData.OrderID = order.OrderNumber
-	logData.Mobile = order.Mobile
-	logData.Amount = order.Price
-	logData.Status = 1
+	// 申请退款（待充值订单变为待审核，不直接退款；管理员审核通过后才执行退款）
+	err = c.orderService.ProcessExternalRefund(ctx, req.OutTradeNum, req.Reason)
+	if err != nil {
+		c.respondError(ctx, http.StatusInternalServerError, err.Error(), logData, startTime)
+		return
+	}
 
-	// 记录处理时间
+	// 重新获取订单以得到更新后的状态
+	order, _ = c.orderService.GetOrderByOutTradeNum(ctx, req.OutTradeNum)
+	if order != nil {
+		logData.OrderID = order.OrderNumber
+		logData.Mobile = order.Mobile
+		logData.Amount = order.Price
+	}
+	logData.Status = 1
 	logData.UpdatedAt = time.Now()
 
-	// 构造响应数据
-	response := ExternalRefundResponse{
-		Code:    200,
-		Message: "success",
-		Data: &ExternalRefundData{
+	statusStr := "pending_review"
+	if order != nil && order.Status == model.OrderStatusRefunded {
+		statusStr = "refunded"
+	}
+
+	var data *ExternalRefundData
+	if order != nil {
+		data = &ExternalRefundData{
 			OrderNumber: order.OrderNumber,
 			OutTradeNum: order.OutTradeNum,
 			Amount:      order.Price,
-			Status:      "refunded",
-		},
+			Status:      statusStr,
+		}
+	} else {
+		data = &ExternalRefundData{OutTradeNum: req.OutTradeNum, Status: statusStr}
+	}
+	response := ExternalRefundResponse{
+		Code:    200,
+		Message: "退款申请已提交，待管理员审核",
+		Data:    data,
 	}
 
-	log.Info(ctx, "external_refund_success",
-		log.Int64("order_id", order.ID),
-		log.String("order_number", order.OrderNumber),
-		log.String("out_trade_num", order.OutTradeNum),
-		log.Float64("amount", order.Price))
+	log.Info(ctx, "external_refund_apply_success",
+		log.String("out_trade_num", req.OutTradeNum),
+		log.String("status", statusStr))
 
 	ctx.JSON(http.StatusOK, response)
 }
@@ -137,12 +159,3 @@ func (c *ExternalRefundController) respondError(ctx *gin.Context, statusCode int
 	ctx.JSON(statusCode, response)
 }
 
-// validateAPIKey 验证API Key
-func (c *ExternalRefundController) validateAPIKey(ctx *gin.Context, appID string) (*model.ExternalAPIKey, error) {
-	// 这里应该实现API Key验证逻辑
-	// 暂时返回一个模拟的API Key对象
-	return &model.ExternalAPIKey{
-		AppID:  appID,
-		UserID: 1, // 模拟用户ID
-	}, nil
-}

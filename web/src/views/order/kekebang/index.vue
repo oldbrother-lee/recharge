@@ -6,4 +6,4 @@ const kekebang = 'kekebang';
 
 <template>
   <OrderList :platform_code="kekebang" />
-</template> 
+</template>

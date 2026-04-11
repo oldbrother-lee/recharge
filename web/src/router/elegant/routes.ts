@@ -119,6 +119,17 @@ export const generatedRoutes: GeneratedRoute[] = [
         }
       },
       {
+        name: 'order_manual',
+        path: '/order/manual',
+        component: 'view.order_manual',
+        meta: {
+          title: 'order_manual',
+          i18nKey: 'route.order_manual',
+          icon: 'mdi:cart-plus',
+          roles: ['AGENT']
+        }
+      },
+      {
         name: 'order_mf178',
         path: '/order/mf178',
         component: 'view.order_mf178',

@@ -59,6 +59,10 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 	orderExceptionRepo := repository.NewOrderExceptionRepository(db)
 	orderExceptionService := service.NewOrderExceptionService(orderExceptionRepo, orderRepo, log.Log)
 
+	// 创建分布式锁
+	_extDistributedLock := lock.NewRedisDistributedLock(redis.GetClient())
+	_extRefundLockManager := lock.NewRefundLockManager(_extDistributedLock)
+
 	// 创建统一订单服务（暂时不传入retryService）
 	unifiedOrderService := service.NewUnifiedOrderService(
 		orderRepo,
@@ -73,6 +77,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		productRepo,
 		nil, // retryService 稍后设置
 		orderExceptionService,
+		_extRefundLockManager,
 	)
 
 	// 先创建充值服务（因为订单服务需要它）

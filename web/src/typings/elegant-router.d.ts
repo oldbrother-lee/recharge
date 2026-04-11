@@ -27,6 +27,7 @@ declare module "@elegant-router/types" {
     "order_all": "/order/all";
     "order_exception": "/order/exception";
     "order_kekebang": "/order/kekebang";
+    "order_manual": "/order/manual";
     "order_mf178": "/order/mf178";
     "order_xianyingke": "/order/xianyingke";
     "order_xianzhuanxia": "/order/xianzhuanxia";
@@ -112,6 +113,7 @@ declare module "@elegant-router/types" {
     | "order_all"
     | "order_exception"
     | "order_kekebang"
+    | "order_manual"
     | "order_mf178"
     | "order_xianyingke"
     | "order_xianzhuanxia"

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"recharge-go/internal/model"
 	notificationModel "recharge-go/internal/model/notification"
@@ -80,6 +81,8 @@ type OrderService interface {
 	SendNotification(ctx context.Context, orderID int64) error
 	// GetSuccessStatsByIspDenom 按运营商与面值统计成功订单数与金额
 	GetSuccessStatsByIspDenom(ctx context.Context, params map[string]interface{}) ([]model.IspDenomSuccessStat, error)
+	// CreateManualAgentOrder 代理商后台手动下单（扣款与流程同外部 API 订单）
+	CreateManualAgentOrder(ctx context.Context, agentUserID int64, mobile string, productID int64, outTradeNum string, isp int, remark string) (*model.Order, error)
 }
 
 type OrderStatistics struct {
@@ -213,6 +216,20 @@ func isSuperAdmin(ctx context.Context) bool {
 	return false
 }
 
+// isAgent 判断当前用户是否为代理商
+func isAgent(ctx context.Context) bool {
+	roles, ok := ctx.Value("roles").([]string)
+	if !ok {
+		return false
+	}
+	for _, r := range roles {
+		if r == "AGENT" {
+			return true
+		}
+	}
+	return false
+}
+
 // UpdateOrderStatus 更新订单状态
 func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status model.OrderStatus) error {
 	// 安全获取用户ID，如果不存在则使用0（系统操作）
@@ -255,6 +272,17 @@ func (s *orderService) UpdateOrderStatus(ctx context.Context, id int64, status m
 			log.Int64V2("order_customer_id", order.CustomerID),
 		)
 		return fmt.Errorf("无权限操作该订单")
+	}
+
+	// 代理商不允许修改终态订单（超级管理员和系统操作不受限制）
+	if isAgent(ctx) && order.Status.IsTerminalStatus() {
+		tx.Rollback()
+		log.WithContextCategory(ctx, "order").Warn("代理商尝试修改终态订单被拒绝",
+			log.Int64V2("order_id", id),
+			log.Int64V2("user_id", userID),
+			log.IntV2("current_status", int(order.Status)),
+		)
+		return fmt.Errorf("订单已处于终态(%s)，代理商无权修改", order.Status.String())
 	}
 
 	log.WithContextCategory(ctx, "order").Info("获取到订单信息",
@@ -608,6 +636,15 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 	}
 	log.WithContextCategory(ctx, "order").Info("获取订单信息成功", log.Int64V2("order_id", orderID), log.Int64V2("customer_id", order.CustomerID), log.IntV2("status", int(order.Status)))
 
+	// 代理商不允许修改终态订单
+	if isAgent(ctx) && order.Status.IsTerminalStatus() {
+		log.WithContextCategory(ctx, "order").Warn("代理商尝试对终态订单执行失败操作被拒绝",
+			log.Int64V2("order_id", orderID),
+			log.IntV2("current_status", int(order.Status)),
+		)
+		return fmt.Errorf("订单已处于终态(%s)，代理商无权修改", order.Status.String())
+	}
+
 	// 2. 如果订单已经是失败状态，直接调用 UpdateOrderStatus 确保通知发送的幂等性
 	if order.Status == model.OrderStatusFailed {
 		log.WithContextCategory(ctx, "order").Info("订单已经是失败状态，调用 UpdateOrderStatus 确保通知幂等性", log.Int64V2("order_id", orderID))
@@ -627,6 +664,18 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 	}()
 
 	// 4. 在锁保护下执行事务（只处理业务逻辑，不创建通知）
+
+	// 3.5 获取订单级别的分布式锁，防止同一订单并发退款
+	orderLockValue, err := s.lockManager.LockOrderRefund(ctx, orderID)
+	if err != nil {
+		log.WithContextCategory(ctx, "order").Error("获取订单退款锁失败", log.Int64V2("order_id", orderID), log.ErrorV2(err))
+		return fmt.Errorf("获取订单退款锁失败: %v", err)
+	}
+	defer func() {
+		if unlockErr := s.lockManager.UnlockOrderRefund(ctx, orderID, orderLockValue); unlockErr != nil {
+			log.WithContextCategory(ctx, "order").Error("释放订单退款锁失败", log.Int64V2("order_id", orderID), log.ErrorV2(unlockErr))
+		}
+	}()
 	log.WithContextCategory(ctx, "order").Info("开始执行事务", log.Int64V2("order_id", orderID))
 	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		log.WithContextCategory(ctx, "order").Info("事务内部开始执行", log.Int64V2("order_id", orderID))
@@ -749,6 +798,18 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 
 // ProcessOrderRefund 处理订单退款
 func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, remark string) error {
+	// 获取订单级分布式锁，防止同一订单并发退款
+	orderLockValue, err := s.lockManager.LockOrderRefund(ctx, orderID)
+	if err != nil {
+		log.WithContextCategory(ctx, "order").Error("获取订单退款锁失败", log.Int64V2("order_id", orderID), log.ErrorV2(err))
+		return fmt.Errorf("获取订单退款锁失败: %v", err)
+	}
+	defer func() {
+		if unlockErr := s.lockManager.UnlockOrderRefund(ctx, orderID, orderLockValue); unlockErr != nil {
+			log.WithContextCategory(ctx, "order").Error("释放订单退款锁失败", log.Int64V2("order_id", orderID), log.ErrorV2(unlockErr))
+		}
+	}()
+
 	// 使用事务确保订单状态更新和退款操作的原子性
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 使用行锁防止同一订单的并发处理
@@ -762,6 +823,15 @@ func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, re
 		if lockedOrder.Status == model.OrderStatusRefunded {
 			log.WithContextCategory(ctx, "order").Info("订单已退款，跳过处理", log.Int64V2("order_id", orderID))
 			return fmt.Errorf("订单已退款")
+		}
+
+		// 代理商不允许对终态订单执行退款（超级管理员不受限制）
+		if isAgent(ctx) && lockedOrder.Status.IsTerminalStatus() {
+			log.WithContextCategory(ctx, "order").Warn("代理商尝试对终态订单退款被拒绝",
+				log.Int64V2("order_id", orderID),
+				log.IntV2("current_status", int(lockedOrder.Status)),
+			)
+			return fmt.Errorf("订单已处于终态(%s)，代理商无权操作退款", lockedOrder.Status.String())
 		}
 
 		// 允许退款的状态：成功、失败、待充值、待退款审核（管理员审核通过时）
@@ -1139,6 +1209,88 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 	return nil
 }
 
+// resolveManualOrderISP 订单运营商：请求为 1/2/3 则采用；为 0 时仅当商品仅支持单一运营商则从商品字段推断，否则须由前端明确选择
+func resolveManualOrderISP(requested int, productISPField string) (int, error) {
+	if requested == 1 || requested == 2 || requested == 3 {
+		return requested, nil
+	}
+	if requested != 0 {
+		return 0, fmt.Errorf("无效的运营商，请选择移动(1)、电信(2)或联通(3)")
+	}
+	parts := strings.Split(productISPField, ",")
+	seen := make(map[int]struct{})
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		v, err := strconv.Atoi(p)
+		if err != nil {
+			continue
+		}
+		if v != 1 && v != 2 && v != 3 {
+			continue
+		}
+		seen[v] = struct{}{}
+	}
+	if len(seen) == 1 {
+		for k := range seen {
+			return k, nil
+		}
+	}
+	return 0, fmt.Errorf("请选择运营商（移动/电信/联通）")
+}
+
+// CreateManualAgentOrder 代理商后台手动下单：与外部 API 一致走 CreateExternalOrder（待充值、扣余额/授信、进充值队列）
+func (s *orderService) CreateManualAgentOrder(ctx context.Context, agentUserID int64, mobile string, productID int64, outTradeNum string, isp int, remark string) (*model.Order, error) {
+	if mobile == "" || outTradeNum == "" {
+		return nil, fmt.Errorf("手机号与外部单号不能为空")
+	}
+	existing, err := s.GetOrderByOutTradeNum(ctx, outTradeNum)
+	if err == nil && existing != nil {
+		return existing, nil
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	product, err := s.productRepo.GetByID(ctx, productID)
+	if err != nil {
+		return nil, fmt.Errorf("商品不存在")
+	}
+	if product.Status != 1 {
+		return nil, fmt.Errorf("商品已下架")
+	}
+
+	denom, err := utils.ExtractNumberFromProductName(product.Name)
+	if err != nil {
+		denom = product.Price
+	}
+
+	resolvedISP, err := resolveManualOrderISP(isp, product.ISP)
+	if err != nil {
+		return nil, err
+	}
+
+	order := &model.Order{
+		Mobile:      mobile,
+		ProductID:   productID,
+		OutTradeNum: outTradeNum,
+		TotalPrice:  product.Price,
+		Price:       product.Price,
+		Denom:       denom,
+		ISP:         resolvedISP,
+		Remark:      remark,
+		Client:      2,
+		IsDel:       0,
+	}
+
+	if err := s.CreateExternalOrder(ctx, order, agentUserID); err != nil {
+		return nil, err
+	}
+	return s.GetOrderByOutTradeNum(ctx, outTradeNum)
+}
+
 // CreateExternalOrderWithoutDeduction 创建外部订单（仅落库，不扣款）- 用于拉单场景
 func (s *orderService) CreateExternalOrderWithoutDeduction(ctx context.Context, order *model.Order, userID int64) error {
 	logger.WithContextCategory(ctx, "order").Info("开始创建外部订单（仅落库）",
@@ -1331,6 +1483,15 @@ func (s *orderService) DeleteOrder(ctx context.Context, id string) error {
 	if !isSuperAdmin(ctx) && order.CustomerID != userID {
 		logger.WithContextCategory(ctx, "order").Error("无权限删除该订单", logger.StringV2("order_id", id), logger.Int64V2("user_id", userID), logger.Int64V2("order_customer_id", order.CustomerID))
 		return fmt.Errorf("无权限删除该订单")
+	}
+	// 代理商不允许删除终态订单（超级管理员不受限制）
+	if isAgent(ctx) && order.Status.IsTerminalStatus() {
+		logger.WithContextCategory(ctx, "order").Warn("代理商尝试删除终态订单被拒绝",
+			logger.StringV2("order_id", id),
+			logger.Int64V2("user_id", userID),
+			logger.IntV2("current_status", int(order.Status)),
+		)
+		return fmt.Errorf("订单已处于终态(%s)，代理商无权删除", order.Status.String())
 	}
 	if err := s.orderRepo.SoftDeleteByID(ctx, orderID); err != nil {
 		logger.WithContextCategory(ctx, "order").Error("软删除订单失败", logger.StringV2("order_id", id), logger.ErrorV2(err))

@@ -35,6 +35,12 @@ export function setupElegantRouter() {
         meta.constant = true;
       }
 
+      // 由文件 views/order/manual 扫描生成的路由：仅代理商菜单，勿在 routes.ts 里手写重复项
+      if (key === 'order_manual') {
+        meta.roles = ['AGENT'];
+        meta.icon = 'mdi:cart-plus';
+      }
+
       return meta;
     }
   });

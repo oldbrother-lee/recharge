@@ -23,6 +23,14 @@ const (
 	OrderStatusPendingRefundReview                    // 待退款审核 (11)：用户已申请退款，等管理员审核
 )
 
+// IsTerminalStatus 判断订单状态是否为终态（不可再变更）
+func (s OrderStatus) IsTerminalStatus() bool {
+	return s == OrderStatusSuccess ||
+		s == OrderStatusFailed ||
+		s == OrderStatusRefunded ||
+		s == OrderStatusCancelled
+}
+
 // String 返回订单状态的字符串表示
 func (s OrderStatus) String() string {
 	switch s {

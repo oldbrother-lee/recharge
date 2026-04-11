@@ -391,6 +391,7 @@ func (c *Container) initServices() error {
 		c.repositories.Product,
 		nil, // retryService 稍后设置
 		c.services.OrderException,
+		refundLockManager,
 	)
 
 	// 创建充值服务

@@ -238,6 +238,7 @@ const local: App.I18n.Schema = {
     'system_balance-log': '余额流水',
     order: '订单管理',
     order_all: '所有订单',
+    order_manual: '手动下单',
     order_exception: '异常订单',
     order_mf178: '蜜蜂订单',
     order_kekebang: '客客帮订单',

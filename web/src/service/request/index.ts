@@ -104,6 +104,10 @@ export const request = createFlatRequest<App.Service.Response, RequestInstanceSt
       if (error.code === BACKEND_ERROR_CODE) {
         message = error.response?.data?.msg || message;
         backendErrorCode = String(error.response?.data?.code || '');
+      } else if (error.response?.data?.message) {
+        // HTTP error (e.g. 500) with backend error message
+        message = error.response.data.message;
+        backendErrorCode = String(error.response.data.code || '');
       }
 
       // the error message is displayed in the modal

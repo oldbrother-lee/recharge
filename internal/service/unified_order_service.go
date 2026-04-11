@@ -11,6 +11,7 @@ import (
     "recharge-go/internal/repository"
     notificationRepo "recharge-go/internal/repository/notification"
     logger "recharge-go/pkg/log"
+    "recharge-go/pkg/lock"
     "recharge-go/pkg/queue"
     "go.uber.org/zap"
     "gorm.io/gorm"
@@ -33,6 +34,7 @@ type UnifiedOrderService struct {
 	retryService            *RetryService
 	orderExceptionService   OrderExceptionService
 	notificationHelper      *NotificationHelper
+	lockManager             *lock.RefundLockManager
 }
 
 // NewUnifiedOrderService 创建统一订单处理服务
@@ -49,6 +51,7 @@ func NewUnifiedOrderService(
 	productRepo repository.ProductRepository,
 	retryService *RetryService,
 	orderExceptionService OrderExceptionService,
+	lockManager *lock.RefundLockManager,
 ) *UnifiedOrderService {
 	return &UnifiedOrderService{
 		orderRepo:              orderRepo,
@@ -64,6 +67,7 @@ func NewUnifiedOrderService(
 		retryService:           retryService,
 		orderExceptionService:  orderExceptionService,
 		notificationHelper:     NewNotificationHelper(db, notificationRepo, queue),
+		lockManager:            lockManager,
 	}
 }
 
@@ -177,15 +181,40 @@ func (s *UnifiedOrderService) UpdateOrderStatusUnified(ctx context.Context, req 
             result.Message += ", 已推送重试任务"
         } else {
             // 没有可用通道或重试失败，执行退款逻辑
-            refundResult, err := s.performRefundAsync(ctx, &order, req.Remark)
-            if err != nil {
-                lg.Error("退款失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-                // 退款失败不影响订单状态更新的成功
-                result.Message = fmt.Sprintf("%s (退款失败: %v)", result.Message, err)
+            // 获取订单级分布式锁，防止同一订单并发退款
+            if s.lockManager != nil {
+                orderLockValue, lockErr := s.lockManager.LockOrderRefund(ctx, req.OrderID)
+                if lockErr != nil {
+                    lg.Error("获取订单退款锁失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(lockErr))
+                    result.Message = fmt.Sprintf("%s (获取退款锁失败: %v)", result.Message, lockErr)
+                } else {
+                    defer func() {
+                        if unlockErr := s.lockManager.UnlockOrderRefund(ctx, req.OrderID, orderLockValue); unlockErr != nil {
+                            lg.Error("释放订单退款锁失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(unlockErr))
+                        }
+                    }()
+                    refundResult, err := s.performRefundAsync(ctx, &order, req.Remark)
+                    if err != nil {
+                        lg.Error("退款失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
+                        result.Message = fmt.Sprintf("%s (退款失败: %v)", result.Message, err)
+                    } else {
+                        result.RefundTriggered = refundResult.Success
+                        if refundResult.Success {
+                            result.Message += ", 退款成功"
+                        }
+                    }
+                }
             } else {
-                result.RefundTriggered = refundResult.Success
-                if refundResult.Success {
-                    result.Message += ", 退款成功"
+                // lockManager 未初始化，直接执行退款（兼容模式）
+                refundResult, err := s.performRefundAsync(ctx, &order, req.Remark)
+                if err != nil {
+                    lg.Error("退款失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
+                    result.Message = fmt.Sprintf("%s (退款失败: %v)", result.Message, err)
+                } else {
+                    result.RefundTriggered = refundResult.Success
+                    if refundResult.Success {
+                        result.Message += ", 退款成功"
+                    }
                 }
             }
         }

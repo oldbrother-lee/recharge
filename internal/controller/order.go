@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 	"recharge-go/internal/model"
 	"recharge-go/internal/service"
 	"recharge-go/pkg/log"
@@ -55,6 +56,53 @@ func (c *OrderController) CreateOrder(ctx *gin.Context) {
 		log.StringV2("mobile", order.Mobile),
 		log.IntV2("status", int(order.Status)),
 	)
+	resp.Success(ctx, order)
+}
+
+// CreateAgentManualOrder 代理商手动下单（扣款与外部 API 下单一致）
+func (c *OrderController) CreateAgentManualOrder(ctx *gin.Context) {
+	roles, _ := ctx.Get("roles")
+	var isAgent bool
+	if rs, ok := roles.([]string); ok {
+		for _, r := range rs {
+			if r == "AGENT" {
+				isAgent = true
+				break
+			}
+		}
+	}
+	if !isAgent {
+		resp.Error(ctx, http.StatusForbidden, "仅代理商可使用手动下单")
+		return
+	}
+
+	var req struct {
+		Mobile      string `json:"mobile" binding:"required"`
+		ProductID   int64  `json:"product_id" binding:"required"`
+		OutTradeNum string `json:"out_trade_num" binding:"required"`
+		ISP         int    `json:"isp"`
+		Remark      string `json:"remark"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		resp.Error(ctx, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	userID := ctx.GetInt64("user_id")
+	order, err := c.orderService.CreateManualAgentOrder(ctx.Request.Context(), userID, req.Mobile, req.ProductID, req.OutTradeNum, req.ISP, req.Remark)
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "余额") || strings.Contains(msg, "授信") || strings.Contains(msg, "不足") {
+			resp.Error(ctx, http.StatusPaymentRequired, msg)
+			return
+		}
+		if strings.Contains(msg, "运营商") || strings.Contains(msg, "无效的运营商") {
+			resp.Error(ctx, http.StatusBadRequest, msg)
+			return
+		}
+		resp.Error(ctx, http.StatusInternalServerError, msg)
+		return
+	}
 	resp.Success(ctx, order)
 }
 

@@ -103,6 +103,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, db *gorm.DB, userService *service.U
 		productRepo,
 		nil, // retryService 稍后设置
 		orderExceptionService,
+		refundLockManager,
 	)
 
 	rechargeService := service.NewRechargeService(
@@ -135,6 +136,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, db *gorm.DB, userService *service.U
 	order := r.Group("/order")
 	{
 		order.GET("/list", orderController.GetOrders)   // 获取订单列表（管理员接口）
+		order.POST("/manual", orderController.CreateAgentManualOrder) // 代理商手动下单
 		order.GET("/:id", orderController.GetOrderByID) // 获取订单详情
 		order.POST("", orderController.CreateOrder)     // 创建订单
 		// order.PUT("/:id/status", orderController.UpdateOrderStatus)                // 更新订单状态

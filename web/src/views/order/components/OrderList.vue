@@ -139,27 +139,25 @@ const statusMap: Record<string, { type: 'success' | 'warning' | 'error' | 'info'
 };
 
 const handleFail = async (row: Order) => {
-  try {
-    await request({
-      url: `/order/${row.id}/fail`,
-      method: 'POST',
-      data: { remark: row.remark }
-    });
-    message.success('订单已标记为失败');
-    fetchOrders();
-  } catch (error) {
-    message.error('操作失败');
+  const res = await request({
+    url: `/order/${row.id}/fail`,
+    method: 'POST',
+    data: { remark: row.remark }
+  });
+  if (res.error) {
+    return;
   }
+  message.success('订单已标记为失败');
+  fetchOrders();
 };
 
 const handleCancel = async (row: Order) => {
-  try {
-    await request({ url: `/order/${row.id}/cancel`, method: 'POST', data: { remark: row.remark } });
-    message.success('订单已取消');
-    fetchOrders();
-  } catch (error) {
-    message.error('操作失败');
+  const res = await request({ url: `/order/${row.id}/cancel`, method: 'POST', data: { remark: row.remark } });
+  if (res.error) {
+    return;
   }
+  message.success('订单已取消');
+  fetchOrders();
 };
 
 const openFailModal = (row: Order) => {
@@ -173,18 +171,18 @@ const handleFailConfirm = async () => {
     message.error('请填写失败原因');
     return;
   }
-  try {
-    await request({
-      url: `/order/${currentFailOrder.value!.id}/fail`,
-      method: 'POST',
-      data: { remark: failRemark.value }
-    });
-    message.success('订单已标记为失败');
+  const res = await request({
+    url: `/order/${currentFailOrder.value!.id}/fail`,
+    method: 'POST',
+    data: { remark: failRemark.value }
+  });
+  if (res.error) {
     showFailModal.value = false;
-    fetchOrders();
-  } catch (error) {
-    message.error('操作失败');
+    return;
   }
+  message.success('订单已标记为失败');
+  showFailModal.value = false;
+  fetchOrders();
 };
 
 const openSuccessModal = (row: Order) => {
@@ -193,17 +191,17 @@ const openSuccessModal = (row: Order) => {
 };
 
 const handleSuccessConfirm = async () => {
-  try {
-    await request({
-      url: `/order/${currentSuccessOrder.value!.id}/success`,
-      method: 'POST'
-    });
-    message.success('订单已标记为成功');
+  const res = await request({
+    url: `/order/${currentSuccessOrder.value!.id}/success`,
+    method: 'POST'
+  });
+  if (res.error) {
     showSuccessModal.value = false;
-    fetchOrders();
-  } catch (error) {
-    message.error('操作失败');
+    return;
   }
+  message.success('订单已标记为成功');
+  showSuccessModal.value = false;
+  fetchOrders();
 };
 
 const openDeleteModal = (row: Order) => {
@@ -226,53 +224,51 @@ const openRefundRejectModal = (row: Order) => {
 const handleRefundApproveConfirm = async () => {
   if (!currentRefundOrder.value) return;
   refundActionLoading.value = true;
-  try {
-    await request({
-      url: `/order/${currentRefundOrder.value.id}/refund`,
-      method: 'POST',
-      data: { remark: refundApproveRemark.value || '管理员审核通过' }
-    });
-    message.success('已通过退款申请，订单已退款');
+  const res = await request({
+    url: `/order/${currentRefundOrder.value.id}/refund`,
+    method: 'POST',
+    data: { remark: refundApproveRemark.value || '管理员审核通过' }
+  });
+  refundActionLoading.value = false;
+  if (res.error) {
     showRefundApproveModal.value = false;
-    fetchOrders();
-  } catch (error: any) {
-    message.error(error?.message || '操作失败');
-  } finally {
-    refundActionLoading.value = false;
+    return;
   }
+  message.success('已通过退款申请，订单已退款');
+  showRefundApproveModal.value = false;
+  fetchOrders();
 };
 
 const handleRefundRejectConfirm = async () => {
   if (!currentRefundOrder.value) return;
   refundActionLoading.value = true;
-  try {
-    await request({
-      url: `/order/${currentRefundOrder.value.id}/refund/reject`,
-      method: 'POST',
-      data: { remark: refundRejectRemark.value || '管理员拒绝' }
-    });
-    message.success('已拒绝退款申请，订单已恢复为待充值');
+  const res = await request({
+    url: `/order/${currentRefundOrder.value.id}/refund/reject`,
+    method: 'POST',
+    data: { remark: refundRejectRemark.value || '管理员拒绝' }
+  });
+  refundActionLoading.value = false;
+  if (res.error) {
     showRefundRejectModal.value = false;
-    fetchOrders();
-  } catch (error: any) {
-    message.error(error?.message || '操作失败');
-  } finally {
-    refundActionLoading.value = false;
+    return;
   }
+  message.success('已拒绝退款申请，订单已恢复为待充值');
+  showRefundRejectModal.value = false;
+  fetchOrders();
 };
 
 const handleDeleteConfirm = async () => {
-  try {
-    await request({
-      url: `/order/${currentDeleteOrder.value!.id}/delete`,
-      method: 'POST'
-    });
-    message.success('订单已删除');
+  const res = await request({
+    url: `/order/${currentDeleteOrder.value!.id}/delete`,
+    method: 'POST'
+  });
+  if (res.error) {
     showDeleteModal.value = false;
-    fetchOrders();
-  } catch (error) {
-    message.error('操作失败');
+    return;
   }
+  message.success('订单已删除');
+  showDeleteModal.value = false;
+  fetchOrders();
 };
 
 const handleCleanup = async () => {
@@ -281,25 +277,23 @@ const handleCleanup = async () => {
     return;
   }
   cleanupLoading.value = true;
-  try {
-    const res = await request({
-      url: '/order/cleanup',
-      method: 'DELETE',
-      params: {
-        start: formatLocalDatetime(cleanupRange.value.startTime),
-        end: formatLocalDatetime(cleanupRange.value.endTime)
-      },
-      timeout: 600000 // 30秒超时，因为清理操作可能需要较长时间
-    });
-
-    message.success(`清理成功，删除了 ${res.data?.deleted || 0} 条订单`);
+  const res = await request({
+    url: '/order/cleanup',
+    method: 'DELETE',
+    params: {
+      start: formatLocalDatetime(cleanupRange.value.startTime),
+      end: formatLocalDatetime(cleanupRange.value.endTime)
+    },
+    timeout: 600000
+  });
+  cleanupLoading.value = false;
+  if (res.error) {
     showCleanupModal.value = false;
-    fetchOrders();
-  } catch (error: any) {
-    message.error(`清理失败: ${error?.msg || error?.message || ''}`);
-  } finally {
-    cleanupLoading.value = false;
+    return;
   }
+  message.success(`清理成功，删除了 ${res.data?.deleted || 0} 条订单`);
+  showCleanupModal.value = false;
+  fetchOrders();
 };
 
 // 批量操作函数
@@ -338,59 +332,56 @@ const handleBatchNotification = () => {
 
 const confirmBatchNotification = async () => {
   batchLoading.value = true;
-  try {
-    await request({
-      url: '/order/batch-notification',
-      method: 'POST',
-      data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
-    });
-    message.success(`成功推送 ${selectedRowKeys.value.length} 个订单到通知队列`);
-    selectedRowKeys.value = [];
+  const res = await request({
+    url: '/order/batch-notification',
+    method: 'POST',
+    data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
+  });
+  batchLoading.value = false;
+  if (res.error) {
     showBatchNotificationModal.value = false;
-    fetchOrders();
-  } catch (error) {
-    message.error('批量发送回调通知失败');
-  } finally {
-    batchLoading.value = false;
+    return;
   }
+  message.success(`成功推送 ${selectedRowKeys.value.length} 个订单到通知队列`);
+  selectedRowKeys.value = [];
+  showBatchNotificationModal.value = false;
+  fetchOrders();
 };
 
 const confirmBatchDelete = async () => {
   batchLoading.value = true;
-  try {
-    await request({
-      url: '/order/batch-delete',
-      method: 'POST',
-      data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
-    });
-    message.success(`成功删除 ${selectedRowKeys.value.length} 个订单`);
-    selectedRowKeys.value = [];
+  const res = await request({
+    url: '/order/batch-delete',
+    method: 'POST',
+    data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
+  });
+  batchLoading.value = false;
+  if (res.error) {
     showBatchDeleteModal.value = false;
-    fetchOrders();
-  } catch (error) {
-    message.error('批量删除失败');
-  } finally {
-    batchLoading.value = false;
+    return;
   }
+  message.success(`成功删除 ${selectedRowKeys.value.length} 个订单`);
+  selectedRowKeys.value = [];
+  showBatchDeleteModal.value = false;
+  fetchOrders();
 };
 
 const confirmBatchSuccess = async () => {
   batchLoading.value = true;
-  try {
-    await request({
-      url: '/order/batch-success',
-      method: 'POST',
-      data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
-    });
-    message.success(`成功设置 ${selectedRowKeys.value.length} 个订单为成功`);
-    selectedRowKeys.value = [];
+  const res = await request({
+    url: '/order/batch-success',
+    method: 'POST',
+    data: { order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)) }
+  });
+  batchLoading.value = false;
+  if (res.error) {
     showBatchSuccessModal.value = false;
-    fetchOrders();
-  } catch (error) {
-    message.error('批量设置成功失败');
-  } finally {
-    batchLoading.value = false;
+    return;
   }
+  message.success(`成功设置 ${selectedRowKeys.value.length} 个订单为成功`);
+  selectedRowKeys.value = [];
+  showBatchSuccessModal.value = false;
+  fetchOrders();
 };
 
 const confirmBatchFail = async () => {
@@ -399,24 +390,23 @@ const confirmBatchFail = async () => {
     return;
   }
   batchLoading.value = true;
-  try {
-    await request({
-      url: '/order/batch-fail',
-      method: 'POST',
-      data: {
-        order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)),
-        remark: batchFailRemark.value
-      }
-    });
-    message.success(`成功设置 ${selectedRowKeys.value.length} 个订单为失败`);
-    selectedRowKeys.value = [];
+  const res = await request({
+    url: '/order/batch-fail',
+    method: 'POST',
+    data: {
+      order_ids: selectedRowKeys.value.map((id: RowKey) => Number(id)),
+      remark: batchFailRemark.value
+    }
+  });
+  batchLoading.value = false;
+  if (res.error) {
     showBatchFailModal.value = false;
-    fetchOrders();
-  } catch (error) {
-    message.error('批量设置失败失败');
-  } finally {
-    batchLoading.value = false;
+    return;
   }
+  message.success(`成功设置 ${selectedRowKeys.value.length} 个订单为失败`);
+  selectedRowKeys.value = [];
+  showBatchFailModal.value = false;
+  fetchOrders();
 };
 
 // 初始化余额验证状态

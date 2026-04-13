@@ -1,6 +1,7 @@
 <script setup lang="tsx">
 import { computed, onMounted, ref, watch } from 'vue';
 import {
+  NAlert,
   NButton,
   NCard,
   NDataTable,
@@ -123,6 +124,7 @@ const NODE_LABELS: Record<string, string> = {
   QUEUED: '进入充值队列',
   ROUTE_SELECTED: '路由选路',
   DOWNSTREAM_SUBMIT: '提交下游',
+  UPSTREAM_NOTIFY: '回调上游',
   STATUS_CHANGED: '状态变更',
   CALLBACK_RECEIVED: '平台回调'
 };
@@ -156,6 +158,14 @@ function formatTracePayload(obj: Record<string, unknown> | null | undefined) {
   } catch {
     return String(obj);
   }
+}
+
+/** 订单链路：下游提交失败时 payload_out.details（各通道可统一使用该字段） */
+function traceDownstreamDetails(out: Record<string, unknown> | null | undefined): string {
+  if (!out || typeof out !== 'object') return '';
+  const d = out.details;
+  if (typeof d === 'string' && d.trim()) return d.trim();
+  return '';
 }
 
 async function openTraceDrawer(row: Order) {
@@ -927,6 +937,16 @@ function formatLocalDatetime(ts: number | null) {
               <span v-if="ev.actor"> · {{ ev.actor }}</span>
               <span v-if="ev.duration_ms"> · {{ ev.duration_ms }}ms</span>
             </div>
+            <NAlert
+              v-if="ev.node === 'DOWNSTREAM_SUBMIT' && traceDownstreamDetails(ev.payload_out as Record<string, unknown>)"
+              type="error"
+              size="small"
+              class="mt-6px"
+              :show-icon="true"
+              title="下游说明"
+            >
+              {{ traceDownstreamDetails(ev.payload_out as Record<string, unknown>) }}
+            </NAlert>
             <pre
               v-if="formatTracePayload(ev.payload_in as Record<string, unknown>)"
               class="mt-4px text-11px bg-gray-100 dark:bg-gray-800 p-8px rounded overflow-x-auto max-h-120px"

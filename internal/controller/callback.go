@@ -524,6 +524,42 @@ func (c *CallbackController) HandleKasushouCallback(ctx *gin.Context) {
 	ctx.String(200, "ok")
 }
 
+// HandleTurboCallback 处理 Turbo 平台回调（JSON Body）
+func (c *CallbackController) HandleTurboCallback(ctx *gin.Context) {
+	userIDStr := ctx.Param("userid")
+	if userIDStr == "" {
+		resp.Error(ctx, 400, "缺少userid")
+		return
+	}
+	if _, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr); err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("Turbo 回调账号不存在", logger.ErrorV2(err))
+		resp.Error(ctx, 400, "平台账号不存在")
+		return
+	}
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		resp.Error(ctx, 400, "读取请求体失败")
+		return
+	}
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到 Turbo 回调",
+		logger.StringV2("userid", userIDStr),
+		logger.StringV2("raw_preview", truncateStr(string(body), 800)),
+	)
+	if err := c.rechargeService.HandleCallback(ctx.Request.Context(), "turbo", body); err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("Turbo 回调处理失败", logger.ErrorV2(err))
+		resp.Error(ctx, 500, err.Error())
+		return
+	}
+	ctx.JSON(http.StatusOK, gin.H{"status": "success", "message": "ok"})
+}
+
+func truncateStr(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
 // HandleShangtengCallback 处理商腾科技平台回调
 func (c *CallbackController) HandleShangtengCallback(ctx *gin.Context) {
 	// 1. 获取userid

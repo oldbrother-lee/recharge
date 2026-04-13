@@ -112,6 +112,7 @@ func SetupRouterV2(
 				callback.POST("/lingshi/:userid", controllers.Callback.HandleLingshiCallback)
 				callback.POST("/kasushou/:userid", controllers.Callback.HandleKasushouCallback)
 				callback.POST("/shangteng/:userid", controllers.Callback.HandleShangtengCallback)
+				callback.POST("/turbo/:userid", controllers.Callback.HandleTurboCallback)
 			}
 		}
 

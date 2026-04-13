@@ -40,6 +40,7 @@ func (n *NotificationApp) Initialize() error {
 	n.notificationTask = task.NewNotificationTask(
 		n.container.GetServices().Notification,
 		n.container.GetServices().Order,
+		n.container.GetServices().OrderTrace,
 		n.container.GetServices().Platform,
 		queueInstance,
 		maxRetries, // 从配置读取最大重试次数

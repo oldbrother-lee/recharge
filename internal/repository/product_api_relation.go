@@ -35,7 +35,8 @@ func (r *productAPIRelationRepository) Create(ctx context.Context, relation *mod
 
 // Update 更新商品接口关联
 func (r *productAPIRelationRepository) Update(ctx context.Context, relation *model.ProductAPIRelation) error {
-	return r.db.WithContext(ctx).Save(relation).Error
+	// 避免 Save 把零值 created_at 写入 MySQL（严格模式报 1292）；ProductName/APIName 仅列表 JOIN 填充，勿清空库内字段
+	return r.db.WithContext(ctx).Omit("CreatedAt", "ProductName", "APIName").Save(relation).Error
 }
 
 // Delete 删除商品接口关联

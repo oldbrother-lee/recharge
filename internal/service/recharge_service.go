@@ -467,6 +467,8 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		orderState = model.OrderStatusFailed
 	case "processing":
 		orderState = model.OrderStatusRecharging
+	case "partial":
+		orderState = model.OrderStatusPartial
 	default:
 		tx.Rollback()
 		logger.WithContextCategory(ctx, "recharge").Error("未知的订单状态", logger.StringV2("status", callbackData.Status))
@@ -1829,7 +1831,8 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 		return fmt.Errorf("通过 %s 获取平台失败: %v", api.Code, err)
 	}
 	t0 := time.Now()
-	err = platform.SubmitOrder(ctx, order, api, apiParam)
+	submitCtx, submitTraceCollector := recharge.WithSubmitTraceCollector(ctx)
+	err = platform.SubmitOrder(submitCtx, order, api, apiParam)
 	durMs := time.Since(t0).Milliseconds()
 	if err != nil {
 		if s.orderTrace != nil {
@@ -1839,11 +1842,8 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 				Status:     model.TraceStatusFailed,
 				DurationMs: durMs,
 				Actor:      "recharge",
-				PayloadIn: map[string]interface{}{
-					"order_number": order.OrderNumber, "out_trade_num": order.OutTradeNum,
-					"mobile": order.Mobile, "submit_order_number": order.OrderNumber,
-				},
-				PayloadOut: map[string]interface{}{"error": err.Error()},
+				PayloadIn:  recharge.BuildSubmitTracePayloadIn(order, submitTraceCollector),
+				PayloadOut: recharge.SubmitFailurePayload(err),
 			})
 		}
 		return fmt.Errorf("submit order failed: %v", err)
@@ -1855,10 +1855,7 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 			Status:     model.TraceStatusSuccess,
 			DurationMs: durMs,
 			Actor:      "recharge",
-			PayloadIn: map[string]interface{}{
-				"order_number": order.OrderNumber, "out_trade_num": order.OutTradeNum,
-				"mobile": order.Mobile, "submit_order_number": order.OrderNumber,
-			},
+			PayloadIn: recharge.BuildSubmitTracePayloadIn(order, submitTraceCollector),
 			PayloadOut: map[string]interface{}{
 				"api_order_number": order.APIOrderNumber, "api_trade_num": order.APITradeNum,
 			},
@@ -1956,7 +1953,8 @@ func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *mod
 		})
 	}
 	t0 := time.Now()
-	if err := s.manager.SubmitOrder(ctx, order, api, apiParam); err != nil {
+	submitCtx, submitTraceCollector := recharge.WithSubmitTraceCollector(ctx)
+	if err := s.manager.SubmitOrder(submitCtx, order, api, apiParam); err != nil {
 		if s.orderTrace != nil {
 			s.orderTrace.Record(ctx, &model.OrderTraceInput{
 				OrderID:    order.ID,
@@ -1964,7 +1962,8 @@ func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *mod
 				Status:     model.TraceStatusFailed,
 				DurationMs: time.Since(t0).Milliseconds(),
 				Actor:      "retry",
-				PayloadOut: map[string]interface{}{"error": err.Error()},
+				PayloadIn:  recharge.BuildSubmitTracePayloadIn(order, submitTraceCollector),
+				PayloadOut: recharge.SubmitFailurePayload(err),
 			})
 		}
 		logger.WithContextCategory(ctx, "recharge").Error("【提交订单到平台失败】", logger.Int64V2("retry_id", retryRecord.ID), logger.Int64V2("order_id", retryRecord.OrderID), logger.ErrorV2(err))
@@ -1977,6 +1976,7 @@ func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *mod
 			Status:     model.TraceStatusSuccess,
 			DurationMs: time.Since(t0).Milliseconds(),
 			Actor:      "retry",
+			PayloadIn:  recharge.BuildSubmitTracePayloadIn(order, submitTraceCollector),
 			PayloadOut: map[string]interface{}{
 				"api_order_number": order.APIOrderNumber, "api_trade_num": order.APITradeNum,
 			},

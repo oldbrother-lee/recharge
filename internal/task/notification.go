@@ -21,6 +21,7 @@ import (
 type NotificationTask struct {
 	notificationService notificationService.NotificationService
 	orderService        service.OrderService
+	orderTraceService   *service.OrderTraceService
 	platformService     *service.PlatformService
 	queue               queue.Queue
 	queueName           string
@@ -35,6 +36,7 @@ type NotificationTask struct {
 func NewNotificationTask(
 	notificationService notificationService.NotificationService,
 	orderService service.OrderService,
+	orderTraceService *service.OrderTraceService,
 	platformService *service.PlatformService,
 	queue queue.Queue,
 	maxRetries int,
@@ -43,6 +45,7 @@ func NewNotificationTask(
 	return &NotificationTask{
 		notificationService: notificationService,
 		orderService:        orderService,
+		orderTraceService:   orderTraceService,
 		platformService:     platformService,
 		queue:               queue,
 		queueName:           "notification_queue",
@@ -52,6 +55,39 @@ func NewNotificationTask(
 		jobChan:             make(chan *notificationModel.NotificationRecord, 100), // 任务通道缓冲区大小100
 		logger:              logger,
 	}
+}
+
+func (t *NotificationTask) recordNotifyTrace(ctx context.Context, order *model.Order, record *notificationModel.NotificationRecord, st string, phase string, durationMs int64, err error) {
+	if t.orderTraceService == nil || order == nil {
+		return
+	}
+	// 订单链路中的“回调上游”仅展示真正回调通知，避免把预上报混入时序
+	if record == nil || (record.NotificationType != "order_status_changed" && record.NotificationType != "order_callback") {
+		return
+	}
+	payload := map[string]interface{}{
+		"phase":             phase, // send_success / send_failed / skipped_non_terminal
+		"notification_id":   record.ID,
+		"notification_type": record.NotificationType,
+		"target_status":     record.TargetStatus,
+		"retry_count":       record.RetryCount,
+		"attempt_no":        record.RetryCount + 1,
+		"platform_code":     record.PlatformCode,
+		"callback_url":      order.PlatformCallbackURL,
+		"order_number":      order.OrderNumber,
+		"direction":         "notify_result",
+	}
+	if err != nil {
+		payload["error"] = err.Error()
+	}
+	t.orderTraceService.Record(ctx, &model.OrderTraceInput{
+		OrderID:    order.ID,
+		Node:       model.TraceNodeUpstreamNotify,
+		Status:     st,
+		DurationMs: durationMs,
+		Actor:      "notification",
+		PayloadOut: payload,
+	})
 }
 
 // Start 启动通知任务处理器
@@ -238,8 +274,10 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 		)
 	}
 	// 发送通知
+	t0 := time.Now()
 	if err := t.platformService.SendNotification(ctx, order); err != nil {
 		if errors.Is(err, service.ErrSkipNonTerminal) {
+			t.recordNotifyTrace(ctx, order, dbRecord, model.TraceStatusInfo, "skipped_non_terminal", time.Since(t0).Milliseconds(), nil)
 			logger.WithContextCategory(ctx, "notification_task").Info("跳过非终态通知，不标记成功也不重试",
 				logger.Int64V2("notification_id", dbRecord.ID),
 				logger.Int64V2("order_id", dbRecord.OrderID),
@@ -255,6 +293,7 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 			return nil
 		}
 		// 记录通知发送失败的详细错误信息
+		t.recordNotifyTrace(ctx, order, dbRecord, model.TraceStatusFailed, "send_failed", time.Since(t0).Milliseconds(), err)
 		logger.WithContextCategory(ctx, "notification_task").Error("通知发送失败",
 			logger.ErrorV2(err),
 			logger.Int64V2("notification_id", dbRecord.ID),
@@ -302,6 +341,7 @@ func (t *NotificationTask) processSingleNotification(ctx context.Context, record
 	}
 
 	// 通知发送成功，标记为已完成
+	t.recordNotifyTrace(ctx, order, dbRecord, model.TraceStatusSuccess, "send_success", time.Since(t0).Milliseconds(), nil)
 	if err := t.notificationService.UpdateNotificationStatus(ctx, dbRecord.ID, 3); err != nil {
 		logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态失败", logger.ErrorV2(err), logger.Int64V2("notification_id", dbRecord.ID), logger.Int64V2("order_id", dbRecord.OrderID), logger.IntV2("retry_count", dbRecord.RetryCount), logger.StringV2("platform_code", dbRecord.PlatformCode))
 	}
@@ -382,8 +422,10 @@ func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, 
 	}
 
 	// 发送通知
+	t0 := time.Now()
 	if err := t.platformService.SendNotification(ctx, order); err != nil {
 		if errors.Is(err, service.ErrSkipNonTerminal) {
+			t.recordNotifyTrace(ctx, order, record, model.TraceStatusInfo, "skipped_non_terminal", time.Since(t0).Milliseconds(), nil)
 			logger.WithContextCategory(ctx, "notification_task").Info("跳过非终态通知，不标记成功也不重试",
 				logger.Int64V2("notification_id", record.ID),
 				logger.Int64V2("order_id", record.OrderID),
@@ -397,6 +439,7 @@ func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, 
 			return nil
 		}
 		// 记录失败
+		t.recordNotifyTrace(ctx, order, record, model.TraceStatusFailed, "send_failed", time.Since(t0).Milliseconds(), err)
 		logger.WithContextCategory(ctx, "notification_task").Error("通知发送失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID), logger.Int64V2("order_id", record.OrderID), logger.StringV2("order_number", order.OrderNumber), logger.IntV2("retry_count", record.RetryCount), logger.StringV2("platform_code", record.PlatformCode))
 		// 重试策略
 		if record.RetryCount < t.maxRetries {
@@ -414,6 +457,7 @@ func (t *NotificationTask) sendNotificationWithQueueRecord(ctx context.Context, 
 	}
 
 	// 成功
+	t.recordNotifyTrace(ctx, order, record, model.TraceStatusSuccess, "send_success", time.Since(t0).Milliseconds(), nil)
 	if err := t.notificationService.UpdateNotificationStatus(ctx, record.ID, 3); err != nil {
 		logger.WithContextCategory(ctx, "notification_task").Error("更新通知状态失败", logger.ErrorV2(err), logger.Int64V2("notification_id", record.ID))
 	}

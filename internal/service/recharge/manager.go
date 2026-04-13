@@ -41,6 +41,7 @@ func NewManager(db *gorm.DB) *Manager {
 			"kasushou":     reflect.TypeOf((*KasushouPlatform)(nil)).Elem(),
 			// 新增商腾科技平台类型
 			"shangteng":    reflect.TypeOf((*ShangtengPlatform)(nil)).Elem(),
+			"turbo":        reflect.TypeOf((*TurboPlatform)(nil)).Elem(),
 		},
 	}
 }
@@ -99,6 +100,8 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewKasushouPlatform(m.platformRepo.GetDB())
 	case "shangteng":
 		platform = NewShangtengPlatform(m.platformRepo.GetDB())
+	case "turbo":
+		platform = NewTurboPlatform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}
@@ -197,6 +200,8 @@ func (m *Manager) getPlatformTypeByName(name string) reflect.Type {
 		return reflect.TypeOf((*KasushouPlatform)(nil)).Elem()
 	case "shangteng":
 		return reflect.TypeOf((*ShangtengPlatform)(nil)).Elem()
+	case "turbo":
+		return reflect.TypeOf((*TurboPlatform)(nil)).Elem()
 	default:
 		return nil
 	}

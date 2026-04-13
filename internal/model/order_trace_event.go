@@ -12,6 +12,7 @@ const (
 	TraceNodeQueued             = "QUEUED"
 	TraceNodeRouteSelected      = "ROUTE_SELECTED"
 	TraceNodeDownstreamSubmit   = "DOWNSTREAM_SUBMIT"
+	TraceNodeUpstreamNotify     = "UPSTREAM_NOTIFY"
 	TraceNodeStatusChanged      = "STATUS_CHANGED"
 	TraceNodeCallbackReceived   = "CALLBACK_RECEIVED"
 )

@@ -108,6 +108,7 @@ type orderService struct {
 	creditService          *CreditService
 	balanceQueryRecordRepo repository.BalanceQueryRecordRepository
 	notificationHelper     *NotificationHelper
+	orderTrace             *OrderTraceService
 }
 
 // NewOrderService 创建订单服务实例
@@ -124,6 +125,7 @@ func NewOrderService(
 	productRepo repository.ProductRepository,
 	creditService *CreditService,
 	balanceQueryRecordRepo repository.BalanceQueryRecordRepository,
+	orderTrace *OrderTraceService,
 ) OrderService {
 	return &orderService{
 		orderRepo:              orderRepo,
@@ -139,6 +141,7 @@ func NewOrderService(
 		creditService:          creditService,
 		balanceQueryRecordRepo: balanceQueryRecordRepo,
 		notificationHelper:     NewNotificationHelper(db, notificationRepo, queue),
+		orderTrace:             orderTrace,
 	}
 }
 
@@ -166,6 +169,7 @@ func (s *orderService) CreateOrder(ctx context.Context, order *model.Order) erro
 	if err := s.orderRepo.Create(ctx, order); err != nil {
 		return err
 	}
+	s.recordOrderCreated(ctx, order, orderCreateSource(order))
 
 	// 自动取单订单创建后，发送“接单/处理中”预上报通知
 	if order.Client == 3 {
@@ -698,8 +702,8 @@ func (s *orderService) ProcessOrderFail(ctx context.Context, orderID int64, rema
 		if lockedOrder.Status == model.OrderStatusPendingRecharge || lockedOrder.Status == model.OrderStatusRecharging || lockedOrder.Status == model.OrderStatusProcessing || lockedOrder.Status == model.OrderStatusPendingRefundReview {
 			// 使用统一退款服务处理退款
 			var refundReq *RefundRequest
-			if lockedOrder.Client == 2 {
-				// 外部订单直接退款到用户余额
+			if model.IsUserBalanceExternalStyle(lockedOrder.Client) {
+				// 外部 / 手动下单：退用户余额
 				log.WithContextCategory(ctx, "order").Info("外部订单失败，使用统一退款服务退款到用户余额",
 					log.Int64V2("order_id", orderID),
 					log.Int64V2("customer_id", lockedOrder.CustomerID),
@@ -844,8 +848,8 @@ func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, re
 		}
 
 		// 3. 执行退款逻辑
-		if lockedOrder.Client == 2 {
-			// 外部订单退款到用户余额（使用当前事务）
+		if model.IsUserBalanceExternalStyle(lockedOrder.Client) {
+			// 外部 API / 手动下单：退款到用户余额（使用当前事务）
 			balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
 			if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, orderID, fmt.Sprintf("订单退款: %s", remark), "admin"); err != nil {
 				log.WithContextCategory(ctx, "order").Error("外部订单退款失败", log.ErrorV2(err), log.Int64V2("order_id", orderID))
@@ -936,8 +940,8 @@ func (s *orderService) ProcessExternalRefund(ctx context.Context, outTradeNum st
 			}
 		}
 
-		// 3. 检查是否为外部订单
-		if lockedOrder.Client != 2 {
+		// 3. 检查是否为外部 API / 手动下单（用户余额类）
+		if !model.IsUserBalanceExternalStyle(lockedOrder.Client) {
 			log.WithContextCategory(ctx, "order").Error("非外部订单，不能使用此退款方法",
 				log.Int64V2("order_id", lockedOrder.ID),
 				log.IntV2("client", lockedOrder.Client),
@@ -1192,6 +1196,8 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 		logger.StringV2("order_number", order.OrderNumber),
 		logger.IntV2("status", int(order.Status)))
 
+	s.recordOrderCreated(ctx, order, externalOrderCreateSource(order))
+
 	// 6. 处理得众平台预通知（仅针对自动取单订单）
 	if order.Client == 3 && order.PlatformCode == "dz" {
 		if notifyErr := s.notificationHelper.SendOrderPreReport(ctx, order); notifyErr != nil {
@@ -1281,7 +1287,7 @@ func (s *orderService) CreateManualAgentOrder(ctx context.Context, agentUserID i
 		Denom:       denom,
 		ISP:         resolvedISP,
 		Remark:      remark,
-		Client:      2,
+		Client:      model.OrderClientAgentManual,
 		IsDel:       0,
 	}
 
@@ -1381,6 +1387,8 @@ func (s *orderService) CreateExternalOrderWithoutDeduction(ctx context.Context, 
 		logger.Int64V2("order_id", order.ID),
 		logger.StringV2("order_number", order.OrderNumber),
 		logger.IntV2("status", int(order.Status)))
+
+	s.recordOrderCreated(ctx, order, "pull_no_deduction")
 
 	// 4. 处理得众平台预通知（仅针对自动取单订单）
 	if order.Client == 3 && order.PlatformCode == "dz" {
@@ -1643,5 +1651,38 @@ func (s *orderService) SendNotification(ctx context.Context, orderID int64) erro
 	return nil
 }
 
-// GetOrdersByUserID 根据用户ID获取订单列表
-// 删除：
+func orderCreateSource(o *model.Order) string {
+	if o.Client == 3 {
+		return "pull_task"
+	}
+	return "portal"
+}
+
+func externalOrderCreateSource(o *model.Order) string {
+	if o.Client == model.OrderClientAgentManual {
+		return "agent_manual"
+	}
+	return "external_api"
+}
+
+func (s *orderService) recordOrderCreated(ctx context.Context, order *model.Order, source string) {
+	if s.orderTrace == nil || order == nil {
+		return
+	}
+	s.orderTrace.Record(ctx, &model.OrderTraceInput{
+		OrderID: order.ID,
+		Node:    model.TraceNodeOrderCreated,
+		Status:  model.TraceStatusSuccess,
+		Actor:   "system",
+		PayloadIn: map[string]interface{}{
+			"source":        source,
+			"order_number":  order.OrderNumber,
+			"out_trade_num": order.OutTradeNum,
+			"mobile":        order.Mobile,
+			"status":        int(order.Status),
+			"client":        order.Client,
+			"product_id":    order.ProductID,
+			"price":         order.Price,
+		},
+	})
+}

@@ -145,7 +145,7 @@ func TestConcurrentOrderFailRefund(t *testing.T) {
 	// 创建余额查询记录仓库
 	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
 
-	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, rechargeService, unifiedRefundService, refundLockManager, notificationRepo, queueInstance, db, nil, creditService, balanceQueryRecordRepo)
+	orderService := service.NewOrderService(orderRepo, balanceLogRepo, userRepo, rechargeService, unifiedRefundService, refundLockManager, notificationRepo, queueInstance, db, nil, creditService, balanceQueryRecordRepo, nil)
 
 	// 5. 并发执行订单失败处理
 	var wg sync.WaitGroup

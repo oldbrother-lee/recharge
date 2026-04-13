@@ -66,9 +66,7 @@ const ispOptions = [
 ];
 
 function fillDefaultOutTradeNum() {
-  if (!form.value.out_trade_num) {
-    form.value.out_trade_num = `MAN${Date.now()}`;
-  }
+  form.value.out_trade_num = `MAN${Date.now()}${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function applyIspFromProduct(productId: number | null) {

@@ -60,6 +60,7 @@ func AutoMigrateDB(db *gorm.DB) error {
 		&model.ExternalOrderLog{},
 		&model.BalanceQueryRecord{},
 		&model.OrderException{},
+		&model.OrderTraceEvent{},
 		&model.OrderRetryRecord{},
 		&model.PlatformAccountVariant{},
 		&model.PullTaskConfig{},

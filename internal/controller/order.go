@@ -19,11 +19,12 @@ import (
 
 type OrderController struct {
 	orderService service.OrderService
+	orderTrace   *service.OrderTraceService
 }
 
 // NewOrderController 创建订单控制器
-func NewOrderController(orderService service.OrderService) *OrderController {
-	return &OrderController{orderService: orderService}
+func NewOrderController(orderService service.OrderService, orderTrace *service.OrderTraceService) *OrderController {
+	return &OrderController{orderService: orderService, orderTrace: orderTrace}
 }
 
 // CreateOrder 创建订单
@@ -104,6 +105,26 @@ func (c *OrderController) CreateAgentManualOrder(ctx *gin.Context) {
 		return
 	}
 	resp.Success(ctx, order)
+}
+
+// GetOrderTraceEvents 订单链路时间线（按事件 id 升序）
+func (c *OrderController) GetOrderTraceEvents(ctx *gin.Context) {
+	id := ctx.Param("id")
+	orderID, err := strconv.ParseInt(id, 10, 64)
+	if err != nil {
+		resp.Error(ctx, http.StatusBadRequest, "invalid order id")
+		return
+	}
+	if c.orderTrace == nil {
+		resp.Success(ctx, []any{})
+		return
+	}
+	events, err := c.orderTrace.ListByOrderID(ctx.Request.Context(), orderID)
+	if err != nil {
+		resp.Error(ctx, http.StatusInternalServerError, err.Error())
+		return
+	}
+	resp.Success(ctx, events)
 }
 
 // GetOrderByID 根据ID获取订单

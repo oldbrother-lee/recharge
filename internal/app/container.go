@@ -76,6 +76,7 @@ type Repositories struct {
 	SystemConfig           *repository.SystemConfigRepository  // 添加SystemConfig repository
 	ExternalAPIKey         repository.ExternalAPIKeyRepository // 添加ExternalAPIKey repository
 	OrderException         repository.OrderExceptionRepository // 添加OrderException repository
+	OrderTrace             repository.OrderTraceRepository
 
 }
 
@@ -115,6 +116,7 @@ type Services struct {
 	SystemConfig           *service.SystemConfigService  // 添加SystemConfig服务
 	PhoneQuery             service.PhoneQueryService     // 添加PhoneQuery服务
 	OrderException         service.OrderExceptionService // 添加OrderException服务
+	OrderTrace             *service.OrderTraceService
 
 }
 
@@ -300,6 +302,7 @@ func (c *Container) initRepositories() {
 		SystemConfig:           repository.NewSystemConfigRepository(c.db),
 		ExternalAPIKey:         repository.NewExternalAPIKeyRepository(c.db),
 		OrderException:         repository.NewOrderExceptionRepository(c.db),
+		OrderTrace:             repository.NewOrderTraceRepository(c.db),
 	}
 }
 
@@ -394,6 +397,8 @@ func (c *Container) initServices() error {
 		refundLockManager,
 	)
 
+	c.services.OrderTrace = service.NewOrderTraceService(c.repositories.OrderTrace)
+
 	// 创建充值服务
 	c.services.Recharge = service.NewRechargeService(
 		c.db,
@@ -413,6 +418,7 @@ func (c *Container) initServices() error {
 		c.services.SystemConfig,           // 添加系统配置服务
 		c.repositories.Notification,
 		queueInstance,
+		c.services.OrderTrace,
 	)
 
 	// 创建订单服务
@@ -429,6 +435,7 @@ func (c *Container) initServices() error {
 		c.repositories.Product,
 		c.services.Credit,
 		c.repositories.BalanceQueryRecord,
+		c.services.OrderTrace,
 	)
 
 	// 设置相互依赖

@@ -219,7 +219,7 @@ func (c *ExternalOrderController) CreateOrder(ctx *gin.Context) {
 		CustomerID:          req.CustomerID,
 		ISP:                 req.ISP,
 		Remark:              req.Remark,
-		Client:              2, // 外部API
+		Client:              model.OrderClientExternalAPI,
 		PlatformCallbackURL: req.NotifyURL,
 	}
 

@@ -61,6 +61,18 @@ func (s OrderStatus) String() string {
 	}
 }
 
+// 订单 client 字段：来源/下单方式
+const (
+	OrderClientExternalAPI = 2 // 开放 API 外部下单
+	OrderClientPullOrTask  = 3 // 拉单或三方任务单（得众、MF178 等）
+	OrderClientAgentManual = 8 // 代理商后台手动下单（与 2 相同走用户余额/授信，但需单独展示来源）
+)
+
+// IsUserBalanceExternalStyle 用户余额/授信扣款、失败时退用户余额（与开放 API 订单一致处理）
+func IsUserBalanceExternalStyle(client int) bool {
+	return client == OrderClientExternalAPI || client == OrderClientAgentManual
+}
+
 // Order 订单模型
 type Order struct {
 	ID                int64       `json:"id" gorm:"primaryKey"`

@@ -55,6 +55,9 @@ func RegisterOrderRoutes(r *gin.RouterGroup, db *gorm.DB, userService *service.U
 	// 创建余额查询记录仓库
 	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
 
+	orderTraceRepo := repository.NewOrderTraceRepository(db)
+	orderTraceSvc := service.NewOrderTraceService(orderTraceRepo)
+
 	// 创建订单服务
 	orderService := service.NewOrderService(
 		orderRepo,
@@ -69,6 +72,7 @@ func RegisterOrderRoutes(r *gin.RouterGroup, db *gorm.DB, userService *service.U
 		productRepo,
 		creditService,
 		balanceQueryRecordRepo,
+		orderTraceSvc,
 	)
 
 	userBalanceService := service.NewBalanceService(balanceLogRepo, userRepo)
@@ -124,19 +128,21 @@ func RegisterOrderRoutes(r *gin.RouterGroup, db *gorm.DB, userService *service.U
 		systemConfigService,    // 添加系统配置服务
 		notificationRepo,
 		queueInstance,
+		orderTraceSvc,
 	)
 
 	// 设置 orderService 的 rechargeService
 	orderService.SetRechargeService(rechargeService)
 
 	// 创建控制器
-	orderController := controller.NewOrderController(orderService)
+	orderController := controller.NewOrderController(orderService, orderTraceSvc)
 
 	// 注册路由
 	order := r.Group("/order")
 	{
 		order.GET("/list", orderController.GetOrders)   // 获取订单列表（管理员接口）
 		order.POST("/manual", orderController.CreateAgentManualOrder) // 代理商手动下单
+		order.GET("/:id/trace", orderController.GetOrderTraceEvents) // 订单链路
 		order.GET("/:id", orderController.GetOrderByID) // 获取订单详情
 		order.POST("", orderController.CreateOrder)     // 创建订单
 		// order.PUT("/:id/status", orderController.UpdateOrderStatus)                // 更新订单状态

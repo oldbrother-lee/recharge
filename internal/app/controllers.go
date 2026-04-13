@@ -48,7 +48,7 @@ func (c *Container) initControllers() {
 		Statistics:    controller.NewStatisticsController(c.services.Statistics),
 		Callback:      controller.NewCallbackController(c.services.Recharge, c.repositories.Platform, c.repositories.Order),
 		MF178Order:    controller.NewMF178OrderController(c.services.Order, c.services.Recharge, c.repositories.Platform, c.repositories.Product),
-		Order:         controller.NewOrderController(c.services.Order),
+		Order:         controller.NewOrderController(c.services.Order, c.services.OrderTrace),
 		Platform:      controller.NewPlatformController(c.services.Platform, c.services.PlatformSvc),
 		UserGrade:     controller.NewUserGradeController(c.services.UserGrade),
 

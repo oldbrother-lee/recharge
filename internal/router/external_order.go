@@ -50,6 +50,8 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 
 	// 创建余额查询记录仓库
 	balanceQueryRecordRepo := repository.NewBalanceQueryRecordRepository(db)
+	orderTraceRepo := repository.NewOrderTraceRepository(db)
+	orderTraceSvc := service.NewOrderTraceService(orderTraceRepo)
 
 	// 创建系统配置服务
 	systemConfigRepo := repository.NewSystemConfigRepository(db)
@@ -99,6 +101,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		systemConfigService,    // 添加系统配置服务
 		notificationRepo,
 		queueInstance,
+		orderTraceSvc,
 	)
 
 	// 创建分布式锁管理器
@@ -134,6 +137,7 @@ func RegisterExternalOrderRoutes(r *gin.RouterGroup, db *gorm.DB) {
 		productRepo,
 		creditService,
 		balanceQueryRecordRepo,
+		orderTraceSvc,
 	)
 
 	// 设置相互依赖

@@ -85,6 +85,7 @@ type rechargeService struct {
 	queue                  queue.Queue
 	orderService           OrderService
 	notificationHelper     *NotificationHelper
+	orderTrace             *OrderTraceService
 }
 
 // NewRechargeService 创建充值服务实例
@@ -106,6 +107,7 @@ func NewRechargeService(
 	systemConfigService *SystemConfigService, // 系统配置服务参数
 	notificationRepo notificationRepo.Repository,
 	queue queue.Queue,
+	orderTrace *OrderTraceService,
 ) *rechargeService {
 	return &rechargeService{
 		db:                     db,
@@ -129,6 +131,7 @@ func NewRechargeService(
 		notificationRepo:       notificationRepo,
 		queue:                  queue,
 		notificationHelper:     NewNotificationHelper(db, notificationRepo, queue),
+		orderTrace:             orderTrace,
 	}
 }
 
@@ -517,6 +520,19 @@ func (s *rechargeService) HandleCallback(ctx context.Context, platformName strin
 		logger.StringV2("mapped_state", fmt.Sprintf("%v", orderState)),
 		logger.Int64V2("product_id", order.ProductID),
 	)
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID: order.ID,
+			Node:    model.TraceNodeCallbackReceived,
+			Status:  model.TraceStatusInfo,
+			Actor:   "callback",
+			PayloadIn: map[string]interface{}{
+				"platform": platformName, "callback_type": callbackData.CallbackType,
+				"status_raw": callbackData.Status, "mapped": fmt.Sprintf("%v", orderState),
+				"transaction_id": callbackData.TransactionID, "order_id_param": callbackData.OrderID,
+			},
+		})
+	}
 
 	// 4.2 终态门槛：订单已终态(成功/失败)则忽略本次回调，不修改订单状态
 	if order.Status == model.OrderStatusSuccess || order.Status == model.OrderStatusFailed {
@@ -678,6 +694,17 @@ func (s *rechargeService) handleFailedOrderCallback(ctx context.Context, tx *gor
 	}
 
 	logger.WithContextCategory(ctx, "recharge").Info("失败订单回调处理完成", logger.Int64V2("order_id", order.ID), logger.StringV2("order_number", order.OrderNumber))
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID: order.ID,
+			Node:    model.TraceNodeStatusChanged,
+			Status:  model.TraceStatusSuccess,
+			Actor:   "callback",
+			PayloadIn: map[string]interface{}{
+				"from": int(order.Status), "to": int(model.OrderStatusFailed), "source": "platform_callback",
+			},
+		})
+	}
 	return nil
 }
 
@@ -764,6 +791,17 @@ func (s *rechargeService) handleSuccessOrderCallback(ctx context.Context, tx *go
 		logger.StringV2("order_number", order.OrderNumber),
 		logger.StringV2("status", fmt.Sprintf("%v", orderState)),
 	)
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID: order.ID,
+			Node:    model.TraceNodeStatusChanged,
+			Status:  model.TraceStatusSuccess,
+			Actor:   "callback",
+			PayloadIn: map[string]interface{}{
+				"from": int(order.Status), "to": int(orderState), "source": "platform_callback",
+			},
+		})
+	}
 	return nil
 }
 
@@ -1055,7 +1093,7 @@ func (s *rechargeService) ProcessRechargeTask(ctx context.Context, order *model.
 	}
 
 	// 检查是否需要扣款（外部订单在创建时已扣款）
-	if order.Client == 2 { // 外部API订单
+	if model.IsUserBalanceExternalStyle(order.Client) { // 外部 API / 代理商手动下单
 		logger.WithContextCategory(ctx, "recharge").Info("【外部订单已预扣款，跳过扣款步骤】",
 			logger.Int64V2("order_id", order.ID),
 			logger.IntV2("client", order.Client))
@@ -1584,6 +1622,17 @@ func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64
 		logger.WithContextCategory(ctx, "recharge").Info("【订单已在充值队列中，跳过推送】",
 			logger.Int64V2("order_id", orderID),
 			logger.Int64V2("position", exists))
+		if s.orderTrace != nil {
+			s.orderTrace.Record(ctx, &model.OrderTraceInput{
+				OrderID: orderID,
+				Node:    model.TraceNodeQueued,
+				Status:  model.TraceStatusInfo,
+				Actor:   "system",
+				PayloadOut: map[string]interface{}{
+					"queue": "recharge_queue", "note": "already_in_queue", "position": exists,
+				},
+			})
+		}
 		return nil
 	}
 	// 如果是redis.Nil错误，说明订单不在队列中，可以继续推送
@@ -1605,6 +1654,15 @@ func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64
 	logger.WithContextCategory(ctx, "recharge").Info("【推送订单到充值队列成功】",
 		logger.StringV2("stage", "enqueue"),
 		logger.Int64V2("order_id", orderID))
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID: orderID,
+			Node:    model.TraceNodeQueued,
+			Status:  model.TraceStatusSuccess,
+			Actor:   "system",
+			PayloadOut: map[string]interface{}{"queue": "recharge_queue"},
+		})
+	}
 	return nil
 }
 
@@ -1741,15 +1799,70 @@ func (s *rechargeService) CheckRechargingOrders(ctx context.Context) error {
 
 // SubmitOrder 提交订单到平台
 func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, api *model.PlatformAPI, apiParam *model.PlatformAPIParam) error {
+	oldStatus := order.Status
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID: order.ID,
+			Node:    model.TraceNodeRouteSelected,
+			Status:  model.TraceStatusSuccess,
+			Actor:   "recharge",
+			PayloadIn: map[string]interface{}{
+				"api_id": api.ID, "api_code": api.Code, "api_name": api.Name,
+				"param_id": apiParam.ID, "platform_id": api.PlatformID,
+			},
+		})
+	}
 	// 获取平台实例
 	platform, err := s.manager.GetPlatform(api.Code)
 	if err != nil {
+		if s.orderTrace != nil {
+			s.orderTrace.Record(ctx, &model.OrderTraceInput{
+				OrderID: order.ID,
+				Node:    model.TraceNodeDownstreamSubmit,
+				Status:  model.TraceStatusFailed,
+				Actor:   "recharge",
+				PayloadOut: map[string]interface{}{
+					"error": fmt.Sprintf("获取平台实例失败: %v", err),
+				},
+			})
+		}
 		return fmt.Errorf("通过 %s 获取平台失败: %v", api.Code, err)
 	}
-	// 提交订单到平台
+	t0 := time.Now()
 	err = platform.SubmitOrder(ctx, order, api, apiParam)
+	durMs := time.Since(t0).Milliseconds()
 	if err != nil {
+		if s.orderTrace != nil {
+			s.orderTrace.Record(ctx, &model.OrderTraceInput{
+				OrderID:    order.ID,
+				Node:       model.TraceNodeDownstreamSubmit,
+				Status:     model.TraceStatusFailed,
+				DurationMs: durMs,
+				Actor:      "recharge",
+				PayloadIn: map[string]interface{}{
+					"order_number": order.OrderNumber, "out_trade_num": order.OutTradeNum,
+					"mobile": order.Mobile, "submit_order_number": order.OrderNumber,
+				},
+				PayloadOut: map[string]interface{}{"error": err.Error()},
+			})
+		}
 		return fmt.Errorf("submit order failed: %v", err)
+	}
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID:    order.ID,
+			Node:       model.TraceNodeDownstreamSubmit,
+			Status:     model.TraceStatusSuccess,
+			DurationMs: durMs,
+			Actor:      "recharge",
+			PayloadIn: map[string]interface{}{
+				"order_number": order.OrderNumber, "out_trade_num": order.OutTradeNum,
+				"mobile": order.Mobile, "submit_order_number": order.OrderNumber,
+			},
+			PayloadOut: map[string]interface{}{
+				"api_order_number": order.APIOrderNumber, "api_trade_num": order.APITradeNum,
+			},
+		})
 	}
 
 	// 开启事务
@@ -1784,6 +1897,18 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 	}
 
 	logger.WithContextCategory(ctx, "recharge").Info("【订单状态和成本价更新成功】", logger.Int64V2("order_id", order.ID), logger.IntV2("status", int(model.OrderStatusRecharging)), logger.Float64V2("const_price", apiParam.Price))
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID: order.ID,
+			Node:    model.TraceNodeStatusChanged,
+			Status:  model.TraceStatusSuccess,
+			Actor:   "recharge",
+			PayloadIn: map[string]interface{}{
+				"from": int(oldStatus), "to": int(model.OrderStatusRecharging),
+				"reason": "submit_ok",
+			},
+		})
+	}
 	return nil
 }
 
@@ -1817,9 +1942,45 @@ func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *mod
 
 	// 4. 提交订单到平台
 	logger.WithContextCategory(ctx, "recharge").Info("【开始提交订单到平台】", logger.Int64V2("retry_id", retryRecord.ID), logger.Int64V2("order_id", retryRecord.OrderID), logger.StringV2("order_number", order.OrderNumber))
+	retryOldStatus := order.Status
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID: order.ID,
+			Node:    model.TraceNodeRouteSelected,
+			Status:  model.TraceStatusSuccess,
+			Actor:   "retry",
+			PayloadIn: map[string]interface{}{
+				"retry_record_id": retryRecord.ID, "api_id": api.ID, "api_code": api.Code,
+				"param_id": apiParam.ID, "platform_id": api.PlatformID,
+			},
+		})
+	}
+	t0 := time.Now()
 	if err := s.manager.SubmitOrder(ctx, order, api, apiParam); err != nil {
+		if s.orderTrace != nil {
+			s.orderTrace.Record(ctx, &model.OrderTraceInput{
+				OrderID:    order.ID,
+				Node:       model.TraceNodeDownstreamSubmit,
+				Status:     model.TraceStatusFailed,
+				DurationMs: time.Since(t0).Milliseconds(),
+				Actor:      "retry",
+				PayloadOut: map[string]interface{}{"error": err.Error()},
+			})
+		}
 		logger.WithContextCategory(ctx, "recharge").Error("【提交订单到平台失败】", logger.Int64V2("retry_id", retryRecord.ID), logger.Int64V2("order_id", retryRecord.OrderID), logger.ErrorV2(err))
 		return fmt.Errorf("submit order failed: %v", err)
+	}
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID:    order.ID,
+			Node:       model.TraceNodeDownstreamSubmit,
+			Status:     model.TraceStatusSuccess,
+			DurationMs: time.Since(t0).Milliseconds(),
+			Actor:      "retry",
+			PayloadOut: map[string]interface{}{
+				"api_order_number": order.APIOrderNumber, "api_trade_num": order.APITradeNum,
+			},
+		})
 	}
 	logger.WithContextCategory(ctx, "recharge").Info("【提交订单到平台成功】", logger.Int64V2("retry_id", retryRecord.ID), logger.Int64V2("order_id", retryRecord.OrderID), logger.StringV2("order_number", order.OrderNumber))
 
@@ -1890,6 +2051,18 @@ func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *mod
 		return fmt.Errorf("commit transaction failed: %v", err)
 	}
 	logger.WithContextCategory(ctx, "recharge").Info("【提交事务成功】", logger.Int64V2("retry_id", retryRecord.ID), logger.Int64V2("order_id", retryRecord.OrderID))
+	if s.orderTrace != nil {
+		s.orderTrace.Record(ctx, &model.OrderTraceInput{
+			OrderID: order.ID,
+			Node:    model.TraceNodeStatusChanged,
+			Status:  model.TraceStatusSuccess,
+			Actor:   "retry",
+			PayloadIn: map[string]interface{}{
+				"from": int(retryOldStatus), "to": int(model.OrderStatusRecharging),
+				"reason": "retry_submit_ok",
+			},
+		})
+	}
 
 	// 9.1 更新订单成本价
 	logger.WithContextCategory(ctx, "recharge").Info("【开始更新订单成本价】", logger.Int64V2("retry_id", retryRecord.ID), logger.Int64V2("order_id", retryRecord.OrderID), logger.Float64V2("const_price", apiParam.Price))

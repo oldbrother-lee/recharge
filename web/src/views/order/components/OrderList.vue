@@ -5,16 +5,21 @@ import {
   NCard,
   NDataTable,
   NDatePicker,
+  NDrawer,
+  NDrawerContent,
   NForm,
   NFormItem,
   NInput,
   NModal,
   NSpace,
+  NSpin,
   NTag,
+  NTimeline,
+  NTimelineItem,
   useMessage
 } from 'naive-ui';
 import type { DataTableColumns } from 'naive-ui';
-import { ORDER_STATUS_MAP } from '@/constants/business';
+import { ORDER_STATUS_MAP, formatOrderSource } from '@/constants/business';
 import { request } from '@/service/request';
 import { useAuthStore } from '@/store/modules/auth';
 import { useAppStore } from '@/store/modules/app';
@@ -111,6 +116,65 @@ const currentDeleteOrder = ref<Order | null>(null);
 const showCleanupModal = ref(false);
 const cleanupRange = ref<{ startTime: number | null; endTime: number | null }>({ startTime: null, endTime: null });
 const cleanupLoading = ref(false);
+
+// 订单链路
+const NODE_LABELS: Record<string, string> = {
+  ORDER_CREATED: '订单创建',
+  QUEUED: '进入充值队列',
+  ROUTE_SELECTED: '路由选路',
+  DOWNSTREAM_SUBMIT: '提交下游',
+  STATUS_CHANGED: '状态变更',
+  CALLBACK_RECEIVED: '平台回调'
+};
+const TRACE_STATUS_TYPE: Record<string, 'default' | 'success' | 'warning' | 'error' | 'info'> = {
+  success: 'success',
+  failed: 'error',
+  pending: 'warning',
+  info: 'info'
+};
+const traceDrawerShow = ref(false);
+const traceLoading = ref(false);
+const traceEvents = ref<OrderTraceEvent[]>([]);
+const traceOrder = ref<Order | null>(null);
+
+type OrderTraceEvent = {
+  id: number;
+  order_id: number;
+  created_at: string;
+  node: string;
+  status: string;
+  duration_ms: number;
+  payload_in?: Record<string, unknown> | null;
+  payload_out?: Record<string, unknown> | null;
+  actor?: string;
+};
+
+function formatTracePayload(obj: Record<string, unknown> | null | undefined) {
+  if (!obj || typeof obj !== 'object') return '';
+  try {
+    return JSON.stringify(obj, null, 2);
+  } catch {
+    return String(obj);
+  }
+}
+
+async function openTraceDrawer(row: Order) {
+  traceOrder.value = row;
+  traceDrawerShow.value = true;
+  traceLoading.value = true;
+  traceEvents.value = [];
+  try {
+    const res = await request<OrderTraceEvent[]>({
+      url: `/order/${row.id}/trace`,
+      method: 'GET'
+    });
+    traceEvents.value = Array.isArray(res.data) ? res.data : [];
+  } catch {
+    message.error('加载订单链路失败');
+  } finally {
+    traceLoading.value = false;
+  }
+}
 
 // 退款审核（待退款审核订单）
 const PENDING_REFUND_STATUS = 11;
@@ -525,7 +589,20 @@ const columns: DataTableColumns<Order> = [
     align: 'center',
     width: 100,
     render(row) {
-      return (row as any).platform_name || 'API下单';
+      return formatOrderSource(row as Order);
+    }
+  },
+  {
+    key: 'trace',
+    title: '链路',
+    align: 'center',
+    width: 72,
+    render(row) {
+      return (
+        <NButton size="tiny" quaternary type="primary" onClick={() => openTraceDrawer(row)}>
+          查看
+        </NButton>
+      );
     }
   },
   {
@@ -816,7 +893,7 @@ function formatLocalDatetime(ts: number | null) {
         :loading="loading"
         :pagination="responsivePagination"
         :flex-height="!appStore.isMobile"
-        :scroll-x="1800"
+        :scroll-x="1880"
         virtual-scroll
         :min-height="appStore.isMobile ? 400 : undefined"
         :max-height="appStore.isMobile ? 600 : undefined"
@@ -831,6 +908,39 @@ function formatLocalDatetime(ts: number | null) {
         @update:page-size="handlePageSizeChange"
       />
     </NCard>
+    <NDrawer v-model:show="traceDrawerShow" :width="420" placement="right">
+      <NDrawerContent
+        :title="traceOrder ? `订单链路 · ${traceOrder.order_number || traceOrder.id}` : '订单链路'"
+        closable
+      >
+        <NSpin v-if="traceLoading" class="py-48px w-full flex justify-center" />
+        <div v-else-if="traceEvents.length === 0" class="text-gray-400 text-14px py-24px">暂无链路记录（新单或历史订单）</div>
+        <NTimeline v-else>
+          <NTimelineItem
+            v-for="ev in traceEvents"
+            :key="ev.id"
+            :type="TRACE_STATUS_TYPE[ev.status] || 'default'"
+            :title="NODE_LABELS[ev.node] || ev.node"
+          >
+            <div class="text-12px text-gray-500">
+              {{ ev.created_at?.replace('T', ' ').slice(0, 19) }}
+              <span v-if="ev.actor"> · {{ ev.actor }}</span>
+              <span v-if="ev.duration_ms"> · {{ ev.duration_ms }}ms</span>
+            </div>
+            <pre
+              v-if="formatTracePayload(ev.payload_in as Record<string, unknown>)"
+              class="mt-4px text-11px bg-gray-100 dark:bg-gray-800 p-8px rounded overflow-x-auto max-h-120px"
+              >{{ formatTracePayload(ev.payload_in as Record<string, unknown>) }}</pre
+            >
+            <pre
+              v-if="formatTracePayload(ev.payload_out as Record<string, unknown>)"
+              class="mt-4px text-11px bg-gray-50 dark:bg-gray-900 p-8px rounded overflow-x-auto max-h-120px"
+              >{{ formatTracePayload(ev.payload_out as Record<string, unknown>) }}</pre
+            >
+          </NTimelineItem>
+        </NTimeline>
+      </NDrawerContent>
+    </NDrawer>
     <NModal v-model:show="showFailModal" title="标记为失败" preset="dialog">
       <NForm>
         <NFormItem label="失败原因" required>

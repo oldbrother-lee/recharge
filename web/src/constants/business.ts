@@ -118,3 +118,16 @@ export const ORDER_STATUS_MAP: Record<
   10: { type: 'info', text: '处理中' },
   11: { type: 'warning', text: '待退款' }
 };
+
+/** 与后端 internal/model OrderClient* 一致 */
+export const ORDER_CLIENT_EXTERNAL_API = 2;
+export const ORDER_CLIENT_AGENT_MANUAL = 8;
+
+/** 订单列表「来源」列：手动下单 / 通道或平台名 / 默认 API */
+export function formatOrderSource(row: { client?: number; platform_name?: string | null }): string {
+  const c = Number(row.client);
+  if (c === ORDER_CLIENT_AGENT_MANUAL) return '手动下单';
+  const name = row.platform_name;
+  if (name != null && String(name).trim() !== '') return String(name);
+  return 'API下单';
+}

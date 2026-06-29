@@ -150,7 +150,15 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 	}
 
 	if len(relations) == 0 {
-		return fmt.Errorf("没有可用的API进行重试")
+		// 无任何可用通道：按最终失败处理并幂等退款，避免队列重试路径静默漏退
+		lg.Info("无可用通道，按最终失败处理（幂等退款）", logger.Int64V2("order_id", order.ID))
+		if s.orderService == nil {
+			return fmt.Errorf("没有可用的API进行重试，且订单服务不可用，无法兜底退款")
+		}
+		if ferr := s.orderService.ProcessOrderFail(ctx, order.ID, "无可用通道重试，自动失败退款"); ferr != nil {
+			return fmt.Errorf("无可用通道且失败退款处理失败: %v", ferr)
+		}
+		return nil
 	}
 
 	// 2. 选择下一个未尝试的关系并创建单条重试记录
@@ -191,7 +199,15 @@ func (s *RetryService) HandleRetry(ctx context.Context, order *model.Order, retr
 		}
 	}
 	if nextRel == nil {
-		return fmt.Errorf("没有可用的API进行重试")
+		// 可用通道均已尝试过：按最终失败处理并幂等退款，杜绝“失败未退款”
+		lg.Info("所有可用通道均已尝试，按最终失败处理（幂等退款）", logger.Int64V2("order_id", order.ID))
+		if s.orderService == nil {
+			return fmt.Errorf("没有可用的API进行重试，且订单服务不可用，无法兜底退款")
+		}
+		if ferr := s.orderService.ProcessOrderFail(ctx, order.ID, "所有通道均已重试，自动失败退款"); ferr != nil {
+			return fmt.Errorf("通道已耗尽且失败退款处理失败: %v", ferr)
+		}
+		return nil
 	}
 
 	// 历史已用集合标准化持久化（不包含本次候选）
@@ -1061,6 +1077,52 @@ func (s *RetryService) GetAvailableAPIRelations(ctx context.Context, orderID int
 				ParamID int64 `json:"param_id,omitempty"`
 			}{APIID: record.APIID, ParamID: record.ParamID})
 		}
+	}
+
+	// 关键修复（与平台无关）：把订单自身已绑定/已使用的通道也计入“已用”。
+	// 回调失败时通常还没有对应的重试记录，仅凭重试记录会把“刚刚失败的当前通道”当成可用，
+	// 导致换通道重试空转、并跳过退款（线上 used_api_pairs=[]、available=1 即此问题）。
+	// 订单的实际通道写在 order.api_cur_id / order.used_apis 上，这里一并纳入排除集合。
+	if order, oerr := s.orderRepo.GetByID(ctx, orderID); oerr == nil && order != nil {
+		curAPI := order.APICurID
+		if curAPI == 0 {
+			curAPI = order.APIID
+		}
+		if curAPI != 0 {
+			usedPairs = append(usedPairs, struct {
+				APIID   int64 `json:"api_id"`
+				ParamID int64 `json:"param_id,omitempty"`
+			}{APIID: curAPI, ParamID: order.APICurParamID})
+		}
+		if order.UsedAPIs != "" {
+			var orderUsed []struct {
+				APIID   int64 `json:"api_id"`
+				ParamID int64 `json:"param_id,omitempty"`
+			}
+			if e := json.Unmarshal([]byte(order.UsedAPIs), &orderUsed); e == nil {
+				for _, u := range orderUsed {
+					usedPairs = append(usedPairs, struct {
+						APIID   int64 `json:"api_id"`
+						ParamID int64 `json:"param_id,omitempty"`
+					}{APIID: u.APIID, ParamID: u.ParamID})
+				}
+			} else {
+				var simpleAPIList []int64
+				if e2 := json.Unmarshal([]byte(order.UsedAPIs), &simpleAPIList); e2 == nil {
+					for _, apiID := range simpleAPIList {
+						usedPairs = append(usedPairs, struct {
+							APIID   int64 `json:"api_id"`
+							ParamID int64 `json:"param_id,omitempty"`
+						}{APIID: apiID, ParamID: 0})
+					}
+				}
+			}
+		}
+	} else if oerr != nil {
+		lg.Warn("读取订单当前通道失败，仅按重试记录判定可用通道",
+			logger.Int64V2("order_id", orderID),
+			logger.ErrorV2(oerr),
+		)
 	}
 
 	lg.Info("已使用的API列表",

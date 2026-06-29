@@ -62,6 +62,9 @@ api:
   user_id: "" # 用户ID
   base_url: "" # API基础URL
 
+xingchen:
+  default_ip: "61.51.110.34" # 兴辰网络下单默认ip（未在platform_apis.extra_params.ip配置时使用）
+
 # 第三方API配置
 third_party_api:
   base_url: "http://35.220.200.84:18080"  # 第三方API基础URL

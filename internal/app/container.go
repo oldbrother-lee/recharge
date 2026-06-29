@@ -77,7 +77,6 @@ type Repositories struct {
 	ExternalAPIKey         repository.ExternalAPIKeyRepository // 添加ExternalAPIKey repository
 	OrderException         repository.OrderExceptionRepository // 添加OrderException repository
 	OrderTrace             repository.OrderTraceRepository
-
 }
 
 // Services 服务集合
@@ -117,7 +116,6 @@ type Services struct {
 	PhoneQuery             service.PhoneQueryService     // 添加PhoneQuery服务
 	OrderException         service.OrderExceptionService // 添加OrderException服务
 	OrderTrace             *service.OrderTraceService
-
 }
 
 // NewContainer 创建新的容器实例
@@ -321,10 +319,14 @@ func (c *Container) initServices() error {
 		c.repositories.BalanceLog,
 	)
 
+	// 授信服务需在余额服务之前初始化（失败退款需恢复授信占用）
+	c.services.Credit = service.NewCreditService(c.repositories.User, c.repositories.CreditLog)
+
 	// 初始化余额服务（需要在充值服务之前创建）
-	c.services.Balance = service.NewBalanceService(
+	c.services.Balance = service.NewBalanceServiceWithCredit(
 		c.repositories.BalanceLog,
 		c.repositories.User,
+		c.services.Credit,
 	)
 
 	// 创建分布式锁管理器
@@ -518,9 +520,6 @@ func (c *Container) initServices() error {
 
 	// 初始化UserLog服务
 	c.services.UserLog = service.NewUserLogService(c.repositories.UserLog)
-
-	// 初始化Credit服务
-	c.services.Credit = service.NewCreditService(c.repositories.User, c.repositories.CreditLog)
 
 	// 初始化PlatformPushStatus服务
 	c.services.PlatformPushStatus = platform.NewPushStatusService(c.repositories.PlatformAccount)

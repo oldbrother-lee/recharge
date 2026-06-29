@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue';
 import {
+  NAlert,
   NButton,
   NCard,
   NDescriptions,
@@ -23,6 +24,8 @@ const generating = ref(false);
 const regenerating = ref(false);
 const toggling = ref(false);
 const showSecret = ref(false);
+
+const API_DOC_URL = 'https://m7chnkq7iv.apifox.cn/';
 
 async function fetchProfile() {
   try {
@@ -137,6 +140,29 @@ onMounted(() => {
     <!-- API密钥管理卡片 -->
     <NGridItem :span="24" :md="12">
       <NCard title="API密钥管理">
+        <NAlert type="info" :show-icon="true" class="mb-16px">
+          <template #header>API 对接文档</template>
+          使用密钥接入前，请先阅读接口文档，了解签名规则、下单与回调说明。
+          <div class="mt-12px">
+            <NButton
+              tag="a"
+              type="primary"
+              :href="API_DOC_URL"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <template #icon>
+                <icon-ic-round-menu-book />
+              </template>
+              打开对接文档
+            </NButton>
+            <NText depth="3" class="ml-12px text-13px">
+              <a :href="API_DOC_URL" target="_blank" rel="noopener noreferrer" class="api-doc-link">
+                {{ API_DOC_URL }}
+              </a>
+            </NText>
+          </div>
+        </NAlert>
         <div v-if="!apiKey">
           <NEmpty description="暂无API密钥">
             <template #extra>
@@ -220,5 +246,13 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* 使用 NaiveUI 栅格布局，无需自定义样式 */
+.api-doc-link {
+  color: var(--n-color-target);
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.api-doc-link:hover {
+  opacity: 0.85;
+}
 </style>

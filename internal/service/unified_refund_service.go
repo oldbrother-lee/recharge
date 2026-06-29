@@ -149,14 +149,14 @@ func (s *UnifiedRefundService) processUserRefund(ctx context.Context, req *Refun
 		}, nil
 	}
 
-	// 执行退款
+	// 执行退款（余额 + 授信分拆，幂等）
 	var refundErr error
 	if req.Tx != nil {
-		// 使用传入的事务
-		refundErr = s.balanceService.RefundWithTx(ctx, req.Tx, req.UserID, req.Amount, req.OrderID, req.Remark, req.Operator)
+		refundErr = s.balanceService.RefundUserOrderPaymentWithTx(ctx, req.Tx, req.UserID, req.OrderID, req.Amount, req.Remark, req.Operator)
 	} else {
-		// 创建新事务
-		refundErr = s.balanceService.Refund(ctx, req.UserID, req.Amount, req.OrderID, req.Remark, req.Operator)
+		refundErr = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			return s.balanceService.RefundUserOrderPaymentWithTx(ctx, tx, req.UserID, req.OrderID, req.Amount, req.Remark, req.Operator)
+		})
 	}
 
 	if refundErr != nil {

@@ -553,6 +553,35 @@ func (c *CallbackController) HandleTurboCallback(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{"status": "success", "message": "ok"})
 }
 
+// HandleXingchenCallback 处理兴辰网络平台回调（form/json）
+func (c *CallbackController) HandleXingchenCallback(ctx *gin.Context) {
+	userIDStr := ctx.Param("userid")
+	if userIDStr == "" {
+		resp.Error(ctx, 400, "缺少userid")
+		return
+	}
+	if _, err := c.platformRepo.GetPlatformAccountByAccountName(userIDStr); err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("兴辰网络回调账号不存在", logger.ErrorV2(err))
+		resp.Error(ctx, 400, "平台账号不存在")
+		return
+	}
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		resp.Error(ctx, 400, "读取请求体失败")
+		return
+	}
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到兴辰网络回调",
+		logger.StringV2("userid", userIDStr),
+		logger.StringV2("raw_preview", truncateStr(string(body), 800)),
+	)
+	if err := c.rechargeService.HandleCallback(ctx.Request.Context(), "xingchen", body); err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("兴辰网络回调处理失败", logger.ErrorV2(err))
+		resp.Error(ctx, 500, err.Error())
+		return
+	}
+	ctx.String(http.StatusOK, "OK")
+}
+
 func truncateStr(s string, n int) string {
 	if len(s) <= n {
 		return s
@@ -606,4 +635,64 @@ func (c *CallbackController) HandleShangtengCallback(ctx *gin.Context) {
 	// 5. 返回成功（统一响应）
 	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("处理商腾科技平台回调 返回：200 成功")
 	resp.Success(ctx, "ok")
+}
+
+// HandleKayixinCallback 处理卡易信 API 3.0 订单回调
+func (c *CallbackController) HandleKayixinCallback(ctx *gin.Context) {
+	appID := strings.TrimSpace(ctx.Param("userid"))
+	if appID == "" {
+		resp.Error(ctx, 400, "缺少客户编号")
+		return
+	}
+
+	account, err := c.platformRepo.GetPlatformAccountByAccountName(appID)
+	if err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("卡易信回调账号不存在", logger.ErrorV2(err))
+		resp.Error(ctx, 400, "平台账号不存在")
+		return
+	}
+
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		resp.Error(ctx, 400, "读取请求体失败")
+		return
+	}
+	rawBody := string(body)
+
+	headerAppID := strings.TrimSpace(ctx.GetHeader("X-App-Id"))
+	version := strings.TrimSpace(ctx.GetHeader("X-Version"))
+	timestamp := strings.TrimSpace(ctx.GetHeader("X-Timestamp"))
+	sign := strings.TrimSpace(ctx.GetHeader("X-Signature"))
+	if version == "" {
+		version = signature.KayixinAPIVersion
+	}
+	if headerAppID != "" && headerAppID != appID {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Warn("卡易信回调路径与 Header X-App-Id 不一致",
+			logger.StringV2("path_app_id", appID),
+			logger.StringV2("header_app_id", headerAppID),
+		)
+	}
+	verifyAppID := appID
+	if headerAppID != "" {
+		verifyAppID = headerAppID
+	}
+	if !signature.KayixinVerify(verifyAppID, account.AppSecret, version, timestamp, rawBody, sign) {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("卡易信回调验签失败",
+			logger.StringV2("app_id", verifyAppID),
+		)
+		resp.Error(ctx, 400, "签名验证失败")
+		return
+	}
+
+	logger.WithContextCategory(ctx.Request.Context(), "callback").Info("收到卡易信回调",
+		logger.StringV2("app_id", appID),
+		logger.StringV2("raw_preview", truncateStr(rawBody, 800)),
+	)
+
+	if err := c.rechargeService.HandleCallback(ctx.Request.Context(), "kayixin", body); err != nil {
+		logger.WithContextCategory(ctx.Request.Context(), "callback").Error("卡易信回调处理失败", logger.ErrorV2(err))
+		resp.Error(ctx, 500, err.Error())
+		return
+	}
+	ctx.String(http.StatusOK, "ok")
 }

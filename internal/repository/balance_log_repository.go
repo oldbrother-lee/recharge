@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"recharge-go/internal/model"
 
 	"gorm.io/gorm"
@@ -29,6 +30,81 @@ func (r *BalanceLogRepository) CreateLog(ctx context.Context, log *model.Balance
 	return r.db.WithContext(ctx).Create(log).Error
 }
 
+// fundFlowCol 统一字符串列 COLLATE，避免 UNION 混用排序规则 (Error 1271)
+func fundFlowCol(expr string) string {
+	return fmt.Sprintf("CONVERT(%s USING utf8mb4) COLLATE utf8mb4_unicode_ci", expr)
+}
+
+func fundFlowListSQL() string {
+	c := fundFlowCol
+	return `
+SELECT * FROM (
+  SELECT
+    bl.id AS id,
+    bl.user_id AS user_id,
+    bl.order_id AS order_id,
+    bl.platform_account_id AS platform_account_id,
+    bl.platform_id AS platform_id,
+    ` + c("COALESCE(bl.platform_code, '')") + ` AS platform_code,
+    ` + c("COALESCE(bl.platform_name, '')") + ` AS platform_name,
+    bl.amount AS amount,
+    bl.type AS type,
+    bl.style AS style,
+    bl.balance AS balance,
+    bl.balance_before AS balance_before,
+    ` + c("COALESCE(bl.remark, '')") + ` AS remark,
+    ` + c("COALESCE(bl.operator, '')") + ` AS operator,
+    bl.created_at AS created_at,
+    ` + c("?") + ` AS fund_source,
+    ` + c("COALESCE(o.order_number, '')") + ` AS order_number,
+    ` + c("COALESCE(o.out_trade_num, '')") + ` AS out_trade_num,
+    ` + c("COALESCE(o.mobile, '')") + ` AS mobile,
+    COALESCE(o.status, 0) AS order_status
+  FROM balance_logs bl
+  LEFT JOIN orders o ON bl.order_id = o.id
+  WHERE bl.user_id = ?
+  UNION ALL
+  SELECT
+    cl.id AS id,
+    cl.user_id AS user_id,
+    cl.order_id AS order_id,
+    0 AS platform_account_id,
+    0 AS platform_id,
+    ` + c("''") + ` AS platform_code,
+    ` + c("''") + ` AS platform_name,
+    CASE
+      WHEN cl.type = ? THEN (cl.credit_after - cl.credit_before)
+      WHEN cl.type = ? THEN -cl.amount
+      ELSE cl.amount
+    END AS amount,
+    CASE
+      WHEN cl.type = ? THEN 2
+      WHEN cl.type = ? AND (cl.credit_after - cl.credit_before) < 0 THEN 2
+      ELSE 1
+    END AS type,
+    CASE
+      WHEN cl.type = ? THEN ?
+      WHEN cl.type = ? THEN ?
+      ELSE ?
+    END AS style,
+    cl.credit_after AS balance,
+    cl.credit_before AS balance_before,
+    ` + c("COALESCE(cl.remark, '')") + ` AS remark,
+    ` + c("COALESCE(cl.operator, '')") + ` AS operator,
+    cl.created_at AS created_at,
+    ` + c("?") + ` AS fund_source,
+    ` + c("COALESCE(o.order_number, '')") + ` AS order_number,
+    ` + c("COALESCE(o.out_trade_num, '')") + ` AS out_trade_num,
+    ` + c("COALESCE(o.mobile, '')") + ` AS mobile,
+    COALESCE(o.status, 0) AS order_status
+  FROM credit_logs cl
+  LEFT JOIN orders o ON cl.order_id = o.id
+  WHERE cl.user_id = ?
+) AS fund_flow
+ORDER BY created_at DESC, id DESC
+LIMIT ? OFFSET ?`
+}
+
 // ListLogs 查询用户余额流水（分页）
 func (r *BalanceLogRepository) ListLogs(ctx context.Context, userID int64, offset, limit int) ([]model.BalanceLog, int64, error) {
 	var logs []model.BalanceLog
@@ -39,19 +115,30 @@ func (r *BalanceLogRepository) ListLogs(ctx context.Context, userID int64, offse
 	return logs, total, err
 }
 
-// ListLogsWithOrder 查询用户余额流水（分页，关联订单号/外部订单号/手机号）
+// ListLogsWithOrder 查询用户资金流水（余额 + 授信，分页，关联订单信息）
 func (r *BalanceLogRepository) ListLogsWithOrder(ctx context.Context, userID int64, offset, limit int) ([]model.BalanceLogWithOrder, int64, error) {
-	var total int64
-	db := r.db.WithContext(ctx).Model(&model.BalanceLog{}).Where("balance_logs.user_id = ?", userID)
-	if err := db.Count(&total).Error; err != nil {
+	var balanceCount, creditCount int64
+	if err := r.db.WithContext(ctx).Model(&model.BalanceLog{}).Where("user_id = ?", userID).Count(&balanceCount).Error; err != nil {
 		return nil, 0, err
 	}
+	if err := r.db.WithContext(ctx).Model(&model.CreditLog{}).Where("user_id = ?", userID).Count(&creditCount).Error; err != nil {
+		return nil, 0, err
+	}
+	total := balanceCount + creditCount
+
+	listSQL := fundFlowListSQL()
+
 	var logs []model.BalanceLogWithOrder
-	err := db.Select("balance_logs.*, o.order_number AS order_number, o.out_trade_num AS out_trade_num, o.mobile AS mobile").
-		Joins("LEFT JOIN orders o ON balance_logs.order_id = o.id").
-		Order("balance_logs.id DESC").
-		Offset(offset).Limit(limit).
-		Find(&logs).Error
+	err := r.db.WithContext(ctx).Raw(listSQL,
+		model.FundSourceBalance, userID,
+		model.CreditTypeSet, model.CreditTypeUse,
+		model.CreditTypeSet, model.CreditTypeUse,
+		model.CreditTypeUse, model.BalanceStyleCreditUse,
+		model.CreditTypeRestore, model.BalanceStyleCreditRestore,
+		model.BalanceStyleCreditAdjust,
+		model.FundSourceCredit, userID,
+		limit, offset,
+	).Scan(&logs).Error
 	return logs, total, err
 }
 

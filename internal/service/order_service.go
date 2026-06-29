@@ -849,9 +849,9 @@ func (s *orderService) ProcessOrderRefund(ctx context.Context, orderID int64, re
 
 		// 3. 执行退款逻辑
 		if model.IsUserBalanceExternalStyle(lockedOrder.Client) {
-			// 外部 API / 手动下单：退款到用户余额（使用当前事务）
-			balanceService := NewBalanceService(s.balanceLogRepo, s.userRepo)
-			if err := balanceService.RefundWithTx(ctx, tx, lockedOrder.CustomerID, lockedOrder.Price, orderID, fmt.Sprintf("订单退款: %s", remark), "admin"); err != nil {
+			// 外部 API / 手动下单：退回余额扣款并恢复授信占用（使用当前事务）
+			balanceService := NewBalanceServiceWithCredit(s.balanceLogRepo, s.userRepo, s.creditService)
+			if err := balanceService.RefundUserOrderPaymentWithTx(ctx, tx, lockedOrder.CustomerID, orderID, lockedOrder.Price, fmt.Sprintf("订单退款: %s", remark), "admin"); err != nil {
 				log.WithContextCategory(ctx, "order").Error("外部订单退款失败", log.ErrorV2(err), log.Int64V2("order_id", orderID))
 				return fmt.Errorf("退款失败: %v", err)
 			}
@@ -1147,7 +1147,7 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 	if err := s.orderRepo.Create(ctx, order); err != nil {
 		tx.Rollback()
 		// 回滚扣款
-		if refundErr := balanceService.Refund(ctx, userID, actualPrice, 0, "订单创建失败退款", "system"); refundErr != nil {
+		if refundErr := balanceService.RefundPreOrderPayment(ctx, userID, actualPrice); refundErr != nil {
 			logger.WithContextCategory(ctx, "order").Error("订单创建失败，退款也失败",
 				logger.ErrorV2(err),
 				logger.ErrorV2(refundErr),
@@ -1173,6 +1173,11 @@ func (s *orderService) CreateExternalOrder(ctx context.Context, order *model.Ord
 			logger.ErrorV2(err),
 			logger.Int64V2("order_id", order.ID))
 		// 这个错误不影响主流程，只记录日志
+	}
+	if err := s.updateUserCreditLogOrderID(ctx, userID, order.ID); err != nil {
+		logger.WithContextCategory(ctx, "order").Error("更新授信扣款记录订单ID失败",
+			logger.ErrorV2(err),
+			logger.Int64V2("order_id", order.ID))
 	}
 
 	// 5. 推送到充值队列
@@ -1460,6 +1465,23 @@ func (s *orderService) updateUserBalanceLogOrderID(ctx context.Context, userID i
 		logger.Float64V2("amount", amount),
 		logger.Int64V2("order_id", orderID))
 
+	return nil
+}
+
+// updateUserCreditLogOrderID 将下单时预扣的授信流水关联到订单（order_id 原为 0）
+func (s *orderService) updateUserCreditLogOrderID(ctx context.Context, userID, orderID int64) error {
+	db := s.orderRepo.(*repository.OrderRepositoryImpl).DB()
+	err := db.Model(&model.CreditLog{}).
+		Where("user_id = ? AND order_id = ? AND type = ?", userID, 0, model.CreditTypeUse).
+		Order("created_at DESC").
+		Limit(1).
+		Update("order_id", orderID).Error
+	if err != nil {
+		return err
+	}
+	logger.WithContextCategory(ctx, "order").Info("更新授信扣款记录订单ID成功",
+		logger.Int64V2("user_id", userID),
+		logger.Int64V2("order_id", orderID))
 	return nil
 }
 

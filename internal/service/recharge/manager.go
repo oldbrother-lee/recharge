@@ -29,6 +29,7 @@ func NewManager(db *gorm.DB) *Manager {
 		platforms:       make(map[string]Platform),
 		platformTypes: map[string]reflect.Type{
 			"kekebang":     reflect.TypeOf((*KekebangPlatform)(nil)).Elem(),
+			"xingchen":     reflect.TypeOf((*XingchenPlatform)(nil)).Elem(),
 			"xianzhuanxia": reflect.TypeOf((*XianzhuanxiaPlatform)(nil)).Elem(),
 			"mishi":        reflect.TypeOf((*MishiPlatform)(nil)).Elem(),
 			"internal_api": reflect.TypeOf((*ExternalAPIPlatform)(nil)).Elem(),
@@ -42,6 +43,7 @@ func NewManager(db *gorm.DB) *Manager {
 			// 新增商腾科技平台类型
 			"shangteng":    reflect.TypeOf((*ShangtengPlatform)(nil)).Elem(),
 			"turbo":        reflect.TypeOf((*TurboPlatform)(nil)).Elem(),
+			"kayixin":      reflect.TypeOf((*KayixinPlatform)(nil)).Elem(),
 		},
 	}
 }
@@ -77,6 +79,8 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 	switch code {
 	case "kekebang":
 		platform = NewKekebangPlatform(m.platformRepo.GetDB())
+	case "xingchen":
+		platform = NewXingchenPlatform(m.platformRepo.GetDB())
 	case "xianzhuanxia":
 		platform = NewXianzhuanxiaPlatform(m.platformRepo.GetDB())
 	case "mifeng":
@@ -102,6 +106,8 @@ func (m *Manager) createPlatform(code string) (Platform, error) {
 		platform = NewShangtengPlatform(m.platformRepo.GetDB())
 	case "turbo":
 		platform = NewTurboPlatform(m.platformRepo.GetDB())
+	case "kayixin":
+		platform = NewKayixinPlatform(m.platformRepo.GetDB())
 	default:
 		return nil, fmt.Errorf("unsupported platform code: %s", code)
 	}
@@ -185,6 +191,8 @@ func (m *Manager) getPlatformTypeByName(name string) reflect.Type {
 	switch name {
 	case "kekebang":
 		return reflect.TypeOf((*KekebangPlatform)(nil)).Elem()
+	case "xingchen":
+		return reflect.TypeOf((*XingchenPlatform)(nil)).Elem()
 	case "xianzhuanxia":
 		return reflect.TypeOf((*XianzhuanxiaPlatform)(nil)).Elem()
 	case "mifeng":
@@ -202,6 +210,8 @@ func (m *Manager) getPlatformTypeByName(name string) reflect.Type {
 		return reflect.TypeOf((*ShangtengPlatform)(nil)).Elem()
 	case "turbo":
 		return reflect.TypeOf((*TurboPlatform)(nil)).Elem()
+	case "kayixin":
+		return reflect.TypeOf((*KayixinPlatform)(nil)).Elem()
 	default:
 		return nil
 	}

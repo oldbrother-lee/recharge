@@ -1,40 +1,40 @@
 package service
 
 import (
-    "context"
-    "fmt"
-    "math"
-    "strconv"
-    "time"
+	"context"
+	"fmt"
+	"math"
+	"strconv"
+	"time"
 
-    "recharge-go/internal/model"
-    "recharge-go/internal/repository"
-    notificationRepo "recharge-go/internal/repository/notification"
-    logger "recharge-go/pkg/log"
-    "recharge-go/pkg/lock"
-    "recharge-go/pkg/queue"
-    "go.uber.org/zap"
-    "gorm.io/gorm"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+	"recharge-go/internal/model"
+	"recharge-go/internal/repository"
+	notificationRepo "recharge-go/internal/repository/notification"
+	"recharge-go/pkg/lock"
+	logger "recharge-go/pkg/log"
+	"recharge-go/pkg/queue"
 )
 
 // UnifiedOrderService 统一订单处理服务
 // 提供统一的订单状态更新、余额查询、退款等功能
 // 供外部回调和平台回调共同使用
 type UnifiedOrderService struct {
-	orderRepo               repository.OrderRepository
-	balanceQueryRecordRepo  repository.BalanceQueryRecordRepository
-	phoneQueryService       PhoneQueryService
-	balanceService          *BalanceService
-	notificationRepo        notificationRepo.Repository
-	queue                   queue.Queue
-	db                      *gorm.DB
-	logger                  *zap.Logger
-	systemConfigService     *SystemConfigService
-	productRepo             repository.ProductRepository
-	retryService            *RetryService
-	orderExceptionService   OrderExceptionService
-	notificationHelper      *NotificationHelper
-	lockManager             *lock.RefundLockManager
+	orderRepo              repository.OrderRepository
+	balanceQueryRecordRepo repository.BalanceQueryRecordRepository
+	phoneQueryService      PhoneQueryService
+	balanceService         *BalanceService
+	notificationRepo       notificationRepo.Repository
+	queue                  queue.Queue
+	db                     *gorm.DB
+	logger                 *zap.Logger
+	systemConfigService    *SystemConfigService
+	productRepo            repository.ProductRepository
+	retryService           *RetryService
+	orderExceptionService  OrderExceptionService
+	notificationHelper     *NotificationHelper
+	lockManager            *lock.RefundLockManager
 }
 
 // NewUnifiedOrderService 创建统一订单处理服务
@@ -73,11 +73,11 @@ func NewUnifiedOrderService(
 
 // OrderStatusUpdateRequest 订单状态更新请求
 type OrderStatusUpdateRequest struct {
-	OrderID         int64                `json:"order_id"`
-	NewStatus       model.OrderStatus    `json:"new_status"`
-	CallbackSource  string               `json:"callback_source"` // "external" 或 "platform"
-	Remark          string               `json:"remark,omitempty"`
-	NeedBalanceCheck bool                `json:"need_balance_check"` // 是否需要余额验证
+	OrderID          int64             `json:"order_id"`
+	NewStatus        model.OrderStatus `json:"new_status"`
+	CallbackSource   string            `json:"callback_source"` // "external" 或 "platform"
+	Remark           string            `json:"remark,omitempty"`
+	NeedBalanceCheck bool              `json:"need_balance_check"` // 是否需要余额验证
 }
 
 // OrderStatusUpdateResponse 订单状态更新响应
@@ -91,165 +91,182 @@ type OrderStatusUpdateResponse struct {
 // UpdateOrderStatusUnified 统一的订单状态更新方法
 // 支持外部回调和平台回调的统一处理
 func (s *UnifiedOrderService) UpdateOrderStatusUnified(ctx context.Context, req *OrderStatusUpdateRequest) (*OrderStatusUpdateResponse, error) {
-    lg := logger.WithContextCategory(ctx, "order")
-    lg.Info("开始统一订单状态更新",
-        logger.Int64V2("order_id", req.OrderID),
-        logger.StringV2("new_status", string(req.NewStatus)),
-        logger.StringV2("callback_source", req.CallbackSource),
-        zap.Bool("need_balance_check", req.NeedBalanceCheck),
-    )
+	lg := logger.WithContextCategory(ctx, "order")
+	lg.Info("开始统一订单状态更新",
+		logger.Int64V2("order_id", req.OrderID),
+		logger.StringV2("new_status", string(req.NewStatus)),
+		logger.StringV2("callback_source", req.CallbackSource),
+		zap.Bool("need_balance_check", req.NeedBalanceCheck),
+	)
 
-	// 使用事务确保订单状态更新的原子性
+	// 失败状态：先只读判定是否还有可重试通道（无副作用，重试任务在事务提交后再推送，避免与重试worker竞态）
+	var hasAvailableChannel bool
+	if req.NewStatus == model.OrderStatusFailed {
+		var snapshot model.Order
+		if e := s.db.WithContext(ctx).Where("id = ?", req.OrderID).First(&snapshot).Error; e != nil {
+			lg.Error("预读订单信息失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(e))
+			return nil, fmt.Errorf("获取订单信息失败: %v", e)
+		}
+		// 已是失败终态的不再寻找通道，统一按最终失败处理（确保退款补齐）
+		if snapshot.Status != model.OrderStatusFailed {
+			has, e := s.hasAvailableRetryChannel(ctx, &snapshot)
+			if e != nil {
+				lg.Error("检查可用重试通道失败，按无通道处理以走退款兜底", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(e))
+				has = false
+			}
+			hasAvailableChannel = has
+		}
+	}
+
+	// 最终失败（失败且无可重试通道）：状态置失败与退款必须在同一事务内原子提交
+	finalFailure := req.NewStatus == model.OrderStatusFailed && !hasAvailableChannel
+
+	// 最终失败场景获取订单级分布式锁，与行锁共同防止并发重复退款
+	if finalFailure && s.lockManager != nil {
+		orderLockValue, lockErr := s.lockManager.LockOrderRefund(ctx, req.OrderID)
+		if lockErr != nil {
+			// 不静默：拿不到锁直接报错，由调用方重新触发，避免漏退
+			lg.Error("获取订单退款锁失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(lockErr))
+			return nil, fmt.Errorf("获取订单退款锁失败: %v", lockErr)
+		}
+		defer func() {
+			if unlockErr := s.lockManager.UnlockOrderRefund(ctx, req.OrderID, orderLockValue); unlockErr != nil {
+				lg.Error("释放订单退款锁失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(unlockErr))
+			}
+		}()
+	}
+
+	// 使用事务确保订单状态更新（及最终失败退款）的原子性
 	var result *OrderStatusUpdateResponse
 	var order model.Order
+	var refundDone bool
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// 1. 获取订单信息（使用行锁）
-        if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", req.OrderID).First(&order).Error; err != nil {
-            lg.Error("获取订单信息失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-            return fmt.Errorf("获取订单信息失败: %v", err)
-        }
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", req.OrderID).First(&order).Error; err != nil {
+			lg.Error("获取订单信息失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
+			return fmt.Errorf("获取订单信息失败: %v", err)
+		}
 
 		// 2. 检查订单状态是否需要更新
-        if order.Status == req.NewStatus {
-            lg.Info("订单状态未发生变化",
-                logger.Int64V2("order_id", req.OrderID),
-                logger.StringV2("status", string(req.NewStatus)),
-            )
-            response := &OrderStatusUpdateResponse{
-                Success: true,
-                Message: "订单状态未发生变化",
-            }
-            result = response
-            return nil
-        }
+		if order.Status == req.NewStatus {
+			lg.Info("订单状态未发生变化",
+				logger.Int64V2("order_id", req.OrderID),
+				logger.StringV2("status", string(req.NewStatus)),
+			)
+			result = &OrderStatusUpdateResponse{
+				Success: true,
+				Message: "订单状态未发生变化",
+			}
+			// 兜底：订单已是失败终态但可能此前漏退，这里幂等补退（已退则自动跳过）
+			if finalFailure {
+				if rerr := s.refundFailedOrderWithTx(ctx, tx, &order); rerr != nil {
+					return fmt.Errorf("退款失败: %v", rerr)
+				}
+				refundDone = true
+			}
+			return nil
+		}
 
 		// 3. 更新订单状态
-        if err := tx.Model(&model.Order{}).Where("id = ?", req.OrderID).Update("status", req.NewStatus).Error; err != nil {
-            lg.Error("更新订单状态失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-            return fmt.Errorf("更新订单状态失败: %v", err)
-        }
+		if err := tx.Model(&model.Order{}).Where("id = ?", req.OrderID).Update("status", req.NewStatus).Error; err != nil {
+			lg.Error("更新订单状态失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
+			return fmt.Errorf("更新订单状态失败: %v", err)
+		}
 
-        lg.Info("订单状态更新成功",
-            logger.Int64V2("order_id", req.OrderID),
-            logger.StringV2("old_status", string(order.Status)),
-            logger.StringV2("new_status", string(req.NewStatus)),
-        )
+		lg.Info("订单状态更新成功",
+			logger.Int64V2("order_id", req.OrderID),
+			logger.StringV2("old_status", string(order.Status)),
+			logger.StringV2("new_status", string(req.NewStatus)),
+		)
 
-		response := &OrderStatusUpdateResponse{
+		// 最终失败：在同一事务内执行幂等退款，保证“失败+退款”原子；
+		// 退款失败将回滚状态更新，订单不会停留在“失败未退款”的中间态
+		if finalFailure {
+			if rerr := s.refundFailedOrderWithTx(ctx, tx, &order); rerr != nil {
+				return fmt.Errorf("退款失败: %v", rerr)
+			}
+			refundDone = true
+		}
+
+		result = &OrderStatusUpdateResponse{
 			Success: true,
 			Message: "订单状态更新成功",
 		}
-
-		result = response
 		return nil
 	})
 
-    if err != nil {
-        lg.Error("订单状态更新事务失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-        return nil, err
-    }
+	if err != nil {
+		lg.Error("订单状态更新事务失败（状态与退款已一并回滚）", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
+		return nil, err
+	}
+
+	if refundDone {
+		result.RefundTriggered = true
+		result.Message += ", 退款成功"
+	}
 
 	// 4. 在事务外执行余额验证（避免长时间持有数据库锁）
 	if req.NewStatus == model.OrderStatusSuccess && req.NeedBalanceCheck && s.phoneQueryService != nil && order.Mobile != "" {
-        balanceCheckResult, err := s.performBalanceCheck(ctx, &order)
-        if err != nil {
-            lg.Error("余额验证失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-            // 余额验证失败不影响订单状态更新的成功
-            result.Message = fmt.Sprintf("%s (余额验证失败: %v)", result.Message, err)
-        } else {
-            result.BalanceChanged = &balanceCheckResult.BalanceChanged
-            result.RefundTriggered = balanceCheckResult.RefundTriggered
-            result.Message = balanceCheckResult.Message
-        }
-    }
+		balanceCheckResult, err := s.performBalanceCheck(ctx, &order)
+		if err != nil {
+			lg.Error("余额验证失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
+			// 余额验证失败不影响订单状态更新的成功
+			result.Message = fmt.Sprintf("%s (余额验证失败: %v)", result.Message, err)
+		} else {
+			result.BalanceChanged = &balanceCheckResult.BalanceChanged
+			result.RefundTriggered = balanceCheckResult.RefundTriggered
+			result.Message = balanceCheckResult.Message
+		}
+	}
 
-	// 5. 在事务外执行失败订单的换通道重试逻辑（避免长时间持有数据库锁）
-	var hasAvailableChannel bool
-	if req.NewStatus == model.OrderStatusFailed {
-		// 检查是否有可用通道进行重试
-		var err error
-        hasAvailableChannel, err = s.checkAndHandleFailedOrderRetry(ctx, &order)
-        if err != nil {
-            lg.Error("检查失败订单重试逻辑失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-            // 检查失败，继续执行退款逻辑
-            hasAvailableChannel = false
-        }
-
-        if hasAvailableChannel {
-            // 有可用通道，已推送重试任务，不执行退款，也不发送失败通知
-            lg.Info("订单已推送重试任务，跳过退款逻辑和失败通知", logger.Int64V2("order_id", req.OrderID))
-            result.Message += ", 已推送重试任务"
-        } else {
-            // 没有可用通道或重试失败，执行退款逻辑
-            // 获取订单级分布式锁，防止同一订单并发退款
-            if s.lockManager != nil {
-                orderLockValue, lockErr := s.lockManager.LockOrderRefund(ctx, req.OrderID)
-                if lockErr != nil {
-                    lg.Error("获取订单退款锁失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(lockErr))
-                    result.Message = fmt.Sprintf("%s (获取退款锁失败: %v)", result.Message, lockErr)
-                } else {
-                    defer func() {
-                        if unlockErr := s.lockManager.UnlockOrderRefund(ctx, req.OrderID, orderLockValue); unlockErr != nil {
-                            lg.Error("释放订单退款锁失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(unlockErr))
-                        }
-                    }()
-                    refundResult, err := s.performRefundAsync(ctx, &order, req.Remark)
-                    if err != nil {
-                        lg.Error("退款失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-                        result.Message = fmt.Sprintf("%s (退款失败: %v)", result.Message, err)
-                    } else {
-                        result.RefundTriggered = refundResult.Success
-                        if refundResult.Success {
-                            result.Message += ", 退款成功"
-                        }
-                    }
-                }
-            } else {
-                // lockManager 未初始化，直接执行退款（兼容模式）
-                refundResult, err := s.performRefundAsync(ctx, &order, req.Remark)
-                if err != nil {
-                    lg.Error("退款失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-                    result.Message = fmt.Sprintf("%s (退款失败: %v)", result.Message, err)
-                } else {
-                    result.RefundTriggered = refundResult.Success
-                    if refundResult.Success {
-                        result.Message += ", 退款成功"
-                    }
-                }
-            }
-        }
-    }
+	// 5. 有可用通道：事务提交后再推送重试任务（此时订单状态已落库，避免与重试worker竞态）
+	//    推送失败则兜底转入最终失败退款，绝不留下“失败未退款”
+	if req.NewStatus == model.OrderStatusFailed && hasAvailableChannel {
+		if perr := s.pushRetryTaskToQueue(ctx, req.OrderID, 2, "统一订单服务失败，切换通道重试"); perr != nil {
+			lg.Error("推送重试任务失败，转最终失败兜底退款", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(perr))
+			if rerr := s.ensureFailedOrderRefunded(ctx, req.OrderID); rerr != nil {
+				lg.Error("兜底退款失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(rerr))
+				return nil, rerr
+			}
+			hasAvailableChannel = false
+			result.RefundTriggered = true
+			result.Message += ", 退款成功"
+		} else {
+			lg.Info("订单已推送重试任务，跳过退款与失败通知", logger.Int64V2("order_id", req.OrderID))
+			result.Message += ", 已推送重试任务"
+		}
+	}
 
 	// 6. 发送订单状态变更通知（使用订单的最终状态）
 	// 如果是失败状态且有可用通道重试，则不发送失败通知
 	shouldSendNotification := true
-    if req.NewStatus == model.OrderStatusFailed && hasAvailableChannel {
-        shouldSendNotification = false
-        lg.Info("订单有可用通道重试，跳过失败通知发送", logger.Int64V2("order_id", req.OrderID))
-    }
+	if req.NewStatus == model.OrderStatusFailed && hasAvailableChannel {
+		shouldSendNotification = false
+		lg.Info("订单有可用通道重试，跳过失败通知发送", logger.Int64V2("order_id", req.OrderID))
+	}
 
 	if shouldSendNotification && s.notificationRepo != nil && s.queue != nil {
 		// 重新获取订单以确保使用最新的状态
 		var finalOrder model.Order
-        if err := s.db.WithContext(ctx).Where("id = ?", req.OrderID).First(&finalOrder).Error; err != nil {
-            lg.Error("获取订单最终状态失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-        } else {
-            // 只有当最终状态与原始请求状态一致时才发送通知
-            // 如果状态已在余额验证中被改变，则余额验证逻辑已经发送了通知
-            if finalOrder.Status == req.NewStatus {
-                if err := s.sendOrderStatusNotification(ctx, &finalOrder, finalOrder.Status); err != nil {
-                    lg.Error("发送订单状态通知失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
-                    // 通知失败不影响订单状态更新的成功
-                }
-            } else {
-                lg.Info("订单状态已在处理过程中变更，跳过重复通知", 
-                    logger.Int64V2("order_id", req.OrderID),
-                    logger.IntV2("original_status", int(req.NewStatus)),
-                    logger.IntV2("final_status", int(finalOrder.Status)),
-                )
-            }
-        }
-    }
+		if err := s.db.WithContext(ctx).Where("id = ?", req.OrderID).First(&finalOrder).Error; err != nil {
+			lg.Error("获取订单最终状态失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
+		} else {
+			// 只有当最终状态与原始请求状态一致时才发送通知
+			// 如果状态已在余额验证中被改变，则余额验证逻辑已经发送了通知
+			if finalOrder.Status == req.NewStatus {
+				if err := s.sendOrderStatusNotification(ctx, &finalOrder, finalOrder.Status); err != nil {
+					lg.Error("发送订单状态通知失败", logger.Int64V2("order_id", req.OrderID), logger.ErrorV2(err))
+					// 通知失败不影响订单状态更新的成功
+				}
+			} else {
+				lg.Info("订单状态已在处理过程中变更，跳过重复通知",
+					logger.Int64V2("order_id", req.OrderID),
+					logger.IntV2("original_status", int(req.NewStatus)),
+					logger.IntV2("final_status", int(finalOrder.Status)),
+				)
+			}
+		}
+	}
 
 	return result, nil
 }
@@ -372,7 +389,7 @@ func (s *UnifiedOrderService) performBalanceCheck(ctx context.Context, order *mo
 	// 如果余额没有变化，创建异常记录，但保持订单成功状态
 	if !balanceChanged {
 		s.logger.Warn("余额验证失败，创建异常记录", zap.Int64("order_id", order.ID))
-		
+
 		// 构建异常数据
 		exceptionData := &model.BalanceVerificationExceptionData{
 			PreBalance:    preBalanceRecord.Balance,
@@ -385,7 +402,7 @@ func (s *UnifiedOrderService) performBalanceCheck(ctx context.Context, order *mo
 			Amount:        order.Price,
 			QueryDuration: queryDuration.Milliseconds(),
 		}
-		
+
 		// 创建异常记录
 		if s.orderExceptionService != nil {
 			if exceptionErr := s.orderExceptionService.CreateBalanceVerificationException(ctx, nil, order, exceptionData); exceptionErr != nil {
@@ -399,7 +416,7 @@ func (s *UnifiedOrderService) performBalanceCheck(ctx context.Context, order *mo
 			s.logger.Error("订单异常服务未初始化", zap.Int64("order_id", order.ID))
 			result.Message = "余额验证失败，但异常服务不可用"
 		}
-		
+
 		// 注意：这里不再触发退款，也不更新订单状态为失败
 		// 订单保持成功状态，等待人工审核
 		result.RefundTriggered = false
@@ -543,7 +560,7 @@ func (s *UnifiedOrderService) performBalanceCheckWithTx(ctx context.Context, tx 
 			Amount:        order.Price,
 			QueryDuration: duration,
 		}
-		
+
 		// 在事务中创建异常记录
 		if s.orderExceptionService != nil {
 			if exceptionErr := s.orderExceptionService.CreateBalanceVerificationException(ctx, tx, order, exceptionData); exceptionErr != nil {
@@ -557,7 +574,7 @@ func (s *UnifiedOrderService) performBalanceCheckWithTx(ctx context.Context, tx 
 			s.logger.Error("订单异常服务未初始化", zap.Int64("order_id", order.ID))
 			result.Message = "余额验证失败，但异常服务不可用"
 		}
-		
+
 		// 注意：这里不再触发退款
 		// 订单保持成功状态，等待人工审核
 		result.RefundTriggered = false
@@ -607,7 +624,9 @@ func (s *UnifiedOrderService) performRefundAsync(ctx context.Context, order *mod
 	}
 
 	// 执行退款
-	err = s.balanceService.Refund(ctx, order.CustomerID, order.Price, order.ID, remark, "system")
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.balanceService.RefundUserOrderPaymentWithTx(ctx, tx, order.CustomerID, order.ID, order.Price, remark, "system")
+	})
 	if err != nil {
 		s.logger.Error("退款失败", zap.Int64("order_id", order.ID), zap.Error(err))
 		return &RefundResult{
@@ -628,6 +647,42 @@ func (s *UnifiedOrderService) performRefundAsync(ctx context.Context, order *mod
 	}, nil
 }
 
+// hasAvailableRetryChannel 只读检查失败订单是否还有可用通道（不推送任务、无副作用）
+func (s *UnifiedOrderService) hasAvailableRetryChannel(ctx context.Context, order *model.Order) (bool, error) {
+	if s.retryService == nil || s.queue == nil {
+		return false, nil
+	}
+	relations, err := s.retryService.GetAvailableAPIRelations(ctx, order.ID, order.ProductID)
+	if err != nil {
+		return false, err
+	}
+	return len(relations) > 0, nil
+}
+
+// refundFailedOrderWithTx 在给定事务内对失败订单执行幂等退款（与状态更新原子提交）
+// 按订单扣款明细退款：余额退回余额、授信恢复额度（幂等）
+func (s *UnifiedOrderService) refundFailedOrderWithTx(ctx context.Context, tx *gorm.DB, order *model.Order) error {
+	if order.Price <= 0 {
+		// 无金额可退（如0元/赠送单），直接视为无需退款
+		return nil
+	}
+	if s.balanceService == nil {
+		return fmt.Errorf("余额服务未初始化，无法退款")
+	}
+	return s.balanceService.RefundUserOrderPaymentWithTx(ctx, tx, order.CustomerID, order.ID, order.Price, "订单失败退还余额", "system")
+}
+
+// ensureFailedOrderRefunded 独立事务幂等补退（用于重试推送失败等兜底场景）
+func (s *UnifiedOrderService) ensureFailedOrderRefunded(ctx context.Context, orderID int64) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var order model.Order
+		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where("id = ?", orderID).First(&order).Error; err != nil {
+			return fmt.Errorf("获取订单信息失败: %v", err)
+		}
+		return s.refundFailedOrderWithTx(ctx, tx, &order)
+	})
+}
+
 // performRefund 执行退款逻辑（保留原有方法以兼容其他调用）
 func (s *UnifiedOrderService) performRefund(ctx context.Context, tx *gorm.DB, order *model.Order, remark string) (*RefundResult, error) {
 	s.logger.Info("开始执行退款", zap.Int64("order_id", order.ID), zap.Float64("amount", order.Price), zap.String("reason", remark))
@@ -640,7 +695,9 @@ func (s *UnifiedOrderService) performRefund(ctx context.Context, tx *gorm.DB, or
 	}
 
 	// 统一退款到订单的CustomerID
-	err := s.balanceService.Refund(ctx, order.CustomerID, order.Price, order.ID, fmt.Sprintf("订单退款: %s", remark), "system")
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return s.balanceService.RefundUserOrderPaymentWithTx(ctx, tx, order.CustomerID, order.ID, order.Price, fmt.Sprintf("订单退款: %s", remark), "system")
+	})
 
 	if err != nil {
 		s.logger.Error("退款失败", zap.Int64("order_id", order.ID), zap.Error(err))
@@ -677,9 +734,9 @@ func (s *UnifiedOrderService) getISPTypeFromOrder(order *model.Order) string {
 // ProcessOrderStatusChange 处理订单状态变更（供外部回调使用）
 func (s *UnifiedOrderService) ProcessOrderStatusChange(ctx context.Context, orderID int64, newStatus model.OrderStatus, callbackSource string) error {
 	req := &OrderStatusUpdateRequest{
-		OrderID:         orderID,
-		NewStatus:       newStatus,
-		CallbackSource:  callbackSource,
+		OrderID:          orderID,
+		NewStatus:        newStatus,
+		CallbackSource:   callbackSource,
 		NeedBalanceCheck: newStatus == model.OrderStatusSuccess, // 成功状态需要余额验证
 	}
 
@@ -724,7 +781,7 @@ func (s *UnifiedOrderService) checkAndHandleFailedOrderRetry(ctx context.Context
 		s.logger.Error("获取可用API关系失败", zap.Int64("order_id", order.ID), zap.Error(err))
 		return false, err
 	}
-	
+
 	hasAvailableAPI := len(availableRelations) > 0
 	s.logger.Info("检查可用API结果",
 		zap.Int64("order_id", order.ID),
@@ -777,9 +834,9 @@ func (s *UnifiedOrderService) SetRetryService(retryService *RetryService) {
 // ProcessOrderStatusChangeWithBalanceCheck 处理订单状态变更（供平台回调使用，包含余额验证）
 func (s *UnifiedOrderService) ProcessOrderStatusChangeWithBalanceCheck(ctx context.Context, orderID int64, newStatus model.OrderStatus, callbackSource string, needBalanceCheck bool) error {
 	req := &OrderStatusUpdateRequest{
-		OrderID:         orderID,
-		NewStatus:       newStatus,
-		CallbackSource:  callbackSource,
+		OrderID:          orderID,
+		NewStatus:        newStatus,
+		CallbackSource:   callbackSource,
 		NeedBalanceCheck: needBalanceCheck && newStatus == model.OrderStatusSuccess,
 	}
 

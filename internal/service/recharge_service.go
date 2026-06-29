@@ -331,13 +331,7 @@ func (s *rechargeService) Recharge(ctx context.Context, orderID int64) error {
 		Update("const_price", apiParam.Price).Error
 	if err != nil {
 		logger.WithContextCategory(ctx, "recharge").Error("【更新订单成本价失败】", logger.Int64V2("order_id", order.ID), logger.ErrorV2(err))
-		// 新增：将订单状态设置为失败，并写入备注
-		_ = s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed)
-		_ = s.orderRepo.UpdateRemark(ctx, order.ID, "余额不足，订单失败")
-		// 发送状态变更通知（幂等）
-		if nErr := s.sendOrderStatusNotificationWithIdempotency(ctx, order, model.OrderStatusFailed); nErr != nil {
-			logger.WithContextCategory(ctx, "recharge").Error("发送订单失败通知失败", logger.Int64V2("order_id", order.ID), logger.ErrorV2(nErr))
-		}
+		s.failOrderOnRoutingError(ctx, order, "更新订单成本价失败")
 	} else {
 		logger.WithContextCategory(ctx, "recharge").Info("【更新订单成本价成功】", logger.Int64V2("order_id", order.ID), logger.Float64V2("const_price", apiParam.Price))
 	}
@@ -1506,18 +1500,7 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 	//product_api_relations
 	r, err := s.productAPIRelationRepo.GetByProductID(ctx, order.ProductID)
 	if err != nil {
-		// 将订单设置为失败状态
-		if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
-			logger.WithContextCategory(ctx, "recharge").Error("【更新订单状态失败】",
-				logger.ErrorV2(err),
-				logger.Int64V2("order_id", order.ID))
-		}
-		// 更新订单备注
-		if err := s.orderRepo.UpdateRemark(ctx, order.ID, "商品未绑定接口"); err != nil {
-			logger.WithContextCategory(ctx, "recharge").Error("【更新订单备注失败】",
-				logger.ErrorV2(err),
-				logger.Int64V2("order_id", order.ID))
-		}
+		s.failOrderOnRoutingError(ctx, order, "商品未绑定接口")
 		return nil, nil, fmt.Errorf("商品未绑定接口: %v", err)
 	}
 
@@ -1525,18 +1508,7 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 	apiParam, err := s.platformAPIParamRepo.GetByID(ctx, r.ParamID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNoAPIForProduct) {
-			// 将订单设置为失败状态
-			if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
-				logger.WithContextCategory(ctx, "recharge").Error("【更新订单状态失败】",
-					logger.ErrorV2(err),
-					logger.Int64V2("order_id", order.ID))
-			}
-			// 更新订单备注
-			if err := s.orderRepo.UpdateRemark(ctx, order.ID, "商品未绑定接口"); err != nil {
-				logger.WithContextCategory(ctx, "recharge").Error("【更新订单备注失败】",
-					logger.ErrorV2(err),
-					logger.Int64V2("order_id", order.ID))
-			}
+			s.failOrderOnRoutingError(ctx, order, "商品未绑定接口")
 			return nil, nil, fmt.Errorf("商品未绑定接口")
 		}
 		return nil, nil, fmt.Errorf("获取API参数信息失败: %v", err)
@@ -1546,18 +1518,7 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 	api, err := s.platformRepo.GetAPIByID(ctx, r.APIID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNoAPIForProduct) {
-			// 将订单设置为失败状态
-			if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
-				logger.WithContextCategory(ctx, "recharge").Error("【更新订单状态失败】",
-					logger.ErrorV2(err),
-					logger.Int64V2("order_id", order.ID))
-			}
-			// 更新订单备注
-			if err := s.orderRepo.UpdateRemark(ctx, order.ID, "商品未绑定接口"); err != nil {
-				logger.WithContextCategory(ctx, "recharge").Error("【更新订单备注失败】",
-					logger.ErrorV2(err),
-					logger.Int64V2("order_id", order.ID))
-			}
+			s.failOrderOnRoutingError(ctx, order, "商品未绑定接口")
 			return nil, nil, fmt.Errorf("商品未绑定接口")
 		}
 		return nil, nil, fmt.Errorf("获取平台API信息失败: %v", err)
@@ -1570,18 +1531,7 @@ func (s *rechargeService) getPlatformAPIByOrder(ctx context.Context, order *mode
 			logger.StringV2("api_code", api.Code),
 			logger.IntV2("status", api.Status),
 			logger.Int64V2("order_id", order.ID))
-		// 将订单设置为失败状态
-		if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
-			logger.WithContextCategory(ctx, "recharge").Error("【更新订单状态失败】",
-				logger.ErrorV2(err),
-				logger.Int64V2("order_id", order.ID))
-		}
-		// 更新订单备注
-		if err := s.orderRepo.UpdateRemark(ctx, order.ID, "平台API已禁用"); err != nil {
-			logger.WithContextCategory(ctx, "recharge").Error("【更新订单备注失败】",
-				logger.ErrorV2(err),
-				logger.Int64V2("order_id", order.ID))
-		}
+		s.failOrderOnRoutingError(ctx, order, "平台API已禁用")
 		return nil, nil, fmt.Errorf("平台API已禁用: api_id=%d, status=%d", api.ID, api.Status)
 	}
 
@@ -1658,10 +1608,10 @@ func (s *rechargeService) PushToRechargeQueue(ctx context.Context, orderID int64
 		logger.Int64V2("order_id", orderID))
 	if s.orderTrace != nil {
 		s.orderTrace.Record(ctx, &model.OrderTraceInput{
-			OrderID: orderID,
-			Node:    model.TraceNodeQueued,
-			Status:  model.TraceStatusSuccess,
-			Actor:   "system",
+			OrderID:    orderID,
+			Node:       model.TraceNodeQueued,
+			Status:     model.TraceStatusSuccess,
+			Actor:      "system",
 			PayloadOut: map[string]interface{}{"queue": "recharge_queue"},
 		})
 	}
@@ -1855,7 +1805,7 @@ func (s *rechargeService) SubmitOrder(ctx context.Context, order *model.Order, a
 			Status:     model.TraceStatusSuccess,
 			DurationMs: durMs,
 			Actor:      "recharge",
-			PayloadIn: recharge.BuildSubmitTracePayloadIn(order, submitTraceCollector),
+			PayloadIn:  recharge.BuildSubmitTracePayloadIn(order, submitTraceCollector),
 			PayloadOut: map[string]interface{}{
 				"api_order_number": order.APIOrderNumber, "api_trade_num": order.APITradeNum,
 			},
@@ -2085,6 +2035,44 @@ func (s *rechargeService) ProcessRetryTask(ctx context.Context, retryRecord *mod
 
 	logger.WithContextCategory(ctx, "recharge").Info("【重试任务处理完成】", logger.Int64V2("retry_id", retryRecord.ID), logger.Int64V2("order_id", retryRecord.OrderID), logger.StringV2("order_number", order.OrderNumber))
 	return nil
+}
+
+// orderHasUserDeduct 订单是否已有用户侧扣款流水（含外部单下单预扣）
+func (s *rechargeService) orderHasUserDeduct(ctx context.Context, orderID int64) bool {
+	var n int64
+	if err := s.db.WithContext(ctx).Model(&model.BalanceLog{}).
+		Where("order_id = ? AND style = ?", orderID, model.BalanceStyleOrderDeduct).
+		Count(&n).Error; err != nil {
+		return false
+	}
+	return n > 0
+}
+
+// failOrderOnRoutingError 路由/配置类失败：已对用户扣款则 ProcessOrderFail（幂等退款），否则仅置失败
+func (s *rechargeService) failOrderOnRoutingError(ctx context.Context, order *model.Order, remark string) {
+	needRefund := model.IsUserBalanceExternalStyle(order.Client) || s.orderHasUserDeduct(ctx, order.ID)
+
+	if needRefund && s.orderService != nil {
+		if err := s.orderService.ProcessOrderFail(ctx, order.ID, remark); err != nil {
+			logger.WithContextCategory(ctx, "recharge").Error("【订单失败处理(含退款)失败】",
+				logger.ErrorV2(err),
+				logger.Int64V2("order_id", order.ID),
+				logger.StringV2("remark", remark))
+		}
+		return
+	}
+
+	// 平台单等在 worker 扣款前失败：只改状态，避免误退平台账号余额
+	if err := s.orderRepo.UpdateStatus(ctx, order.ID, model.OrderStatusFailed); err != nil {
+		logger.WithContextCategory(ctx, "recharge").Error("【更新订单状态失败】",
+			logger.ErrorV2(err),
+			logger.Int64V2("order_id", order.ID))
+	}
+	if err := s.orderRepo.UpdateRemark(ctx, order.ID, remark); err != nil {
+		logger.WithContextCategory(ctx, "recharge").Error("【更新订单备注失败】",
+			logger.ErrorV2(err),
+			logger.Int64V2("order_id", order.ID))
+	}
 }
 
 // SetOrderService 设置订单服务

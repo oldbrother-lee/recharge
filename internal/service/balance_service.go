@@ -6,16 +6,16 @@ import (
 	"recharge-go/internal/model"
 	"recharge-go/internal/repository"
 	"time"
-	
+
 	"gorm.io/gorm"
 )
 
 // BalanceService 余额相关业务逻辑
 
 type BalanceService struct {
-	repo         *repository.BalanceLogRepository
-	userRepo     *repository.UserRepository
-	db           *gorm.DB
+	repo          *repository.BalanceLogRepository
+	userRepo      *repository.UserRepository
+	db            *gorm.DB
 	creditService *CreditService
 }
 
@@ -30,9 +30,9 @@ func NewBalanceService(repo *repository.BalanceLogRepository, userRepo *reposito
 // NewBalanceServiceWithCredit 创建带授信功能的余额服务
 func NewBalanceServiceWithCredit(repo *repository.BalanceLogRepository, userRepo *repository.UserRepository, creditService *CreditService) *BalanceService {
 	return &BalanceService{
-		repo:         repo,
-		userRepo:     userRepo,
-		db:           repo.GetDB(),
+		repo:          repo,
+		userRepo:      userRepo,
+		db:            repo.GetDB(),
 		creditService: creditService,
 	}
 }
@@ -102,7 +102,7 @@ func (s *BalanceService) Refund(ctx context.Context, userID int64, amount float6
 	if amount <= 0 {
 		return errors.New("退款金额必须大于0")
 	}
-	
+
 	// 使用事务确保余额更新和日志记录的原子性
 	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return s.RefundWithTx(ctx, tx, userID, amount, orderID, remark, operator)
@@ -114,7 +114,7 @@ func (s *BalanceService) RefundWithTx(ctx context.Context, tx *gorm.DB, userID i
 	if amount <= 0 {
 		return errors.New("退款金额必须大于0")
 	}
-	
+
 	// 幂等性校验：检查是否已存在该订单的退款记录
 	var existCount int64
 	if err := tx.Model(&model.BalanceLog{}).Where("order_id = ? AND user_id = ? AND style = ?", orderID, userID, 2).Count(&existCount).Error; err != nil {
@@ -124,30 +124,30 @@ func (s *BalanceService) RefundWithTx(ctx context.Context, tx *gorm.DB, userID i
 		// 已存在退款记录，跳过重复退款
 		return nil
 	}
-	
+
 	// 关键改进：使用原子性更新避免读取-计算-写入的竞态条件
 	// 先原子性更新余额
 	result := tx.Model(&model.User{}).
 		Where("id = ?", userID).
 		Update("balance", gorm.Expr("balance + ?", amount))
-	
+
 	if result.Error != nil {
 		return result.Error
 	}
-	
+
 	if result.RowsAffected == 0 {
 		return errors.New("用户不存在")
 	}
-	
+
 	// 获取更新后的余额（在同一事务中确保数据一致性）
 	var user model.User
 	if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
 		return err
 	}
-	
+
 	afterBalance := user.Balance
 	beforeBalance := afterBalance - amount
-	
+
 	// 写入流水
 	log := &model.BalanceLog{
 		UserID:        userID,
@@ -162,6 +162,189 @@ func (s *BalanceService) RefundWithTx(ctx context.Context, tx *gorm.DB, userID i
 		CreatedAt:     time.Now(),
 	}
 	return tx.Create(log).Error
+}
+
+// RefundUserOrderPaymentWithTx 按订单实际扣款明细退款：余额部分退回余额，授信部分恢复授信额度（均幂等）
+// fallbackAmount：无扣款流水时按订单金额退余额（兼容旧数据）
+func (s *BalanceService) RefundUserOrderPaymentWithTx(ctx context.Context, tx *gorm.DB, userID, orderID int64, fallbackAmount float64, remark, operator string) error {
+	if orderID <= 0 {
+		return errors.New("订单ID无效")
+	}
+
+	balancePart, err := s.sumOrderBalanceDeductWithTx(tx, orderID, userID)
+	if err != nil {
+		return err
+	}
+	creditToRestore, err := s.creditRefundAmountWithTx(tx, orderID, userID)
+	if err != nil {
+		return err
+	}
+
+	if balancePart == 0 && creditToRestore == 0 {
+		if fallbackAmount > 0 {
+			balancePart = fallbackAmount
+		} else {
+			return nil
+		}
+	}
+
+	if balancePart > 0 {
+		if err := s.RefundWithTx(ctx, tx, userID, balancePart, orderID, remark, operator); err != nil {
+			return err
+		}
+	}
+
+	if creditToRestore > 0 {
+		if s.creditService == nil {
+			return errors.New("授信服务未初始化，无法恢复授信额度")
+		}
+		if err := s.restoreCreditPartWithTx(ctx, tx, userID, orderID, creditToRestore, remark+"(恢复授信)", operator); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// RefundPreOrderPayment 订单创建失败时回滚 SmartDeduct（扣款流水尚未关联 order_id）
+func (s *BalanceService) RefundPreOrderPayment(ctx context.Context, userID int64, expectedAmount float64) error {
+	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var balancePart float64
+		if err := tx.Model(&model.BalanceLog{}).
+			Where("user_id = ? AND order_id = ? AND style = ?", userID, 0, model.BalanceStyleOrderDeduct).
+			Order("created_at DESC").Limit(1).
+			Select("ABS(amount)").Scan(&balancePart).Error; err != nil {
+			return err
+		}
+
+		var creditPart float64
+		if err := tx.Model(&model.CreditLog{}).
+			Where("user_id = ? AND order_id = ? AND type = ?", userID, 0, model.CreditTypeUse).
+			Order("created_at DESC").Limit(1).
+			Select("amount").Scan(&creditPart).Error; err != nil {
+			return err
+		}
+
+		if balancePart == 0 && creditPart == 0 && expectedAmount > 0 {
+			balancePart = expectedAmount
+		}
+
+		if balancePart > 0 {
+			if err := s.RefundWithTx(ctx, tx, userID, balancePart, 0, "订单创建失败退款", "system"); err != nil {
+				return err
+			}
+		}
+		if creditPart > 0 {
+			if err := s.restoreCreditPartWithTx(ctx, tx, userID, 0, creditPart, "订单创建失败退款(恢复授信)", "system"); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *BalanceService) sumOrderBalanceDeductWithTx(tx *gorm.DB, orderID, userID int64) (float64, error) {
+	var total float64
+	err := tx.Model(&model.BalanceLog{}).
+		Where("order_id = ? AND user_id = ? AND style = ?", orderID, userID, model.BalanceStyleOrderDeduct).
+		Select("COALESCE(SUM(ABS(amount)), 0)").
+		Scan(&total).Error
+	return total, err
+}
+
+func (s *BalanceService) sumOrderCreditUsedWithTx(tx *gorm.DB, orderID, userID int64) (float64, error) {
+	var total float64
+	err := tx.Model(&model.CreditLog{}).
+		Where("order_id = ? AND user_id = ? AND type = ?", orderID, userID, model.CreditTypeUse).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&total).Error
+	return total, err
+}
+
+func (s *BalanceService) sumOrderCreditRestoredWithTx(tx *gorm.DB, orderID, userID int64) (float64, error) {
+	var total float64
+	err := tx.Model(&model.CreditLog{}).
+		Where("order_id = ? AND user_id = ? AND type = ?", orderID, userID, model.CreditTypeRestore).
+		Select("COALESCE(SUM(amount), 0)").
+		Scan(&total).Error
+	return total, err
+}
+
+func (s *BalanceService) creditRefundAmountWithTx(tx *gorm.DB, orderID, userID int64) (float64, error) {
+	used, err := s.sumOrderCreditUsedWithTx(tx, orderID, userID)
+	if err != nil {
+		return 0, err
+	}
+	restored, err := s.sumOrderCreditRestoredWithTx(tx, orderID, userID)
+	if err != nil {
+		return 0, err
+	}
+	remaining := used - restored
+	if remaining < 0 {
+		return 0, nil
+	}
+	return remaining, nil
+}
+
+func (s *BalanceService) restoreCreditPartWithTx(ctx context.Context, tx *gorm.DB, userID, orderID int64, amount float64, remark, operator string) error {
+	if amount <= 0 {
+		return nil
+	}
+
+	if orderID > 0 {
+		remaining, err := s.creditRefundAmountWithTx(tx, orderID, userID)
+		if err != nil {
+			return err
+		}
+		if remaining <= 0 {
+			return nil
+		}
+		if amount > remaining {
+			amount = remaining
+		}
+	} else {
+		var exist int64
+		if err := tx.Model(&model.CreditLog{}).
+			Where("user_id = ? AND order_id = 0 AND type = ? AND amount = ?", userID, model.CreditTypeRestore, amount).
+			Count(&exist).Error; err != nil {
+			return err
+		}
+		if exist > 0 {
+			return nil
+		}
+	}
+
+	var user model.User
+	if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
+		return err
+	}
+
+	result := tx.Model(&model.User{}).
+		Where("id = ?", userID).
+		Update("credit", gorm.Expr("credit + ?", amount))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("用户不存在")
+	}
+
+	if err := tx.Where("id = ?", userID).First(&user).Error; err != nil {
+		return err
+	}
+
+	creditLog := &model.CreditLog{
+		UserID:       userID,
+		Amount:       amount,
+		Type:         model.CreditTypeRestore,
+		CreditBefore: user.Credit - amount,
+		CreditAfter:  user.Credit,
+		OrderID:      orderID,
+		Remark:       remark,
+		Operator:     operator,
+		CreatedAt:    time.Now(),
+	}
+	return tx.Create(creditLog).Error
 }
 
 // SmartDeduct 智能扣款（优先使用余额，不足时使用授信额度）
@@ -266,7 +449,7 @@ func (s *BalanceService) SmartDeduct(ctx context.Context, userID int64, amount f
 	})
 }
 
-// ListLogs 查询余额流水
+// ListLogs 查询资金流水（余额 + 授信）
 func (s *BalanceService) ListLogs(ctx context.Context, userID int64, offset, limit int) ([]model.BalanceLogWithOrder, int64, error) {
 	return s.repo.ListLogsWithOrder(ctx, userID, offset, limit)
 }

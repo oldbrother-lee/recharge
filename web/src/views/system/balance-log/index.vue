@@ -4,6 +4,7 @@ import { NButton, NCard, NDataTable, NForm, NFormItem, NSelect, NSpace, NTag, us
 import type { DataTableColumns, SelectOption } from 'naive-ui';
 import { getBalanceLogs } from '@/api/balance';
 import { getUserList } from '@/api/user';
+import { ORDER_STATUS_MAP } from '@/constants/business';
 import { useAppStore } from '@/store/modules/app';
 
 defineOptions({ name: 'SystemBalanceLog' });
@@ -42,13 +43,55 @@ const styleMap: Record<number, string> = {
   1: '订单扣款',
   2: '退款',
   3: '手动调整',
-  4: '充值'
+  4: '充值',
+  5: '授信扣款',
+  6: '授信恢复',
+  7: '授信调整'
 };
+
+const fundSourceMap: Record<string, string> = {
+  balance: '余额',
+  credit: '授信'
+};
+
+function renderFullText(value: string | undefined | null) {
+  const text = value?.trim() ? value : '-';
+  return <span class="cell-full-text">{text}</span>;
+}
 
 const columns: DataTableColumns<any> = [
   { key: 'id', title: 'ID', width: 70, align: 'center' },
-  { key: 'order_number', title: '订单号', align: 'center', minWidth: 160, ellipsis: { tooltip: true } },
-  { key: 'out_trade_num', title: '外部订单号', align: 'center', minWidth: 160, ellipsis: { tooltip: true } },
+  {
+    key: 'order_number',
+    title: '订单号',
+    align: 'left',
+    minWidth: 200,
+    render(row) {
+      return renderFullText(row.order_number);
+    }
+  },
+  {
+    key: 'out_trade_num',
+    title: '外部订单号',
+    align: 'left',
+    minWidth: 200,
+    render(row) {
+      return renderFullText(row.out_trade_num);
+    }
+  },
+  {
+    key: 'order_status',
+    title: '订单状态',
+    width: 100,
+    align: 'center',
+    render(row) {
+      if (!row.order_id) {
+        return '-';
+      }
+      const info = ORDER_STATUS_MAP[row.order_status] || { type: 'default' as const, text: `状态${row.order_status}` };
+      return <NTag type={info.type}>{info.text}</NTag>;
+    }
+  },
   { key: 'mobile', title: '手机号', align: 'center', width: 120 },
   {
     key: 'type',
@@ -58,6 +101,16 @@ const columns: DataTableColumns<any> = [
     render(row) {
       const info = typeMap[row.type] || { type: 'default', text: String(row.type) };
       return <NTag type={info.type}>{info.text}</NTag>;
+    }
+  },
+  {
+    key: 'fund_source',
+    title: '资金类型',
+    width: 90,
+    align: 'center',
+    render(row) {
+      const label = fundSourceMap[row.fund_source] ?? row.fund_source ?? '余额';
+      return <NTag type={row.fund_source === 'credit' ? 'warning' : 'info'}>{label}</NTag>;
     }
   },
   {
@@ -86,20 +139,22 @@ const columns: DataTableColumns<any> = [
   },
   {
     key: 'balance_before',
-    title: '变动前余额',
+    title: '变动前',
     width: 110,
     align: 'right',
     render(row) {
-      return `¥${Number(row.balance_before || 0).toFixed(2)}`;
+      const prefix = row.fund_source === 'credit' ? '授信 ' : '';
+      return `${prefix}¥${Number(row.balance_before || 0).toFixed(2)}`;
     }
   },
   {
     key: 'balance',
-    title: '变动后余额',
+    title: '变动后',
     width: 110,
     align: 'right',
     render(row) {
-      return `¥${Number(row.balance || 0).toFixed(2)}`;
+      const prefix = row.fund_source === 'credit' ? '授信 ' : '';
+      return `${prefix}¥${Number(row.balance || 0).toFixed(2)}`;
     }
   },
   { key: 'remark', title: '备注', ellipsis: { tooltip: true }, minWidth: 140 },
@@ -184,7 +239,7 @@ function handlePageSizeChange(size: number) {
 
 <template>
   <div class="min-h-500px flex-col-stretch gap-16px overflow-hidden lt-sm:overflow-auto">
-    <NCard title="余额流水" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
+    <NCard title="资金流水（余额 + 授信）" :bordered="false" size="small" class="sm:flex-1-hidden card-wrapper">
       <NForm label-placement="left" :label-width="80" class="mb-4">
         <NSpace align="center" wrap>
           <NFormItem label="用户" required>
@@ -208,7 +263,7 @@ function handlePageSizeChange(size: number) {
           :loading="loading"
           :pagination="responsivePagination"
           :flex-height="!appStore.isMobile"
-          :scroll-x="1400"
+          :scroll-x="1680"
           remote
           size="small"
           :row-key="(row: any) => row.id"
@@ -246,6 +301,16 @@ function handlePageSizeChange(size: number) {
 }
 .text-green-600 {
   color: #16a34a;
+}
+:deep(.cell-full-text) {
+  display: inline-block;
+  max-width: 100%;
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.4;
+}
+:deep(.n-data-table-td) {
+  vertical-align: top;
 }
 .text-red-600 {
   color: #dc2626;

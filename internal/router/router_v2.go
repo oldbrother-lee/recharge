@@ -113,6 +113,8 @@ func SetupRouterV2(
 				callback.POST("/kasushou/:userid", controllers.Callback.HandleKasushouCallback)
 				callback.POST("/shangteng/:userid", controllers.Callback.HandleShangtengCallback)
 				callback.POST("/turbo/:userid", controllers.Callback.HandleTurboCallback)
+				callback.POST("/xingchen/:userid", controllers.Callback.HandleXingchenCallback)
+				callback.POST("/kayixin/:userid", controllers.Callback.HandleKayixinCallback)
 			}
 		}
 

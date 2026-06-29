@@ -22,6 +22,7 @@ declare module 'vue' {
     IconGridiconsFullscreen: typeof import('~icons/gridicons/fullscreen')['default']
     IconGridiconsFullscreenExit: typeof import('~icons/gridicons/fullscreen-exit')['default']
     IconIcRoundContentCopy: typeof import('~icons/ic/round-content-copy')['default']
+    IconIcRoundMenuBook: typeof import('~icons/ic/round-menu-book')['default']
     IconIcRoundVisibility: typeof import('~icons/ic/round-visibility')['default']
     IconIcRoundVisibilityOff: typeof import('~icons/ic/round-visibility-off')['default']
     IconLocalLogo: typeof import('~icons/local/logo')['default']

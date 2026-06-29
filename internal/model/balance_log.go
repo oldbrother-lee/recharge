@@ -28,12 +28,14 @@ func (BalanceLog) TableName() string {
 	return "balance_logs"
 }
 
-// BalanceLogWithOrder 流水记录（关联订单号、外部订单号、手机号，用于列表展示）
+// BalanceLogWithOrder 资金流水（余额 + 授信，关联订单信息）
 type BalanceLogWithOrder struct {
 	BalanceLog
-	OrderNumber  string `json:"order_number" gorm:"column:order_number"`
-	OutTradeNum  string `json:"out_trade_num" gorm:"column:out_trade_num"`
-	Mobile       string `json:"mobile" gorm:"column:mobile"`
+	OrderNumber string `json:"order_number" gorm:"column:order_number"`
+	OutTradeNum string `json:"out_trade_num" gorm:"column:out_trade_num"`
+	Mobile      string `json:"mobile" gorm:"column:mobile"`
+	OrderStatus int    `json:"order_status" gorm:"column:order_status"`
+	FundSource  string `json:"fund_source" gorm:"column:fund_source"` // balance | credit
 }
 
 // 余额变动类型
@@ -47,5 +49,13 @@ const (
 	BalanceStyleOrderDeduct = 1 // 订单扣款
 	BalanceStyleRefund      = 2 // 退款
 	BalanceStyleManual      = 3 // 手动调整
-	BalanceStyleRecharge    = 4 // 充值
+	BalanceStyleRecharge      = 4 // 充值
+	BalanceStyleCreditUse     = 5 // 授信扣款（占用可用授信）
+	BalanceStyleCreditRestore = 6 // 授信恢复（失败退款等）
+	BalanceStyleCreditAdjust  = 7 // 授信额度调整
+)
+
+const (
+	FundSourceBalance = "balance"
+	FundSourceCredit  = "credit"
 )
